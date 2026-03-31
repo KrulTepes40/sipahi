@@ -648,10 +648,10 @@
     │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
     │  ║ Sprint 1  │ + Kani               │ Panic-freedom, overflow║  │
     │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
-    │  ║ Sprint 2  │ + Miri               │ Unsafe UB tespiti      ║  │
-    │  ║           │ + GDB (riscv64)      │ QEMU debug             ║  │
+    │  ║ Sprint 2  │ + GDB (riscv64)      │ QEMU debug             ║  │
     │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
     │  ║ Sprint 8  │ + Loom               │ Atomic ordering test   ║  │
+    │  ║           │ + Miri               │ Unsafe UB tespiti      ║  │
     │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
     │  ║ Sprint 9  │ + proptest           │ Property-based test    ║  │
     │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
@@ -1298,15 +1298,16 @@
     └─────────────────────────────────────────────────────────────────┘
 
     ┌─────────────────────────────────────────────────────────────────┐
-    │  SORUN 4: hal/ placeholder tutarsızlığı                        │
+    │  SORUN 4: hal/ placeholder tutarsızlığı — KISMİ ÇÖZÜLDÜ       │
     │                                                                 │
-    │  secure_boot.rs ve key.rs placeholder var ama                  │
-    │  clint.rs, pmp.rs, device.rs, boot.rs yok.                    │
-    │  Sprint 1'de uart.rs, Sprint 2'de trap.S de yok.              │
-    │                                                                 │
-    │  Karar: düzeltilmeyecek. Sprint'e oturduğumuzda dosya         │
-    │  oluşturup içini doldurmak daha verimli.                       │
-    │  secure_boot/key var çünkü 900→3 dosya parçalama kararından.  │
+    │  Sprint 1-6'da yazılan dosyalar:                               │
+    │    ✓ uart.rs, csr.rs, clint.rs, trap.rs, pmp.rs (arch/)       │
+    │    ✓ device.rs, iopmp.rs (hal/)                                │
+    │    ✓ scheduler/, memory/ (kernel/)                             │
+    │  Hâlâ placeholder:                                             │
+    │    • secure_boot.rs, key.rs → Sprint 13                        │
+    │    • capability/, policy/, syscall/ → Sprint 7-10              │
+    │    • ipc/, sandbox/ → Sprint 8, 12                             │
     └─────────────────────────────────────────────────────────────────┘
 
     ┌─────────────────────────────────────────────────────────────────┐
@@ -1380,10 +1381,15 @@
     │  Task region hint'leri = 8 entry.                              │
     │  Toplam: 16 / 16 = TAM DOLU, sıfır yedek.                    │
     │                                                                 │
+    │  Sprint 5 durumu: 4 kernel bölge × 2 = 8/16 entry KULLANILDI │
+    │    Entry 0-1: .text RX, Entry 2-3: .rodata R                  │
+    │    Entry 4-5: .data+stack RW, Entry 6-7: UART RW              │
+    │  Kalan 8 entry: pmpcfg2 ile task stack koruması (Sprint 7)    │
+    │                                                                 │
     │  Risk: Bir entry bile eksiğin olursa bölge birleştirmen       │
     │  veya izolasyondan fedakarlık etmen gerekir.                   │
     │                                                                 │
-    │  Ne zaman: Sprint 5 (PMP implementasyonu, somut hesap)         │
+    │  Ne zaman: Sprint 7 (U-mode + task-bazlı PMP switching)       │
     └─────────────────────────────────────────────────────────────────┘
 
 
