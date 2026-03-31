@@ -1,0 +1,8 @@
+[toolchain]
+channel = "nightly-2026-03-01"
+components = ["rust-src", "clippy", "llvm-tools-preview"]
+targets = ["riscv64imac-unknown-none-elf"]
+
+# Neden pinleme: farklı nightly = farklı codegen = farklı cycle sayısı
+# Determinizm doktrini: aynı kaynak → aynı binary → aynı davranış
+# Güncelleme: bilinçli karar, test sonrası, commit mesajıyla

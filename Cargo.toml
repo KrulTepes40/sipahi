@@ -1,0 +1,43 @@
+[package]
+name = "sipahi"
+version = "0.1.0"
+edition = "2021"
+description = "Safety-critical hard real-time microkernel for RISC-V"
+license = "Apache-2.0"
+authors = ["gzhno"]
+
+[features]
+default = ["fast-crypto", "fast-sign"]
+fast-crypto = []          # BLAKE3 hash/MAC (v1.0)
+cnsa-crypto = []          # SHA-384 + Zknh HW accel (v2.0)
+fast-sign = []            # Ed25519 imza (v1.0)
+cnsa-sign = []            # LMS post-quantum imza (v2.0)
+iopmp = []                # IOPMP DMA koruması
+trace = []                # Debug trace (production'da KAPALI)
+
+[dependencies]
+# Sprint 9'da eklenecek:
+# blake3 = { version = "1", default-features = false }
+# Sprint 13'te eklenecek:
+# ed25519-dalek = { version = "2", default-features = false }
+# Sprint 12'de eklenecek:
+# wasmi = { version = "1", default-features = false, features = ["prefer-btree-collections"] }
+# static-alloc = "0.2"   # Bump allocator (global_allocator, heap YOK, statik arena)
+# NOT: hash-table random init → safety-critical'da kabul edilemez, btree kullan
+
+[dev-dependencies]
+# Sprint 8'de eklenecek:
+# loom = "0.7"
+# Sprint 9'da eklenecek:
+# proptest = "1"
+
+[profile.release]
+opt-level = "s"           # Boyut optimizasyonu (32KB .text bütçesi için)
+                          # NOT: "2" WCET için daha öngörülebilir olabilir.
+                          # FPGA'da ölçüm sonrası değişebilir — bilinçli trade-off.
+lto = true                # Link-time optimization
+panic = "abort"           # Stack unwinding YOK
+codegen-units = 1         # Tek derleme birimi (determinizm)
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

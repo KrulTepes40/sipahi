@@ -1,0 +1,20 @@
+# Build artifacts
+/target/
+**/*.o
+**/*.elf
+**/*.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+*.log
+core.*

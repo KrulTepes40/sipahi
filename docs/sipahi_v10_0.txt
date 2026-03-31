@@ -1,0 +1,1454 @@
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                            ║
+║     ███████╗██╗██████╗  █████╗ ██╗  ██╗██╗                                ║
+║     ██╔════╝██║██╔══██╗██╔══██╗██║  ██║██║                                ║
+║     ███████╗██║██████╔╝███████║███████║██║                                ║
+║     ╚════██║██║██╔═══╝ ██╔══██║██╔══██║██║                                ║
+║     ███████║██║██║     ██║  ██║██║  ██║██║                                ║
+║     ╚══════╝╚═╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝                                ║
+║                                                                            ║
+║              SAFETY-CRITICAL HARD REAL-TIME MICROKERNEL                    ║
+║                      v10.0 NİHAİ — Mart 2026                              ║
+║                                                                            ║
+║     Hedef ···· Askeri platformlar (gemi, uçak, İHA, EW, hava savunma)     ║
+║     Dil ······ Rust (no_std, no_alloc)                                    ║
+║     ISA ······ RISC-V 64-bit (RV64IMAC)                                   ║
+║     Donanım · CVA6 açık kaynak çekirdek (ETH Zürich / OpenHW)            ║
+║     Boyut ··· ≤ 10,000 satır (minimal TCB)                               ║
+║     Doktrin · %100 deterministic · sıfır heap · sıfır panic              ║
+║               sıfır float · sıfır recursion · bounded loops              ║
+║                                                                            ║
+║     Review ·· Gemini (×2) + ChatGPT (×2) + Opus 4.6 (×3) + Sonnet (×2)   ║
+║               9 AI review + ChatGPT extended pipeline review              ║
+║               0 mimari hata, tüm boşluklar kapatıldı                     ║
+║                                                                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         DEĞİŞİKLİK GEÇMİŞİ                                │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  v5.3 → v6.0  14 mimari açık tespit ve çözüm                               │
+│  v6.0 → v7.0  Akademik araştırma (3 dalga, ~30 makale, 19 referans)       │
+│  v7.0 → v8.0  7 AI review + tüm boşluklar kapatıldı (NİHAİ)              │
+│  v8.0 → v8.9  Opus 4.6 #3 tam analiz + 6 düzeltme                        │
+│  v8.9 → v9.0  ChatGPT #2 pipeline review + 4 test protokolü eklendi      │
+│  v9.0 → v10.0 ChatGPT extended review + final konsolidasyon              │
+│                                                                              │
+│  v9→v10.0 EKLEMELERİ:                                                    │
+│  ★ Determinizm tanımı netleştirildi (logical vs physical)                 │
+│  ★ IPC CONTRACT spesifikasyonu eklendi (7 madde)                          │
+│  ★ Temporal coupling → WCET propagation notu eklendi                      │
+│  ★ Observability trace notu eklendi (cfg flag, Sprint'te implemente)      │
+│  ★ FI-7: Deadline miss testi eklendi                                       │
+│  ★ İmplementasyon uyarıları bölümü eklendi (4 dikkat noktası)             │
+│                                                                              │
+│  v8→v9.0 EKLEMELERİ:                                                     │
+│  ★ WASM modül yükleme politikası (keyfi yükleme yasağı eksplisit)         │
+│  ★ Kripto tablo dipnotu (cycle: 256B ref vs cap_invoke: 32B token)        │
+│  ★ Token expiry hesap düzeltmesi (136yıl → ~1,362 yıl @ 10ms)            │
+│  ★ Yol haritasına v2.5 eklendi (CLIC donanım interrupt)                   │
+│  ★ Karar süresi ≤80μs netleştirme (hesapsal ~83μs, branch-free hedef)    │
+│  ★ CI/CD Pipeline yanlış referans [R13] kaldırıldı                        │
+│  ★ "güncellenr" yazım hatası düzeltildi                                    │
+│  ★ WCET test protokolü (5 senaryo, 7 kritik yol, adversarial input)      │
+│  ★ Determinizm test protokolü (çıktı + cycle + sıralama)                 │
+│  ★ Fault injection test protokolü (6 yazılım FI senaryosu)               │
+│  ★ v1.0 release gate kriterleri (12 PASS/FAIL gate)                       │
+│                                                                              │
+│  v7→v8 EKLEMELERİ:                                                         │
+│  ★ Hibrit host_call WASM performans çözümü (4 compute service)             │
+│  ★ Fuel→cycle konservatif safety factor politikası (DAL'a göre)            │
+│  ★ Single-hart timing analizi (somut senaryo ile kanıt)                    │
+│  ★ Kernel stack boyutu tanımı (4KB + overflow koruması)                    │
+│  ★ Key provisioning süreci (factory + OTP + HSM)                           │
+│  ★ SPMP fallback netleştirmesi (WASM = temel, SPMP = ek)                  │
+│  ★ MIL-STD-1553 kapsam notu (v2.0, stub)                                  │
+│  ★ AOT fuel kalibrasyon notu (yeniden ölçüm gerekir)                       │
+│  ★ Blackbox power-loss koruması (CRC + max 1 kayıt kaybı)                 │
+│  ★ PMP fault injection koruması (integrity check her tick)                 │
+│  ★ Gemini branch misprediction onayı (jitter izole edildi)                 │
+│  ★ Token expiry: cycle(u32) → period_cnt(u32) (~1,362 yıl) [Sonnet fix]  │
+│  ★ BLAKE3-HMAC → BLAKE3 keyed hash (2× hızlı, native mod) [Sonnet fix]   │
+│  ★ Wasmi no_std doğrulaması (resmi birincil özellik) [Sonnet sorusu]      │
+│  ★ IPC mesaj CRC16 → CRC32 (pad gereksiz, güvenlik ↑↑) [Sonnet fix]     │
+│  ★ Modüler kripto: BLAKE3/SHA-384 trait + Zknh HW accel [CNSA yolu]     │
+│  ★ Token cache (4 slot, constant-time, revoke/epoch flush) [Opus fix]    │
+│  ★ İmza modüler: Ed25519/LMS trait (post-kuantum hazır) [Opus önerisi]  │
+│  ★ Determinizm-uyumlu hızlandırma teknikleri (Opus kalibrasyonu)        │
+│  ★ seL4 karşılaştırması düzeltildi (kaynaksız iddialar kaldırıldı)     │
+│  ★ CLIC gelecek donanım notu (v2.5, ~50-100ns interrupt latency)       │
+│  ★ Multi-hart DSPM mailbox tanımı (3-5 cycle, RAM bypass)              │
+│  ★ WASM kalma gerekçesi (fuel + hot-swap + taşınabilirlik)             │
+│                                                                              │
+│  DOĞRULANAN KARARLAR (7 AI review sonrası değişmedi):                       │
+│  ✓ SPSC async IPC (determinizm > latency)                                  │
+│  ✓ Kernel-internal policy (seL4 userspace policy 10K bütçeyi aşar)         │
+│  ✓ Q32.32 fixed-point (float WCET tahmin edilemez)                         │
+│  ✓ Ed25519 secure boot (zaten en iyi seçenek)                              │
+│  ✓ 5 syscall minimal yüzey (seL4 ~50+, Linux ~450)                        │
+│  ✓ BLAKE3 keyed hash (SHA256'dan 3x hızlı, Rust-native, HMAC'ten 2× hızlı)│
+│  ✓ Hibrit host_call (Gemini onayladı: jitter izole)                        │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                       AKADEMİK REFERANSLAR (19)                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  [R1]  Cunha et al., "System-Level Isolation for Mixed-Criticality         │
+│        RISC-V SoCs", arXiv:2602.05002, Şubat 2026                         │
+│  [R2]  seL4 Foundation White Paper, Rev 1.4, Ocak 2025                     │
+│  [R3]  Heiser, "Scheduling-context capabilities", EuroSys 2018            │
+│  [R4]  seL4 Trustworthy Systems, WCET for RISC-V, 2024                    │
+│  [R5]  RISC-V IOPMP Spec v0.9.2-RC3, Ocak 2025                           │
+│  [R6]  RISC-V SPMP Draft Spec, 2024                                       │
+│  [R7]  Liedtke, "On μ-Kernel Construction", SOSP 1995                     │
+│  [R8]  WasmCon 2024, "Safety-Critical Meets Web-Native"                   │
+│  [R9]  Wasmi Labs, Wasmi 1.0, Aralık 2025                                 │
+│  [R10] CVA6-VMRT, Reinwardt et al., arXiv:2504.05718, Nisan 2025          │
+│  [R11] Bosch, "Real Time additions to CVA6", RISC-V Europe 2024           │
+│  [R12] SiFive WorldGuard → RISC-V International, Mayıs 2023               │
+│  [R13] DARPA PROVERS/INSPECTA, seL4 Summit 2024                           │
+│  [R14] "Bypassing Isolated Execution on RISC-V", ePrint 2020/1193         │
+│  [R15] RISC-V CHERI Specification, 2026                                    │
+│  [R16] Atmosphere Microkernel (Verus), SOSP 2025                           │
+│  [R17] Aeneas: Rust → Lean 4 Bridge, ICFP 2022                            │
+│  [R18] Puaut, "Scratchpad vs Locked Caches", DATE 2007                    │
+│  [R19] ACM TACO 2025, "Benchmarking WASM for Embedded Systems"            │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                    KATMAN 0: DONANIM SOYUTLAMA (HAL)
+              RISC-V 64-bit · CVA6 · M/S/U Mode · PMP + IOPMP
+══════════════════════════════════════════════════════════════════════════════
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SECURE BOOT CHAIN                                              │
+    │                                                                 │
+    │   ┌──────────┐     ┌──────────────┐     ┌────────────────┐     │
+    │   │ ROM Boot │────▶│  Ed25519     │────▶│ Sipahi Kernel  │     │
+    │   │ (M-mode) │     │  İmza Doğru. │     │ İmajı Yükle    │     │
+    │   └──────────┘     └──────┬───────┘     └────────────────┘     │
+    │                           │                                     │
+    │                    Geçersiz imza?                               │
+    │                    ──▶ BOOT REDDET                              │
+    │                    ──▶ Donanım kilidi                           │
+    │                                                                 │
+    │   Production: JTAG fuse yakık · debug port kapalı              │
+    │   Tamper detection: Açılırsa → key sil (v2.0)                  │
+    │                                                                 │
+    │  ★ KEY PROVISIONING SÜRECİ (v8.0)                              │
+    │  ┌───────────────────────────────────────────────────────────┐ │
+    │  │  Factory Provisioning (üretim hattında, HSM ile):         │ │
+    │  │  1. HSM içinde Ed25519 key pair üret                      │ │
+    │  │  2. Public key → OTP fuse'a yaz (bir kere, geri alınamaz)│ │
+    │  │  3. Private key → HSM'de kalır (cihaza YAZILMAZ)         │ │
+    │  │  4. JTAG fuse yak → debug port kapat                     │ │
+    │  │  5. Test: sahte imzalı kernel → REJECT ✓                 │ │
+    │  │  6. Test: doğru imzalı kernel → BOOT ✓                   │ │
+    │  │                                                           │ │
+    │  │  Key hiyerarşisi:                                         │ │
+    │  │  Root key:   OTP fuse'da (değiştirilemez, cihaz ömrü)    │ │
+    │  │  Module key: .rodata'da (root key ile imzalı, güncellenebilir)│ │
+    │  │                                                           │ │
+    │  │  v1.0 basitleştirme:                                      │ │
+    │  │  QEMU'da OTP yok → key compile-time sabit                │ │
+    │  │  FPGA'da OTP emülasyonu → fuse benzeri davranış          │ │
+    │  └───────────────────────────────────────────────────────────┘ │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+    │    CLINT      │  │  M-mode PMP  │  │    IOPMP     │  │     WDT      │
+    │              │  │              │  │   ★ v7.0     │  │  3 kademeli  │
+    │  mtime       │  │  8 bölge     │  │              │  │              │
+    │  mtimecmp    │  │  Boot'ta     │  │  DMA için    │  │  10ms task   │
+    │  rdcycle     │  │  KİLİTLİ     │  │  PMP         │  │  100ms kern. │
+    │              │  │  (değişmez)  │  │  eşdeğeri    │  │  500ms reset │
+    └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ IOPMP — GÜVENLİ DMA  [R1] [R5]                             │
+    │                                                                 │
+    │  Problem:  DMA, PMP'yi bypass eder → güvenlik ihlali           │
+    │  Eski:     DMA YASAK → PIO → 10x yavaş sensör okuma           │
+    │  Yeni:     IOPMP = DMA için PMP eşdeğeri                      │
+    │                                                                 │
+    │     DMA Engine ───▶ [ IOPMP Checker ] ───▶ Memory              │
+    │                            │                                    │
+    │                     İzin var mı?                                │
+    │                     ├── Evet → transfer devam                   │
+    │                     └── Hayır → bus error + blackbox log        │
+    │                                                                 │
+    │  Varyant:  WC (World Checker)                                  │
+    │  Latency:  SABİT 2 cycle (her koşulda, değişmez)              │
+    │  Determinizm: %100                                              │
+    │  Donanım:  ~820 LUT + 630 FF (FPGA, minimal)                  │
+    │                                                                 │
+    │  Fallback: IOPMP yok → PIO (v6 davranış)                      │
+    │  Flag:     #[cfg(feature = "iopmp")]                           │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ PMP FAULT INJECTION KORUMASI  [R14]                         │
+    │                                                                 │
+    │  Tehdit: EMP/voltaj glitch ile PMP atlanabilir                 │
+    │  Koruma 1: Her tick PMP register oku → beklenenle karşılaştır  │
+    │            Farklıysa → SHUTDOWN (~10 cycle/tick)               │
+    │  Koruma 2: Kritik PMP ayarını 2× yaz + geri oku               │
+    │  Koruma 3: Tamper detection donanımı (v2.0)                    │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  HAL DEVICE ABSTRACTION                                         │
+    │                                                                 │
+    │  trait HalDevice {                                              │
+    │      fn read(&self, reg: u32) -> u32;     // WCET: sabit      │
+    │      fn write(&mut self, reg: u32, val: u32);  // WCET: sabit │
+    │      fn status(&self) -> DeviceStatus;    // WCET: sabit      │
+    │  }                                                              │
+    │                                                                 │
+    │  Bus desteği ve kapsam:                                         │
+    │    v1.0: UART (temel debug/iletişim)                           │
+    │    v1.5: SPI · I2C · CAN                                      │
+    │    v2.0: MIL-STD-1553 (stub v1.0'da, impl v2.0'da)            │
+    │                                                                 │
+    │  I/O modu:  IOPMP var → DMA (2-cycle check)                   │
+    │             IOPMP yok → PIO (CPU üzerinden)                    │
+    │                                                                 │
+    │  Float → Fixed:                                                 │
+    │  Sensör f32 ──▶ HAL ──▶ Q32.32 ──▶ IPC ──▶ WASM              │
+    │  Q32.32: ±2³¹ aralık, ~2.3×10⁻¹⁰ hassasiyet                  │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ OBSERVABILITY / TRACE (v10.0)                                │
+    │                                                                 │
+    │  Prensip: Trace = debug tool + verification tool               │
+    │  Production'da KAPALI, geliştirmede AÇIK.                      │
+    │  #[cfg(feature = "trace")] ile derleme zamanında seçilir.      │
+    │  Production binary'de trace kodu YOK → sıfır overhead.         │
+    │                                                                 │
+    │  Minimum trace noktaları (Sprint'te implemente):               │
+    │    • syscall latency (rdcycle başlangıç/bitiş)                 │
+    │    • IPC enqueue/dequeue timestamp                              │
+    │    • scheduler decision log (hangi task, neden)                 │
+    │    • WCET max güncelleme (yeni max bulunursa logla)             │
+    │                                                                 │
+    │  Çıkış: UART ring buffer (debug sırasında)                    │
+    │  Format: [CYCLE:8B][EVENT:1B][DATA:7B] = 16B/kayıt            │
+    │                                                                 │
+    │  ❌ printf spam YOK                                             │
+    │  ❌ performance bozacak logging YOK                             │
+    │  ❌ production'da aktif trace YOK                                │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ SCRATCHPAD MEMORY STRATEJİSİ  [R10] [R11] [R18]            │
+    │                                                                 │
+    │  Cache: Random replacement → WCET 4× pessimistic [R4]          │
+    │  SPM:   TEK CYCLE erişim → WCET ≈ observed time                │
+    │  CVA6-VMRT: %94 execution time variability azalması            │
+    │  Bosch: CVA6'ya instruction scratchpad ekledi [R11]            │
+    │                                                                 │
+    │  v1.0: Cache-agnostic (kernel veriler sabit adres)             │
+    │  v2.0: Hybrid cache/SPM — Kernel .text → ISPM, .data → DSPM  │
+    │                                                                 │
+    │  NOT: TCM (Tightly Coupled Memory) = SPM. Aynı şey.           │
+    │  Bosch ISPM/DSPM = TCM'dir. Ayrı teknik olarak SAYILMAZ.      │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ DETERMİNİZM-UYUMLU HIZLANDIRMA TEKNİKLERİ (v8.0)           │
+    │  (Opus 4.6 review ile kalibre edilmiş rakamlar)                │
+    │                                                                 │
+    │  Prensip: Determinizm ASLA feda edilmez.                       │
+    │  Hız ancak determinizm korunuyorsa eklenir.                    │
+    │                                                                 │
+    │  Teknik 1 — Scratchpad Memory (v2.0, en büyük kazanım):       │
+    │    Kernel .text (32KB) → ISPM, .data (20KB) → DSPM            │
+    │    Her erişim SABİT 1 cycle, cache miss İMKANSIZ              │
+    │    Kernel overhead: ~3-5μs → SPM ile ~0.5-1μs                 │
+    │    NOT: WASM execution SPM'den FAYDALANMAZ                     │
+    │    (Wasmi kendi 64KB heap'inde çalışır, SPM'e sığmaz)         │
+    │    Determinizm: ✅ best = worst                                │
+    │                                                                 │
+    │  Teknik 2 — Branch-free kod stili (v1.0'dan itibaren):         │
+    │    Pipeline stall'dan kaçınma: conditional move pattern        │
+    │    let mask = 0u32.wrapping_sub(cond as u32); // sub, 1 cycle  │
+    │    result = (a & mask) | (b & !mask);     // 3 insn, 1 cycle   │
+    │    MUL KULLANMA (3-5 cycle) — neg+and kullan (1 cycle)         │
+    │    Kritik yollarda: cap check, IPC dispatch, scheduler         │
+    │    Determinizm: ✅ her zaman sabit cycle                       │
+    │                                                                 │
+    │  Teknik 3 — Register-based syscall ABI:                        │
+    │    Parametre: a0-a3 (max 4 param, RISC-V ABI standardı)       │
+    │    Stack save/restore minimize → bellek erişimi azalır         │
+    │    NOT: seL4 de register ABI kullanır, Sipahi'ye özgü DEĞİL   │
+    │    Kazanım: worst-case ~%5-10 (marjinal)                      │
+    │    Determinizm: ✅ register okuması pipeline'da mevcut         │
+    │                                                                 │
+    │  Teknik 4 — Jump table syscall dispatch:                       │
+    │    5 entry sabit jump table → 1 load + 1 jalr                  │
+    │    NOT: indirect jump (jalr) da BTB prediction'a tabi          │
+    │    İlk çağrıda 2-3 cycle penalty, sonra BTB öğrenir           │
+    │    5 entry'de prediction etkisi MİNİMAL (sıfır DEĞİL)         │
+    │    Determinizm: ✅ worst-case 2-3 cycle penalty bounded        │
+    │                                                                 │
+    │  KARAR SÜRESİ TAHMİNLERİ (kalibre edilmiş, Opus düzeltmesi):  │
+    │  ╔══════════════════════╤══════════╤════════════════════════╗   │
+    │  ║ Yapılandırma          │ Karar    │ Notlar                 ║   │
+    │  ╠══════════════════════╪══════════╪════════════════════════╣   │
+    │  ║ v1.0 Interpreter      │ ≤80μs   │ Mevcut, ölçülmemiş     ║   │
+    │  ║ v1.0 + branch-free    │ ≤75μs   │ Kernel yolu ~%5-10 ↑   ║   │
+    │  ║ v2.0 + SPM            │ ≤60-65μs│ Kernel overhead ~1μs'e ║   │
+    │  ║ v2.0 + AOT            │ ≤20-25μs│ WASM 3-5× hızlanır     ║   │
+    │  ║ v2.0 + SPM + AOT      │ ≤15-20μs│ Her iki kazanım birden ║   │
+    │  ╚══════════════════════╧══════════╧════════════════════════╝   │
+    │                                                                 │
+    │  seL4 karşılaştırması (dürüst):                                │
+    │    seL4 best-case IPC: 0.463μs (hot-cache, ölçülen)           │
+    │    seL4 ARM WCET: ~500μs (ölçülen, Cortex-A8)                 │
+    │    seL4 RISC-V WCET: YAYINLANMAMIŞ (PISTIs-V devam ediyor)    │
+    │    Sipahi WCET: ≤80μs (v1.0 hedef, ÖLÇÜLMEMIŞ)               │
+    │    Karşılaştırma: HENÜZ YAPILAMAZ — iki tarafta da             │
+    │    RISC-V WCET verisi yok. FPGA ölçümleri ile doğrulanacak.   │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  GELECEK DONANIM STRATEJİSİ                                    │
+    │                                                                 │
+    │  v1.0: Single-hart, M-mode PMP (ratifiye, stabil)              │
+    │  v1.5: SPMP eklenir (spec ratifiye olunca) [R6]                │
+    │  v2.0: WorldGuard (cache+interconnect izolasyonu) [R12]        │
+    │        Multi-hart static multikernel                           │
+    │        Multi-hart IPC: DSPM-to-DSPM donanımsal FIFO mailbox   │
+    │          RAM bypass → 3-5 cycle (RAM: 10-50 cycle)            │
+    │          Determinizm: ✅ bus arbitration sabit                 │
+    │        Scratchpad memory (CVA6-VMRT)                           │
+    │  v2.5: CLIC (Core-Local Interrupt Controller, spec ratifiye    │
+    │        olunca) → donanım seviyesinde interrupt vectoring       │
+    │        Yazılımsal trap dispatch atlanır → ~50-100ns latency    │
+    │        CVA6'da CLIC desteği YOK (v2.5+ hedef)                 │
+    │  v3.0: CHERI donanım capability (MAC → HW tag) [R15]            │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                       KATMAN 1: ÇELİK ÇEKİRDEK
+          Trusted Kernel Space — SAFETY CRITICAL TCB
+      HEAP YOK · PANIC YOK · FLOAT YOK · DMA YOK (kernel içi)
+      UNBOUNDED LOOP YOK · DYN DISPATCH YOK · RECURSION YOK
+══════════════════════════════════════════════════════════════════════════════
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  INTERRUPT CONTROLLER                                           │
+    │                                                                 │
+    │  ╔═══════╤════════════════════════════════════════════════════╗  │
+    │  ║  P0   │ NMI         → donanım hatası → WDT seviye 3      ║  │
+    │  ╠═══════╪════════════════════════════════════════════════════╣  │
+    │  ║  P1   │ Exception   → illegal insn / PMP-IOPMP violation  ║  │
+    │  ╠═══════╪════════════════════════════════════════════════════╣  │
+    │  ║  P2   │ External IRQ → sensör / cihaz verisi              ║  │
+    │  ╠═══════╪════════════════════════════════════════════════════╣  │
+    │  ║  P3   │ Timer IRQ   → scheduler tick → budget enforcement ║  │
+    │  ╠═══════╪════════════════════════════════════════════════════╣  │
+    │  ║  P4   │ Software IRQ → syscall → cap_invoke dispatch      ║  │
+    │  ╚═══════╧════════════════════════════════════════════════════╝  │
+    │                                                                 │
+    │  Nested interrupt: HAYIR (NMI hariç) [R7]                      │
+    │  WCET: Interrupt handler ≤ 0.3μs                               │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  TRAP HANDLER                                                   │
+    │                                                                 │
+    │  mcause oku → interrupt/exception ayır → handler dispatch      │
+    │  Register save: caller-saved only (t0-t6, a0-a7) → 15 reg     │
+    │  WCET: ≤ 0.5μs · Kani: panic-free ✓                           │
+    │  PMP integrity check: her tick'te register oku → doğrula [R14] │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SCHEDULER                                                      │
+    │                                                                 │
+    │  Algoritma: Fixed-Priority Preemptive + Budget + Deadline      │
+    │                                                                 │
+    │  Her task:                                                      │
+    │  ┌──────────────────────────────────────┐                      │
+    │  │ priority:  u4  (0-15)               │                      │
+    │  │ budget:    u32 (cycle, safe bound)   │                      │
+    │  │ period:    u32 (μs)                 │                      │
+    │  │ deadline:  u32 (μs)                 │                      │
+    │  │ remaining: u32 (cycle)              │                      │
+    │  │ state:     enum {READY,RUN,SUSP,DEAD}│                      │
+    │  └──────────────────────────────────────┘                      │
+    │                                                                 │
+    │  Budget aşımı → Task SUSPENDED → sonraki period'da READY       │
+    │  Deadline miss → DAL'a göre: FAILOVER / ALERT / ISOLATE        │
+    │                                                                 │
+    │  Starvation koruması (v8.0 düzeltmesi):                        │
+    │  Her DAL task sayısı compile-time sabit.                       │
+    │  budget / task_count ≥ %2 CPU. İhlal → derleme hatası.         │
+    │                                                                 │
+    │  WCET: ≤ 0.8μs                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ KERNEL & ISR STACK TANIMI (v8.0)                             │
+    │                                                                 │
+    │  Kernel stack:  4KB (M-mode, tüm trap handler'lar burada)      │
+    │  ISR stack:     Ayrı DEĞİL — kernel stack'te çalışır           │
+    │                 (nested interrupt YOK → tek ISR aktif)         │
+    │                                                                 │
+    │  Neden 4KB yeterli:                                             │
+    │    Max call depth: 3 seviye                                    │
+    │    (trap_entry → scheduler_tick → capability_check)            │
+    │    Her seviye max 512B frame → 1.5KB kullanım                  │
+    │    4KB = 2.6× güvenlik marjı                                   │
+    │                                                                 │
+    │  Stack overflow koruması:                                       │
+    │    PMP R1 sınırı = guard bölge                                 │
+    │    Taşarsa → PMP violation → NMI → WDT seviye 3               │
+    │    Kani ile stack depth analizi yapılacak                       │
+    │                                                                 │
+    │  Task stack: 8KB (her task için ayrı, SPMP/WASM korumalı)      │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌───────────────────────────────┐  ┌───────────────────────────────┐
+    │  SYSCALL DISPATCH             │  │  CAPABILITY BROKER             │
+    │                               │  │                               │
+    │  5 syscall:                   │  │  Token (32 byte):             │
+    │                               │  │  ┌──────────────────────────┐ │
+    │  1. cap_invoke  ≤ 1.2μs      │  │  │ owner:    task_id  (u8)  │ │
+    │  2. ipc_send    ≤ 0.6μs      │  │  │ resource: res_id   (u16) │ │
+    │  3. ipc_recv    ≤ 0.4μs      │  │  │ rights:   bitmask  (u8)  │ │
+    │  4. yield       ≤ 0.1μs      │  │  │ epoch:    boot_cnt (u16) │ │
+    │  5. task_info   ≤ 0.1μs      │  │  │ expiry:   period_cnt(u32)│ │
+    │                               │  │  │ mac: BLAKE3 keyed  [16B] │ │
+    │  Token yoksa → DENY           │  │  └──────────────────────────┘ │
+    │  Constant-time doğrulama      │  │                               │
+    │                               │  │  Lifecycle: CREATE/EXPIRE/    │
+    │                               │  │  REVOKE/DELEGATE/EPOCH        │
+    │                               │  │  Constant-time MAC compare    │
+    │                               │  │                               │
+    │                               │  │  expiry birimi: period sayısı │
+    │                               │  │  (cycle DEĞİL → u32 × 10ms   │
+    │                               │  │   = ~497 gün @ 1ms period     │
+    │                               │  │   = ~1,362 yıl @ 10ms period) │
+    │                               │  │  Gelecek v3.0: CHERI HW tag   │
+    └───────────────────────────────┘  └───────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ MODÜLER KRİPTOGRAFİ STRATEJİSİ (v8.0 — CNSA 2.0 yolu)    │
+    │                                                                 │
+    │  Sorun: BLAKE3 ve Ed25519 CNSA 2.0'da YOK                     │
+    │  CNSA 2.0 gereksinimleri:                                      │
+    │    Hash: SHA-384 veya SHA-512 veya SHA3                        │
+    │    İmza: LMS veya XMSS (post-kuantum dayanıklı)               │
+    │                                                                 │
+    │  Çözüm: Compile-time trait seçimi (sıfır-maliyet soyutlama)   │
+    │  Rust monomorphization → runtime branching YOK                 │
+    │  Seçilmeyen provider binary'de bile yer KAPLAMAZ               │
+    │                                                                 │
+    │  ┌───────────────────────────────────────────────────────────┐ │
+    │  │  // Hash/MAC provider                                     │ │
+    │  │  #[cfg(feature = "fast-crypto")]                          │ │
+    │  │  type Crypto = Blake3Provider;    // 350c, test/geliştirme│ │
+    │  │                                                           │ │
+    │  │  #[cfg(feature = "cnsa-crypto")]                          │ │
+    │  │  type Crypto = Sha384ZknhProvider; // 1,500c + HW accel  │ │
+    │  │                                                           │ │
+    │  │  // İmza provider                                         │ │
+    │  │  #[cfg(feature = "fast-sign")]                            │ │
+    │  │  type Signer = Ed25519Provider;   // hızlı, test          │ │
+    │  │                                                           │ │
+    │  │  #[cfg(feature = "cnsa-sign")]                            │ │
+    │  │  type Signer = LmsProvider;       // post-kuantum, CNSA   │ │
+    │  │  // NOT: LMS stateful şema — kullanılmış indeks takibi   │ │
+    │  │  // OTP/NVM'de tutulmalı (v2.0 implementasyonunda)       │ │
+    │  └───────────────────────────────────────────────────────────┘ │
+    │                                                                 │
+    │  Performans çözümü — Zknh donanım hızlandırma [RATİFİYE]:     │
+    │  RISC-V Scalar Crypto Extension (Zknh) SHA-512 instruction'lar │
+    │  sha512sig0/sig1/sum0/sum1 → tek instruction = 5-10× hızlı   │
+    │  SHA-384 = SHA-512'nin kesilmiş hali → aynı instruction'lar   │
+    │  CVA6 + Zknh: CryptRISC ekibi ZATEN YAPTI (2026, CVA6 tabanlı)│
+    │                                                                 │
+    │  ╔═══════════════════╤═══════╤══════════╤══════════════════╗   │
+    │  ║ Senaryo            │ Cycle │ cap_invoke│ CNSA uyumlu?    ║   │
+    │  ╠═══════════════════╪═══════╪══════════╪══════════════════╣   │
+    │  ║ BLAKE3 (v1.0)      │ 350   │ 1.0μs   │ ❌              ║   │
+    │  ║ SHA-384 yazılım    │ 2,500 │ 3.5μs   │ ✅              ║   │
+    │  ║ SHA-384 + Zknh HW  │ 1,500 │ 2.0μs   │ ✅              ║   │
+    │  ║ SHA-384+Zknh+cache │ ~308  │ 0.9μs   │ ✅              ║   │
+    │  ╚═══════════════════╧═══════╧══════════╧══════════════════╝   │
+    │  NOT: Cycle sütunu = 256B referans input (benchmark).          │
+    │  cap_invoke sütunu = 32B token input (gerçek kullanım).        │
+    │  Token küçük → gerçek hash cycle << referans cycle.             │
+    │                                                                 │
+    │  ★ TOKEN CACHE (ortalama 308 cycle, BLAKE3'e eşit):            │
+    │  ┌───────────────────────────────────────────────────────────┐ │
+    │  │  struct TokenCache {                                       │ │
+    │  │      entries: [(TokenHash, bool); 4], // compile-time sabit│ │
+    │  │  }                                                        │ │
+    │  │                                                           │ │
+    │  │  Akış:                                                    │ │
+    │  │  1. Token XOR hash (4 cycle) → cache lookup               │ │
+    │  │  2. Hit  → HMAC atla → ~10 cycle                         │ │
+    │  │  3. Miss → SHA-384 HMAC hesapla → ~1,500 cycle           │ │
+    │  │  4. Sonucu cache'e yaz                                    │ │
+    │  │  Hit oranı: ~%80 (aynı task aynı cap tekrar kullanır)    │ │
+    │  │  Ortalama: %80×10 + %20×1,500 = 308 cycle               │ │
+    │  │                                                           │ │
+    │  │  GÜVENLİK POLİTİKALARI (Opus 4.6 review):               │ │
+    │  │  • Token REVOKE → cache'ten SİL (anında)                 │ │
+    │  │  • Epoch değişimi → tüm cache FLUSH                      │ │
+    │  │  • Cache boyutu: 4 slot, compile-time SABİT              │ │
+    │  │  • Dinamik büyüme YOK (Sipahi doktrini)                  │ │
+    │  │  • Cache lookup: constant-time (4 slot karşılaştırma)    │ │
+    │  │    → Lookup SABİT cycle, ama hit path ≠ miss path       │ │
+    │  │    → Hit: ~10c (HMAC atla) / Miss: ~1,500c (HMAC hesapla)│ │
+    │  │    → Timing farkı token VARLIĞINI sızdırabilir           │ │
+    │  │      ancak token DEĞERİNİ sızdırmaz                     │ │
+    │  │    → Kabul edilebilir risk (WCET zaten miss'e göre)       │ │
+    │  │                                                           │ │
+    │  │  WCET: HER ZAMAN miss durumuna göre (1,500 cycle)        │ │
+    │  │  Hit olursa cycle tasarruf ama budget değişmez            │ │
+    │  │  Determinizm: ✅ WCET sabit, cache sadece best-case ↑    │ │
+    │  └───────────────────────────────────────────────────────────┘ │
+    │                                                                 │
+    │  Yol haritası:                                                  │
+    │  v1.0: BLAKE3 + Ed25519 (hızlı, sertifika iddiası YOK)       │
+    │  v2.0: SHA-384/Zknh + LMS (CNSA 2.0, tek flag değişikliği)   │
+    │  v3.0: CHERI HW tag (MAC gereksiz olur, 0 cycle)              │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  STATIC MEMORY MANAGER                                          │
+    │                                                                 │
+    │  ╔═══════╤═══════════════════════╤════════╤════════════════════╗│
+    │  ║ Bölge │ İçerik                │ Boyut  │ İzin               ║│
+    │  ╠═══════╪═══════════════════════╪════════╪════════════════════╣│
+    │  ║ R0    │ Kernel .text          │ 32 KB  │ X-only (M-mode)   ║│
+    │  ║ R1    │ Kernel .data + stack  │ 20 KB  │ RW (M-mode only)  ║│
+    │  ║       │ (16KB data + 4KB stk) │        │ Stack guard: PMP  ║│
+    │  ║ R2    │ Kernel .rodata        │  8 KB  │ R-only (M-mode)   ║│
+    │  ║ R3    │ Shared IPC pool       │  8 KB  │ RW (cap-gated)    ║│
+    │  ║ R4    │ Blackbox region       │  8 KB  │ W-only (kernel)   ║│
+    │  ║ R5    │ Device MMIO           │  4 KB  │ RW (IOPMP-gated)  ║│
+    │  ║ R6    │ DMA buffer (IOPMP)    │  8 KB  │ RW (IOPMP-gated)  ║│
+    │  ║ R7    │ Rezerve               │  —     │ —                 ║│
+    │  ╚═══════╧═══════════════════════╧════════╧════════════════════╝│
+    │                                                                 │
+    │  Task belleği: 8KB stack + 16KB data = 24KB/task               │
+    │  Kernel toplam: 88KB · 8 task: 192KB · Genel: 280KB            │
+    │  Runtime allocation: YASAK · Fragmentation: İMKANSIZ           │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  FAILURE POLICY ENGINE — 6 MOD                                  │
+    │                                                                 │
+    │  ╔════════════╤═══════════════════════════════════════════════╗ │
+    │  ║ RESTART    │ Task yeniden başlat. Max 3, sonra ISOLATE.   ║ │
+    │  ║ ISOLATE    │ Task durdur, token revoke, IPC kapat.        ║ │
+    │  ║ DEGRADE    │ DAL-A/B çalışır, C/D durur.                 ║ │
+    │  ║ FAILOVER   │ Yedek task'a geç (hot-standby).             ║ │
+    │  ║ ALERT      │ Operatör bildir, task devam.                 ║ │
+    │  ║ SHUTDOWN   │ Silahlar safe, aktüatörler nötr, son log.   ║ │
+    │  ╚════════════╧═══════════════════════════════════════════════╝ │
+    │                                                                 │
+    │  Escalation (compile-time):                                    │
+    │  Stack overflow      → RESTART(3) → ISOLATE                   │
+    │  Budget aşımı        → RESTART(1) → DEGRADE                   │
+    │  WASM trap           → RESTART(3) → ISOLATE                   │
+    │  Cap violation       → ISOLATE (anında)                        │
+    │  IOPMP violation     → ISOLATE + blackbox                      │
+    │  PMP integrity fail  → SHUTDOWN (anında) ★ v7.0                │
+    │  Watchdog timeout    → FAILOVER → DEGRADE                     │
+    │  Deadline miss       → DAL'a göre                              │
+    │  Çoklu modül çöküşü  → SHUTDOWN                                │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  FORMAL VERIFICATION                                            │
+    │                                                                 │
+    │  KANI (Rust Model Checker):                                     │
+    │    Panic-freedom · bounded loops · overflow check               │
+    │    Sipahi'de tüm loop bounded → Kani sınırı sorun değil       │
+    │                                                                 │
+    │  LEAN 4 (via Aeneas [R17]):                                    │
+    │    Noninterference · token doğruluk · info flow                │
+    │    Safe Rust %55 → otomatik · unsafe %25 → Kani               │
+    │    Assembly %15 → manual review · wasmi %5 → dış audit         │
+    │                                                                 │
+    │  WCET (Heptane [R4] veya Platin):                               │
+    │    CVA6 pipeline modeli · binary seviyesinde                   │
+    │    v1.0: measurement-based · v1.5: statik analiz               │
+    │                                                                 │
+    │  CI/CD Pipeline:                                               │
+    │    Her commit:  Kani + test           (~5 dk)                  │
+    │    Her PR:      Kani + Lean 4 + WCET  (~30 dk)                 │
+    │    Her release: Full + FPGA           (~2 saat)                │
+    │                                                                 │
+    │  ★ ASSEMBLY STRATEJİSİ (v10.0):                                │
+    │  global_asm!(include_str!("boot.S"))  // arch/mod.rs içinden   │
+    │  Neden cc crate DEĞİL: 130 satır assembly için overkill,      │
+    │  build.rs karmaşıklığı ekler, global_asm! nightly'de stable.  │
+    │  boot.S, trap.S, context.S → hepsi global_asm! ile eklenir.   │
+    │  NOT: include_str! yolu dosyanın bulunduğu konuma göre.        │
+    │                                                                 │
+    │  ★ TEST STRATEJİSİ (v10.0):                                    │
+    │  Birim test: her dosyanın içinde #[cfg(test)] mod tests {}    │
+    │    → host makinede cargo test ile çalışır                      │
+    │    → her Sprint'te ilgili dosyayla birlikte yazılır            │
+    │  Entegrasyon test: tests/integration/ dizininde                │
+    │    → QEMU'da end-to-end çalışır (Sprint 14)                   │
+    │  Fault injection: tests/fi/ dizininde                          │
+    │    → FI-1~FI-7 adversarial testler (Sprint 14)                │
+    │  DO-178C uyumlu 3 katman: birim → entegrasyon → FI            │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ v1.0 ARAÇ PİPELINE'I (v10.0 — 12 araç, sıralı)            │
+    │                                                                 │
+    │  ╔═══════════╤══════════════════════╤════════════════════════╗  │
+    │  ║ Ne zaman   │ Araç                 │ Ne yapar               ║  │
+    │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
+    │  ║ Sprint 0  │ Rust nightly         │ Derleyici              ║  │
+    │  ║           │ QEMU riscv64         │ Sanal donanım          ║  │
+    │  ║           │ clippy               │ Lint (her commit)      ║  │
+    │  ║           │ cargo-audit          │ CVE taraması           ║  │
+    │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
+    │  ║ Sprint 1  │ + Kani               │ Panic-freedom, overflow║  │
+    │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
+    │  ║ Sprint 2  │ + Miri               │ Unsafe UB tespiti      ║  │
+    │  ║           │ + GDB (riscv64)      │ QEMU debug             ║  │
+    │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
+    │  ║ Sprint 8  │ + Loom               │ Atomic ordering test   ║  │
+    │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
+    │  ║ Sprint 9  │ + proptest           │ Property-based test    ║  │
+    │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
+    │  ║ Sprint 12 │ + cargo-fuzz         │ Malformed input fuzz   ║  │
+    │  ╠═══════════╪══════════════════════╪════════════════════════╣  │
+    │  ║ Release   │ + cargo-mutants      │ Test kalitesi doğrulama║  │
+    │  ║           │ + llvm-cov           │ Coverage raporu        ║  │
+    │  ║           │ + Criterion (rdcycle)│ WCET benchmark         ║  │
+    │  ╚═══════════╧══════════════════════╧════════════════════════╝  │
+    │                                                                 │
+    │  v1.0'da KULLANILMAYACAK araçlar:                              │
+    │  TLA+ (overkill), eBPF (Linux-only), RR (userspace-only),     │
+    │  AFL++ (cargo-fuzz yeterli), INSTA (UI yok), cross-rs         │
+    │  (zaten cross-compile), grcov (llvm-cov yeterli),             │
+    │  quickcheck (proptest yeterli)                                  │
+    │                                                                 │
+    │  v1.5'te eklenecek: Heptane/Platin (statik WCET),             │
+    │  Lean 4 + Aeneas (formal proof), Ferrocene (v2.0)             │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ WCET TEST PROTOKOLÜ (v9.0)                                  │
+    │                                                                 │
+    │  Prensip: WCET = gözlenen MAKSİMUM (ortalama DEĞİL)           │
+    │  Yöntem: measurement-based, rdcycle, adversarial input          │
+    │                                                                 │
+    │  Her kritik yol için 5 test senaryosu:                         │
+    │  ┌───────────────────────────────────────────────────────────┐ │
+    │  │  1. Cold start: ilk çalıştırma, cache boş, pipeline boş  │ │
+    │  │  2. Hot path: tekrarlı çalıştırma, cache sıcak            │ │
+    │  │  3. Max payload: 64B IPC mesaj, 256B compute input        │ │
+    │  │  4. Branch worst-case: her if/else en uzun yolu zorla     │ │
+    │  │  5. Interrupt interference: timer IRQ handler sırasında   │ │
+    │  └───────────────────────────────────────────────────────────┘ │
+    │                                                                 │
+    │  Her senaryo: 10,000 iterasyon                                 │
+    │  Raporlanan WCET = 5 senaryonun MAX değeri                    │
+    │  Safe bound = MAX × DAL safety factor (1.0×–1.5×)             │
+    │                                                                 │
+    │  Ölçülen kritik yollar (7 adet):                              │
+    │  ╔═══════════════════════╤══════════════════════════════════╗  │
+    │  ║ Yol                   │ Hedef WCET                       ║  │
+    │  ╠═══════════════════════╪══════════════════════════════════╣  │
+    │  ║ trap_entry             │ ≤ 0.3μs                         ║  │
+    │  ║ trap_handler           │ ≤ 0.5μs                         ║  │
+    │  ║ scheduler_tick         │ ≤ 0.8μs                         ║  │
+    │  ║ cap_invoke             │ ≤ 1.2μs                         ║  │
+    │  ║ ipc_send               │ ≤ 0.6μs                         ║  │
+    │  ║ ipc_recv               │ ≤ 0.4μs                         ║  │
+    │  ║ host_call (COMPUTE_*)  │ ≤ service WCET tablosuna göre   ║  │
+    │  ╚═══════════════════════╧══════════════════════════════════╝  │
+    │                                                                 │
+    │  Ölçüm kodu:                                                   │
+    │    let start = rdcycle();                                      │
+    │    // kritik yol                                               │
+    │    let end = rdcycle();                                        │
+    │    if (end - start) > wcet_max { wcet_max = end - start; }    │
+    │                                                                 │
+    │  v1.0: QEMU ölçüm (rdcycle = instruction count, cycle DEĞİL)  │
+    │        QEMU TCG gerçek cycle simüle etmez.                     │
+    │        Göreli karşılaştırma için kullanılabilir.                │
+    │        Alternatif: mtime (sabit frekanslı, daha tutarlı)       │
+    │  v1.5: FPGA ölçüm (gerçek donanım, kesin timing)             │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ DETERMİNİZM TEST PROTOKOLÜ (v9.0)                          │
+    │                                                                 │
+    │  Claim: "%100 deterministic" → bu KANITLANMALı                │
+    │                                                                 │
+    │  ★ DETERMİNİZM TANIMI (v10.0):                                 │
+    │  Logical determinism:  ✅ VAR                                   │
+    │    Aynı input → aynı scheduler kararı → aynı çıktı            │
+    │    Aynı task sırası → aynı IPC sırası → aynı sonuç            │
+    │  Physical determinism: ⚠️ BOUNDED                              │
+    │    Interrupt timing → donanıma bağlı jitter                    │
+    │    Cache hit/miss → cycle varyansı (v2.0 SPM ile çözülür)      │
+    │    Bu her RTOS için geçerli, Sipahi'ye özgü DEĞİL              │
+    │  Doğru ifade: "Logical determinism %100,                       │
+    │                physical determinism bounded by hardware"        │
+    │                                                                 │
+    │  Test 1 — Çıktı determinizmi:                                  │
+    │    Aynı input × 1,000 çalıştırma                              │
+    │    Her çalıştırmanın çıktı hash'i karşılaştırılır              │
+    │    Herhangi bir fark → FAIL                                    │
+    │                                                                 │
+    │  Test 2 — Cycle determinizmi:                                  │
+    │    Aynı input × 1,000 çalıştırma                              │
+    │    Her çalıştırmanın cycle sayısı kaydedilir                   │
+    │    Varyans hesaplanır:                                         │
+    │      v1.0 cache ile: varyans ≤ N cycle (N = kabul edilen)     │
+    │      v2.0 SPM ile: varyans = 0 (hedef)                        │
+    │    Varyans > eşik → FAIL                                      │
+    │                                                                 │
+    │  Test 3 — Sıralama determinizmi:                               │
+    │    Aynı task konfigürasyonu × 1,000 çalıştırma                │
+    │    Scheduler kararları aynı sırada mı?                        │
+    │    Farklı sıralama → FAIL                                     │
+    │                                                                 │
+    │  Sprint 14 entegrasyon testinde çalıştırılır                   │
+    │  Release gate kriterlerinde zorunlu                             │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ FAULT INJECTION TEST PROTOKOLÜ (v9.0)                       │
+    │                                                                 │
+    │  Prensip: Sipahi hataları YAKALAR mı? Test et.                 │
+    │                                                                 │
+    │  QEMU'da yazılım fault injection (v1.0):                      │
+    │  ┌───────────────────────────────────────────────────────────┐ │
+    │  │  FI-1: PMP register bozma                                 │ │
+    │  │    pmpcfg değerini manual olarak değiştir                 │ │
+    │  │    Beklenen: sonraki tick'te tespit → SHUTDOWN             │ │
+    │  │                                                           │ │
+    │  │  FI-2: IPC mesaj bozma                                    │ │
+    │  │    CRC32 alanına yanlış değer yaz                         │ │
+    │  │    Beklenen: ipc_recv'de tespit → mesaj REJECT             │ │
+    │  │                                                           │ │
+    │  │  FI-3: Token MAC bozma                                    │ │
+    │  │    Token'ın MAC alanında 1 bit flip                       │ │
+    │  │    Beklenen: cap_invoke'da tespit → DENY + blackbox log   │ │
+    │  │                                                           │ │
+    │  │  FI-4: Fuel tükenme                                       │ │
+    │  │    Fuel limiti 0 olarak ayarla                             │ │
+    │  │    Beklenen: ilk WASM instruction'da trap                  │ │
+    │  │                                                           │ │
+    │  │  FI-5: Budget aşımı                                       │ │
+    │  │    Task'a 1 cycle budget ver                               │ │
+    │  │    Beklenen: ilk tick'te SUSPENDED                         │ │
+    │  │                                                           │ │
+    │  │  FI-6: Stack overflow                                      │ │
+    │  │    Derin recursion ile stack'i taşır                       │ │
+    │  │    Beklenen: PMP guard → NMI → WDT seviye 3               │ │
+    │  │                                                           │ │
+    │  │  FI-7: Deadline miss (v10.0)                               │ │
+    │  │    Task'a imkansız deadline ver (1 cycle)                  │ │
+    │  │    Beklenen: DAL'a göre escalation tetiklenir              │ │
+    │  │    DAL-A → FAILOVER, DAL-D → ISOLATE                      │ │
+    │  └───────────────────────────────────────────────────────────┘ │
+    │                                                                 │
+    │  Tüm FI testleri (7 adet): beklenen sonuç olmalı, aksi → FAIL │
+    │  Sprint 14 entegrasyon testinde çalıştırılır                   │
+    │                                                                 │
+    │  FPGA'da donanım fault injection (v1.5):                      │
+    │    Voltaj glitch, clock glitch, EMP simülasyonu               │
+    │    Özel ekipman gerekir — v1.0'da YAPILMAZ                    │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ v1.0 RELEASE GATE KRİTERLERİ (v9.0)                        │
+    │                                                                 │
+    │  Prensip: Tüm kriterler PASS → release. Biri FAIL → HAYIR.   │
+    │                                                                 │
+    │  ╔════╤════════════════════════════╤══════════╤════════════╗   │
+    │  ║ #  │ Kriter                      │ Eşik     │ Araç       ║   │
+    │  ╠════╪════════════════════════════╪══════════╪════════════╣   │
+    │  ║ G1 │ Kani panic-freedom          │ %100 PASS│ Kani       ║   │
+    │  ║ G2 │ Miri undefined behavior     │ 0 UB     │ Miri       ║   │
+    │  ║ G3 │ Loom SPSC exhaustive        │ %100 PASS│ Loom       ║   │
+    │  ║ G4 │ Fuzz crash                  │ 0 crash  │ cargo-fuzz ║   │
+    │  ║    │                              │ (1M+ it.)│            ║   │
+    │  ║ G5 │ Mutation score              │ ≥ %70    │ mutants    ║   │
+    │  ║ G6 │ Line coverage               │ ≥ %85    │ llvm-cov   ║   │
+    │  ║ G7 │ WCET tüm kritik yollar     │ ≤ hedef  │ rdcycle    ║   │
+    │  ║ G8 │ Determinism (çıktı)         │ 0 fark   │ hash cmp   ║   │
+    │  ║ G9 │ Determinism (cycle)         │ ≤ N var. │ rdcycle    ║   │
+    │  ║ G10│ Fault injection (7 test)    │ %100 PASS│ FI suite   ║   │
+    │  ║ G11│ clippy                       │ 0 uyarı  │ clippy     ║   │
+    │  ║ G12│ cargo-audit                  │ 0 CVE    │ audit      ║   │
+    │  ╚════╧════════════════════════════╧══════════╧════════════╝   │
+    │                                                                 │
+    │  12 gate. Hepsi PASS → GitHub push.                            │
+    │  README badge'leri bu gate sonuçlarından üretilir.             │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                      KATMAN 2: SİNİR SİSTEMİ
+                  IPC & Deterministic Transport Layer
+══════════════════════════════════════════════════════════════════════════════
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  IPC KANAL MİMARİSİ                                             │
+    │                                                                 │
+    │  Tasarım kararı [R7]: Async SPSC > Liedtke sync                │
+    │  Determinizm > latency. Bloklanma WCET bozar.                  │
+    │                                                                 │
+    │  Topoloji: Compile-time named channels (statik)                │
+    │                                                                 │
+    │  Her kanal = SPSC ring buffer:                                  │
+    │  [head:u16][tail:u16][slots: 16×64B = 1KB]                     │
+    │  Producer: atomic store (release) · Consumer: atomic load (acq)│
+    │  3 instruction · Lock-free · Wait-free · WCET O(1)            │
+    │  Buffer dolu → Err(Full) (kayıp yok, bloklanma yok)           │
+    │                                                                 │
+    │  IPC pool: 8KB = max 8 kanal (PMP R3, cap-gated)               │
+    │                                                                 │
+    │  Mesaj formatı (64B = L1 cache line):                          │
+    │  [type:2B][sender:2B][timestamp:4B][seq:4B]                    │
+    │  [payload:48B (Q32.32)][crc32:4B]                                │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ IPC CONTRACT (v10.0)                                        │
+    │  (ipc/channel.rs doc comment olarak da yazılacak)              │
+    │                                                                 │
+    │  1. Size:        64B sabit, değişmez, runtime'da büyümez       │
+    │  2. Ordering:    FIFO (SPSC ring buffer garantisi)             │
+    │  3. Backpressure: Err(Full) döner, bloklanma YOK              │
+    │  4. Integrity:   CRC32 (her mesajda, bozuk → REJECT)          │
+    │  5. Auth:        Capability token gerekli (yoksa → DENY)      │
+    │  6. Determinism: O(1) send/recv, 3 atomic instruction         │
+    │  7. Failure:     Explicit hata, retry YOK, implicit drop YOK  │
+    │                                                                 │
+    │  ★ TEMPORAL COUPLING NOTU (v10.0):                             │
+    │  Task bağımlılıkları compile-time tanımlı.                     │
+    │  Runtime'da yeni bağımlılık oluşmaz.                           │
+    │  WCET propagation: A depends on B ise,                         │
+    │    A.worst_case += B.worst_case (zincir analizi)               │
+    │  Deadline miss → DAL'a göre escalation (FI-7 testi)            │
+    │                                                                 │
+    │  IPC correctness = system correctness                          │
+    │  Bu bilinçli tasarım kararı. IPC %100 doğruysa                 │
+    │  sistem %100 doğru. IPC bozuksa sistem bozuk.                  │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  BLACKBOX / FLIGHT RECORDER                                     │
+    │                                                                 │
+    │  Yazma: SADECE KERNEL · Race: İMKANSIZ (tek yazar)            │
+    │  Depolama: Circular buffer, PMP R4, 8KB, ~128 kayıt           │
+    │  Medya: Battery-backed SRAM veya FRAM                          │
+    │  Kayıt: 64B [MAGIC:4][VER:2][SEQ:2][TS:4][TASK:1]            │
+    │         [EVENT:1][DATA:46][CRC32:4]                            │
+    │                                                                 │
+    │  ★ Power-loss koruması (v8.0):                                 │
+    │  Yarım yazılmış kayıt → CRC32 fail → kayıt ATLANIR            │
+    │  Bir önceki kayıt sağlam → oradan devam edilir                 │
+    │  SRAM/FRAM yazma <1μs → max 1 kayıt kaybı güç kesilmesinde   │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                  KATMAN 3: MIXED-CRITICALITY BÖLGE
+              WASM Sandbox · Criticality-Aware Execution
+══════════════════════════════════════════════════════════════════════════════
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  MIXED-CRITICALITY SEVİYELERİ (DO-178C DAL)                    │
+    │                                                                 │
+    │  ╔════════════╤══════════╤══════════╤════════════════════════╗  │
+    │  ║ Seviye     │ Priority │ Budget   │ Failure Policy         ║  │
+    │  ╠════════════╪══════════╪══════════╪════════════════════════╣  │
+    │  ║ DAL-A      │ 0-3      │ %40 CPU  │ FAILOVER → SHUTDOWN   ║  │
+    │  ║ DAL-B      │ 4-7      │ %30 CPU  │ RESTART(3) → DEGRADE  ║  │
+    │  ║ DAL-C      │ 8-11     │ %20 CPU  │ RESTART(3) → ISOLATE  ║  │
+    │  ║ DAL-D/E    │ 12-15    │ kalan%10 │ ISOLATE (anında)       ║  │
+    │  ╚════════════╧══════════╧══════════╧════════════════════════╝  │
+    │                                                                 │
+    │  ★ SPMP FALLBACK NETLEŞTİRMESİ (v8.0):                        │
+    │  SPMP yoksa (v1.0): Task izolasyonu = WASM sandbox (yazılım)   │
+    │    WASM linear memory sınırlı → kernel belleğe erişim İMKANSIZ │
+    │    PMP kernel'ı koruyor → WASM → kernel sızma İMKANSIZ        │
+    │    WASM = TEMEL koruma. Tek başına YETERLİ.                    │
+    │  SPMP ile (v1.5+): WASM + SPMP = ÇİFT KATMAN (ek güvence)    │
+    │    SPMP yoksa sistem ÇÖKMEZ. Güvenlik düşmez.                  │
+    │    SPMP güvenliği İKİ KATINA çıkarır, temel DEĞİL.            │
+    │                                                                 │
+    │  ★ SPMP GELİNCE WASM KALDIRILMAZ. Nedenleri:                  │
+    │  1. Fuel metering: SPMP bellek izole eder ama çalışma süresini │
+    │     KONTROL ETMEZ. Native kod WCET aşarsa SPMP durduramaz,    │
+    │     fuel DURDURUR. (Sonsuz döngü koruması)                     │
+    │  2. Hot-swap: WASM modül çalışırken güncellenebilir.           │
+    │     Native binary'de bu İMKANSIZ (recompile + relink gerekir) │
+    │  3. Platform bağımsızlığı: Aynı WASM binary farklı ISA'da     │
+    │     çalışır (ARM↔RISC-V taşınabilirlik, v3.0+)                │
+    │  WASM = temel izolasyon + fuel + hot-swap                      │
+    │  SPMP = ek donanım katmanı. İkisi birlikte = çift güvence     │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  WASM SANDBOX — Wasmi Runtime [R9]                              │
+    │                                                                 │
+    │  v1.0: Wasmi interpreter (deterministic, %10-20 native hız)    │
+    │  v2.0: Wasmi AOT (3-5x hız, aynı semantik)                    │
+    │                                                                 │
+    │  ★ WASMI no_std DOĞRULAMASI (v8.0 — Sonnet sorusu):            │
+    │  Wasmi resmi tanımı: "WebAssembly runtime for no_std embedded" │
+    │  Kullanım: wasmi = { version="1.0", default-features=false }   │
+    │  Gereksinim: alloc crate → Sipahi kapalı allocator sağlar:     │
+    │    static WASM_HEAP: [u8; 65536] = [0; 65536]; // 64KB sabit   │
+    │    Compile-time sabit, runtime'da büyümez/küçülmez              │
+    │    Kernel heap YOK, wasmi kendi sandbox heap'i kullanır         │
+    │  2× güvenlik denetimi geçmiş (Runtime Verification Inc.)       │
+    │                                                                 │
+    │  ★ AOT FUEL NOTU (v8.0):                                       │
+    │  AOT'da fuel tüketimi interpreter'dan farklı olabilir.         │
+    │  Wasmi "stable fuel metering" (Issue #1088) bunu çözüyor.      │
+    │  AOT geçişinde fuel kalibrasyon YENİDEN yapılır.               │
+    │                                                                 │
+    │  Sandbox: No-float · Q32.32 · fuel · stack limit · mem cap     │
+    │  Module loading: Ed25519 imza + float opcode tarama + hot-swap │
+    │                                                                 │
+    │  ★ WASM MODÜL YÜKLEME POLİTİKASI (v8.8):                      │
+    │  ┌───────────────────────────────────────────────────────────┐ │
+    │  │  1. İmzasız modül → REJECT (Ed25519 doğrulama zorunlu)   │ │
+    │  │  2. Float opcode içeren modül → REJECT (tarama zorunlu)  │ │
+    │  │  3. Keyfi runtime yükleme → YASAK                        │ │
+    │  │     Sadece key hiyerarşisinde imzalı modüller kabul edilir│ │
+    │  │     (Root key: OTP fuse / Module key: root ile imzalı)   │ │
+    │  │  4. Runtime'da yeni key ekleme → İMKANSIZ                │ │
+    │  │     (OTP fuse kilitli, değiştirilemez)                    │ │
+    │  │  5. Modül boyut limiti → 64KB (WASM_HEAP sabit boyut)    │ │
+    │  │  6. Eş zamanlı yükleme → YASAK (tek modül/slot, sıralı) │ │
+    │  └───────────────────────────────────────────────────────────┘ │
+    │                                                                 │
+    │  ★ FUEL → WCET KONSERVATİF POLİTİKA (v8.0)                   │
+    │  ┌───────────────────────────────────────────────────────────┐ │
+    │  │  ESKİ: "±%20 kabul edilebilir" ← gevşek, yetersiz        │ │
+    │  │  YENİ: DAL'a göre safety factor:                          │ │
+    │  │                                                           │ │
+    │  │  measured_max = FPGA'da ampirik ölçüm (10,000 iterasyon) │ │
+    │  │  safe_bound  = measured_max × safety_factor               │ │
+    │  │  budget      = safe_bound (cycle cinsinden)               │ │
+    │  │                                                           │ │
+    │  │  ╔═════════╤═══════════════╤════════════════════════════╗ │ │
+    │  │  ║ DAL     │ Safety Factor │ Gerekçe                    ║ │ │
+    │  │  ╠═════════╪═══════════════╪════════════════════════════╣ │ │
+    │  │  ║ DAL-A   │ 1.5×          │ Felaket (silah kontrolü)   ║ │ │
+    │  │  ║ DAL-B   │ 1.3×          │ Tehlikeli (sensör)         ║ │ │
+    │  │  ║ DAL-C   │ 1.2×          │ Önemli (navigasyon)        ║ │ │
+    │  │  ║ DAL-D/E │ 1.0×          │ Düşük (log, telemetri)    ║ │ │
+    │  │  ╚═════════╧═══════════════╧════════════════════════════╝ │ │
+    │  │                                                           │ │
+    │  │  NOT: Fuel yedek güvenlik ağı. Asıl budget = rdcycle.    │ │
+    │  │  Fuel yanlış olsa bile rdcycle budget DOĞRU çalışır.      │ │
+    │  └───────────────────────────────────────────────────────────┘ │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ★ HİBRİT HOST_CALL — WASM PERFORMANS ÇÖZÜMÜ                  │
+    │  [R19] ACM TACO 2025 · Wasmachine (%11 native'den hızlı)      │
+    │  Gemini onayı: "Jitter izole edildi, Katman 3 çöpe gitmedi"   │
+    ├─────────────────────────────────────────────────────────────────┤
+    │                                                                 │
+    │  Prensip: WASM KARAR verir, kernel HESAPLAR.                   │
+    │                                                                 │
+    │  Host_call overhead: ~10-50 cycle (wasmi kernel space'te,      │
+    │  mode switch YOK, sadece fonksiyon çağrısı)                    │
+    │                                                                 │
+    │  Çağrı: cap_invoke(COMPUTE_CAP, service_id, data_ptr, len)    │
+    │  Yeni syscall YOK — capability sistemi üzerinden.              │
+    │                                                                 │
+    │  COMPUTE SERVİCELER (4 adet, SABİT, DEĞİŞMEZ):               │
+    │  ╔══════════════╤═════════════════════╤════════╤═══════╗       │
+    │  ║ Service       │ İşlev               │ Satır  │ WCET  ║       │
+    │  ╠══════════════╪═════════════════════╪════════╪═══════╣       │
+    │  ║ COMPUTE_COPY │ Bellek bloğu kopyala│  ~30   │  80c  ║       │
+    │  ║ COMPUTE_CRC  │ CRC32 bütünlük      │  ~40   │ 120c  ║       │
+    │  ║ COMPUTE_MAC  │ BLAKE3 keyed hash  │  ~50   │ 350c  ║       │
+    │  ║ COMPUTE_MATH │ Q32.32 vektör dot   │  ~80   │ 200c  ║       │
+    │  ╠══════════════╪═════════════════════╪════════╪═══════╣       │
+    │  ║ TOPLAM       │                     │ ~200   │       ║       │
+    │  ╚══════════════╧═════════════════════╧════════╧═══════╝       │
+    │                                                                 │
+    │  Tüm service: constant-time, sabit iterasyon, max 256B input   │
+    │  Kani: panic-free · Heptane: WCET · Side-channel: korumalı    │
+    │                                                                 │
+    │  Risk 1 — Call sıklığı: 16/period limit (compile-time)         │
+    │           Max overhead: 16×350c = 5,600c = 56μs @100MHz        │
+    │  Risk 2 — TCB büyümesi: 4 service SABİT, yeni eklenmez         │
+    │  Risk 3 — Determinizm: Sabit cycle, Kani + Heptane doğrulanır  │
+    │                                                                 │
+    │  Performans yolu:                                               │
+    │  v1.0: Interpreter + host_call → YETERLİ                      │
+    │  v2.0: + AOT (3-5x) → ÇOK İYİ                                │
+    │  v2.5: + wasm2c (opsiyonel) → NATIVE YAKIN                    │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+           ★ SINGLE-HART TIMING ANALİZİ (v8.0 — somut kanıt)
+══════════════════════════════════════════════════════════════════════════════
+
+    CVA6 @ 100MHz = 1,000,000 cycle/period (10ms)
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  DAL-A SİLAH KONTROL SENARYO ANALİZİ                           │
+    │                                                                 │
+    │  Budget: %40 CPU = 400,000 cycle/period                        │
+    │                                                                 │
+    │  WASM karar mantığı (if/else):       ~5,000 cycle              │
+    │  host_call(COMPUTE_MATH):              ~200 cycle              │
+    │  host_call(COMPUTE_CRC):               ~120 cycle              │
+    │  ipc_send(FIRE_CONTROL):                ~60 cycle              │
+    │  ipc_recv(SENSOR_DATA):                 ~40 cycle              │
+    │  ──────────────────────────────────────────────                 │
+    │  Toplam:                              ~5,420 cycle             │
+    │  Safe bound (×1.5 DAL-A):             ~8,130 cycle             │
+    │  Kullanım: 8,130 / 400,000 =                %2                │
+    │  Marj: %98 boşta                                               │
+    │                                                                 │
+    │  6 füze aynı anda (saturation attack):                         │
+    │  6 × 8,130 = 48,780 cycle                                     │
+    │  Kullanım: 48,780 / 400,000 =              %12.2              │
+    │  Marj: %87.8 boşta → RAHAT YETİŞİYOR                         │
+    │                                                                 │
+    │  Sonuç: Single-hart v1.0 DAL-A silah kontrolü için YETERLİ.   │
+    │  Multi-hart (v2.0) performans için değil, redundancy için.     │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                         10K SATIR BÜTÇE DAĞILIMI
+══════════════════════════════════════════════════════════════════════════════
+
+    ╔══════════════════════════════════════════╤═══════╤══════════════════╗
+    ║  Bileşen                                 │ Satır │ Doğrulama        ║
+    ╠══════════════════════════════════════════╪═══════╪══════════════════╣
+    ║  K0: Boot + HAL + Secure Boot + KeyProv  │   900 │ WCET + Kani      ║
+    ║  K0: IOPMP HAL driver                    │   200 │ WCET + Kani      ║
+    ║  K0: PMP integrity checker               │   100 │ Kani             ║
+    ╠══════════════════════════════════════════╪═══════╪══════════════════╣
+    ║  K1: Trap Handler + Interrupt + ISR stk  │   700 │ WCET ≤0.5μs+Kani║
+    ║  K1: Scheduler + context switch          │ 1,400 │ WCET ≤0.8μs+Kani║
+    ║  K1: Capability Broker (BLAKE3 keyed hash) │ 1,200 │ Lean 4 + Kani    ║
+    ║  K1: Syscall Dispatch (5 syscall)        │   500 │ WCET ≤1.2μs+Kani║
+    ║  K1: Static Memory Manager               │   400 │ Kani             ║
+    ║  K1: Failure Policy Engine               │   700 │ Kani + Lean 4    ║
+    ╠══════════════════════════════════════════╪═══════╪══════════════════╣
+    ║  K2: IPC (SPSC channels)                 │   700 │ WCET O(1) + Kani ║
+    ║  K2: Blackbox Recorder + power-loss CRC  │   400 │ Kani             ║
+    ╠══════════════════════════════════════════╪═══════╪══════════════════╣
+    ║  K3: WASM Host Interface + fuel bridge   │ 1,100 │ Kani             ║
+    ║  K3: Module Loader + Ed25519             │   500 │ Kani             ║
+    ║  K3: Compute Services (4 fn, const-time) │   200 │ WCET + Kani      ║
+    ╠══════════════════════════════════════════╪═══════╪══════════════════╣
+    ║  Genel: Config + Types + Error           │   300 │ —                ║
+    ║  Rezerve: Gelecek (SPMP, MIL-STD-1553)   │   700 │ —                ║
+    ╠══════════════════════════════════════════╪═══════╪══════════════════╣
+    ║  TOPLAM                                  │10,000 │ %100 Kani        ║
+    ╚══════════════════════════════════════════╧═══════╧══════════════════╝
+
+    Bütçe doğrulama:
+    K0: 900+200+100 = 1,200
+    K1: 700+1,400+1,200+500+400+700 = 4,900
+    K2: 700+400 = 1,100
+    K3: 1,100+500+200 = 1,800
+    Gen+Rez: 300+700 = 1,000
+    TOPLAM: 1,200+4,900+1,100+1,800+1,000 = 10,000 ✓
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                      GÜVENLİK DUVARLARI (6 KATMAN)
+══════════════════════════════════════════════════════════════════════════════
+
+    Saldırgan ──▶ [ WASM Sandbox ]     Duvar 1: Linear memory, pointer yok
+                         │
+                  [ Capability Token ]  Duvar 2: BLAKE3 keyed, constant-time
+                         │
+                  [ SPMP / PMP ]        Duvar 3: Donanım bellek izolasyonu
+                         │
+                  [ IOPMP ]             Duvar 4: DMA izolasyonu, 2-cycle
+                         │
+                  [ M-mode PMP ]        Duvar 5: Kernel koruması, kilitli
+                         │
+                  [ Fiziksel ]          Duvar 6: JTAG kapalı, OTP key, tamper
+
+    Hepsini aşmak = DEVLET DÜZEYİNDE OPERASYON
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                          KERNEL WCET ÖZETİ
+══════════════════════════════════════════════════════════════════════════════
+
+    ╔═════════════════════════╤══════════╤════════════════════════════════╗
+    ║  Operasyon              │ WCET     │ Karşılaştırma                  ║
+    ╠═════════════════════════╪══════════╪════════════════════════════════╣
+    ║  Interrupt entry        │ ≤ 0.3μs │                                ║
+    ║  Trap handler           │ ≤ 0.5μs │                                ║
+    ║  Scheduler tick         │ ≤ 0.8μs │                                ║
+    ║  cap_invoke (syscall)   │ ≤ 1.2μs │                                ║
+    ║  ipc_send               │ ≤ 0.6μs │                                ║
+    ║  ipc_recv               │ ≤ 0.4μs │                                ║
+    ║  yield / task_info      │ ≤ 0.1μs │                                ║
+    ╠═════════════════════════╪══════════╪════════════════════════════════╣
+    ║  Worst-case interrupt   │ ≤ 1.5μs │ seL4 RISC-V WCET:              ║
+    ║  latency (toplam)       │         │ YAYINLANMAMIŞ (PISTIs-V)      ║
+    ║                         │         │ seL4 ARM WCET: ~500μs (A8)    ║
+    ╠═════════════════════════╪══════════╪════════════════════════════════╣
+    ║  Karar süresi (tam)     │ ≤ 80μs  │ seL4 RISC-V: karşılaştırma   ║
+    ║  (interrupt → ateş emri)│ (hedef) │ henüz yapılamaz (veri yok)    ║
+    ║                         │         │ FPGA ölçümleri ile doğrulanacak║
+    ║                         │         │ NOT: Hesapsal tahmin ~83μs,   ║
+    ║                         │         │ branch-free ile ≤80μs hedef   ║
+    ╚═════════════════════════╧══════════╧════════════════════════════════╝
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                   ⚠️  RİSK DEĞERLENDİRMESİ VE MİTİGASYON
+                        (7 AI review sonrası nihai)
+══════════════════════════════════════════════════════════════════════════════
+
+    ╔════╤══════════════════╤══════════╤═══════════╤══════════════════╗
+    ║ #  │ Risk              │ Ciddiyet │ Haklılık  │ Durum            ║
+    ╠════╪══════════════════╪══════════╪═══════════╪══════════════════╣
+    ║ 1  │ Fuel→Cycle       │ ORTA     │ %50       │ ✅ MİTİGATE     ║
+    ║    │ eşlemesi         │          │           │ rdcycle backup + ║
+    ║    │                  │          │           │ DAL safety factor║
+    ╠════╪══════════════════╪══════════╪═══════════╪══════════════════╣
+    ║ 2  │ Draft spec       │ ORTA     │ %30       │ ✅ MİTİGATE     ║
+    ║    │ bağımlılığı      │          │           │ compile flag +   ║
+    ║    │                  │          │           │ fallback var     ║
+    ╠════╪══════════════════╪══════════╪═══════════╪══════════════════╣
+    ║ 3  │ Aeneas/TQL-5     │ YÜKSEK   │ %80       │ ⚠️ KABUL EDİLDİ ║
+    ║    │ kırılganlığı     │          │           │ Hibrit strateji  ║
+    ║    │                  │          │           │ Sertifika v2.0+  ║
+    ╠════╪══════════════════╪══════════╪═══════════╪══════════════════╣
+    ║ 4  │ Branch miss      │ DÜŞÜK    │ Gemini ✅ │ ✅ İZOLE EDİLDİ ║
+    ║    │ jitter (WASM)    │          │ onayladı  │ Host_call ile    ║
+    ║    │                  │          │           │ jitter daraltıldı║
+    ╚════╧══════════════════╧══════════╧═══════════╧══════════════════╝
+
+    Kritik ilke: Hiçbir risk v1.0'ın çalışmasını engellemez.
+    "Önce çalışan kernel, sonra sertifika."
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+             ⚠️  İMPLEMENTASYON UYARILARI (v10.0 — Sprint dikkat noktaları)
+══════════════════════════════════════════════════════════════════════════════
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  DİKKAT 1: Over-engineering tuzağı                             │
+    │                                                                 │
+    │  12 release gate var. Her satırı her araçtan geçirmek aylar    │
+    │  sürer. Kural: KRİTİK YOL test edilir, yardımcı kod minimal.  │
+    │                                                                 │
+    │  Kritik yol = trap handler, scheduler, cap_invoke, IPC,        │
+    │  WASM fuel bridge → FULL test suite                            │
+    │  Yardımcı kod = config, types, error → Kani yeterli            │
+    │                                                                 │
+    │  "Her şey test edilmez — kritik path test edilir"              │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  DİKKAT 2: False sense of security                             │
+    │                                                                 │
+    │  "12 gate PASS" ≠ "bug yok"                                    │
+    │                                                                 │
+    │  Kani → bounded (belirlenen sınıra kadar kontrol eder)        │
+    │  Fuzz → coverage dependent (test etmediği yolu bulamaz)       │
+    │  Miri → runtime path dependent (çalışmayan yolu görmez)       │
+    │                                                                 │
+    │  Doğru: "test geçmedi = kesin bug"                             │
+    │  Yanlış: "test geçti = kesin doğru"                            │
+    │                                                                 │
+    │  Araçlar güvence ARTIRIR ama garanti VERMEZ.                   │
+    │  Garanti ancak Lean 4 ile gelir → v1.5                         │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  DİKKAT 3: WCET illusion                                       │
+    │                                                                 │
+    │  QEMU'da ölçülen WCET ≠ gerçek donanım WCET                  │
+    │                                                                 │
+    │  QEMU: branch predictor modeli basitleştirilmiş                │
+    │  QEMU: cache modeli gerçek CVA6'dan farklı olabilir            │
+    │  QEMU: interrupt timing emüle edilmiş                          │
+    │                                                                 │
+    │  v1.0 QEMU WCET = "yön gösterici tahmin"                      │
+    │  v1.5 FPGA WCET = "gerçek ölçüm"                              │
+    │                                                                 │
+    │  QEMU'da ≤80μs hedefini tuttursan bile FPGA'da farklı         │
+    │  çıkabilir. Bu beklenen ve kabul edilen bir risk.              │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  DİKKAT 4: Determinism test yanlış pozitif riski               │
+    │                                                                 │
+    │  1,000 run aynı input → aynı scheduling path takip edebilir   │
+    │  Gizli nondeterminizm kaçabilir.                               │
+    │                                                                 │
+    │  Mitigasyon:                                                    │
+    │    • Farklı task konfigürasyonları ile test et                  │
+    │    • Farklı interrupt zamanlamaları ile test et                 │
+    │    • Stress altında test (tüm task'lar max budget kullanırken) │
+    │    • Edge case: tüm buffer'lar dolu iken determinizm testi    │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+             ⚠️  BİLİNEN KÜÇÜK SORUNLAR (Sprint'lerde çözülecek)
+══════════════════════════════════════════════════════════════════════════════
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 1: IPC pool 32B taşma                                   │
+    │                                                                 │
+    │  8 kanal × (4B head/tail + 1024B slots) = 8,224B               │
+    │  R3 bölgesi = 8,192B (8KB)                                     │
+    │  Fark: 32B taşma                                               │
+    │                                                                 │
+    │  Çözüm: head/tail'ı ilk slot'un içine göm                     │
+    │         → 1024B/kanal → 8 × 1024 = 8,192B = tam 8KB           │
+    │  Ne zaman: Sprint 8 (SPSC IPC implementasyonu)                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 2: Blackbox sabitleri config.rs'de yok                  │
+    │                                                                 │
+    │  v10.0'da: 8KB / 64B kayıt = 128 kayıt                        │
+    │  config.rs'de: BLACKBOX_SIZE, BLACKBOX_RECORD_SIZE,            │
+    │                BLACKBOX_MAX_RECORDS sabitleri eksik             │
+    │                                                                 │
+    │  Ne zaman: Sprint 11 (blackbox recorder implementasyonu)       │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 3: Token ve Message struct'ları types.rs'de yok         │
+    │                                                                 │
+    │  Token (32B): owner + resource + rights + epoch + expiry + mac │
+    │  Message (64B): type + sender + timestamp + seq + payload + crc│
+    │  Şu an sadece v10.0 dokümanında tanımlı, kod iskeleti yok     │
+    │                                                                 │
+    │  Ne zaman: Sprint 8 (Message), Sprint 9 (Token)               │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 4: hal/ placeholder tutarsızlığı                        │
+    │                                                                 │
+    │  secure_boot.rs ve key.rs placeholder var ama                  │
+    │  clint.rs, pmp.rs, device.rs, boot.rs yok.                    │
+    │  Sprint 1'de uart.rs, Sprint 2'de trap.S de yok.              │
+    │                                                                 │
+    │  Karar: düzeltilmeyecek. Sprint'e oturduğumuzda dosya         │
+    │  oluşturup içini doldurmak daha verimli.                       │
+    │  secure_boot/key var çünkü 900→3 dosya parçalama kararından.  │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 5: Sprint 12 alloc entegrasyonu (ÇÖZÜLECEK)             │
+    │                                                                 │
+    │  build-std-features = ["compiler-builtins-mem"] EKLENDİ ✓      │
+    │  Sprint 12'de kalan işler:                                     │
+    │    • build-std'ye "alloc" eklenmeli                             │
+    │    • extern crate alloc; açılmalı                               │
+    │    • static-alloc crate eklenmeli (bump allocator)             │
+    │    • wasmi prefer-btree-collections ile eklenmeli               │
+    │                                                                 │
+    │  Ne zaman: Sprint 12 (WASM sandbox implementasyonu)            │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 6: Bump allocator arena tükenmesi (KRİTİK)              │
+    │                                                                 │
+    │  static-alloc bump allocator deallocate ETMEZ.                 │
+    │  Wasmi Vec/Box allocate eder, drop edince bellek geri gelmez. │
+    │  Hot-swap: modül yükle → çalıştır → drop → yeni modül yükle   │
+    │  Birkaç swap sonra 64KB arena tükenir → alloc panik.           │
+    │                                                                 │
+    │  Çözüm: Epoch-based arena reset                                │
+    │    Hot-swap sırasında: Wasmi instance tamamen drop et,         │
+    │    arena pointer'ı başa sar (reset), yeni instance oluştur.    │
+    │    Arena reset = tüm allocation sıfırlanır, temiz başlangıç.   │
+    │                                                                 │
+    │  Ne zaman: Sprint 12 (WASM sandbox implementasyonu)            │
+    │  Bu çözülmeden hot-swap ÇALIŞMAZ.                              │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 7: Q32.32 overflow politikası tanımsız                  │
+    │                                                                 │
+    │  Sensör f32 → HAL → Q32.32 dönüşümünde:                       │
+    │  f32 değer ±2³¹ aralığını aşarsa ne olur?                     │
+    │  Safety-critical'da sessiz truncate = BUG.                     │
+    │                                                                 │
+    │  Karar: Saturating arithmetic kullanılacak.                    │
+    │    Taşarsa → ±i64::MAX'ta kalır + SipahiError döner.          │
+    │    i64::saturating_mul, i64::saturating_add.                   │
+    │    Kani ile overflow-freedom kanıtlanacak.                     │
+    │                                                                 │
+    │  Ne zaman: Sprint 1 (HAL conversion fonksiyonu)                │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 8: Timestamp u32 wrap-around (~497 gün)                 │
+    │                                                                 │
+    │  IPC mesaj ve blackbox'ta timestamp: u32, 10ms period.         │
+    │  2³² × 10ms = ~497 gün = ~1.36 yıl → wrap-around.            │
+    │  Askeri platform yıllarca çalışır.                              │
+    │                                                                 │
+    │  Karar: timestamp = "son boot'tan bu yana" olarak tanımla.    │
+    │    Blackbox'ta boot_epoch: u16 ekle.                           │
+    │    Wrap olursa boot_epoch ile çözümlenir.                      │
+    │    Monoton sequence number (seq: u32) zaten var — sıralama    │
+    │    için seq kullan, timestamp sadece zamanlama referansı.       │
+    │                                                                 │
+    │  Ne zaman: Sprint 8 (IPC message), Sprint 11 (blackbox)       │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  SORUN 9: PMP bölge hizalama — TOR zorunlu, sıfır yedek       │
+    │                                                                 │
+    │  R1 = 20KB (16KB data + 4KB stack) → 2'nin kuvveti DEĞİL     │
+    │  → NAPOT modu kullanılamaz → TOR zorunlu.                      │
+    │  TOR'da her bölge sınırı 1 PMP entry yiyor.                   │
+    │  8 bölge (R0-R7) = 8 entry. CVA6 = 16 PMP entry.             │
+    │  Task region hint'leri = 8 entry.                              │
+    │  Toplam: 16 / 16 = TAM DOLU, sıfır yedek.                    │
+    │                                                                 │
+    │  Risk: Bir entry bile eksiğin olursa bölge birleştirmen       │
+    │  veya izolasyondan fedakarlık etmen gerekir.                   │
+    │                                                                 │
+    │  Ne zaman: Sprint 5 (PMP implementasyonu, somut hesap)         │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                           YOL HARİTASI
+══════════════════════════════════════════════════════════════════════════════
+
+    v1.0 ─────── 2026-2027 ─── Çekirdek Çalışan Sistem
+    │  ✦ QEMU boot + scheduler + IPC + WASM
+    │  ✦ M-mode PMP (ratifiye), UART only
+    │  ✦ Kani %100, measurement-based WCET
+    │  ✦ Task izolasyonu: WASM sandbox
+    │
+    v1.5 ─────── 2027-2028 ─── Doğrulama ve Olgunlaşma
+    │  ✦ SPMP, SPI/I2C/CAN, Lean 4 proofs
+    │  ✦ Heptane WCET, FPGA test, CI/CD pipeline
+    │
+    v2.0 ─────── 2028-2029 ─── Üretim Kalitesi
+    │  ✦ Scratchpad, WorldGuard, AOT, multi-hart
+    │  ✦ MIL-STD-1553, DO-178C hazırlık, TÜBİTAK sunum
+    │
+    v2.5 ─────── 2029 ─── Donanım Optimizasyonu
+    │  ✦ CLIC donanım interrupt vectoring (~50-100ns latency)
+    │  ✦ wasm2c opsiyonel native derleme
+    │
+    v3.0 ─────── 2030+ ─── Gelecek Nesil
+    │  ✦ CHERI HW capability, DO-178C Level A, NATO STANAG
+    ▼
+
+
+
+══════════════════════════════════════════════════════════════════════════════
+                        AÇIK ARAŞTIRMA SORULARI (5)
+══════════════════════════════════════════════════════════════════════════════
+
+    1. Fuel kalibrasyon: CVA6 FPGA'da instruction-level cycle ölçüm
+    2. Multi-hart formal: seL4 verified static multikernel modeli
+    3. RISC-V Zkr: Donanım entropy → BLAKE3 key generation
+    4. Temporal isolation: Simplified formal proof model
+    5. DO-178C TQL: Kani/Lean 4 araç sertifikasyon yolu
+
+══════════════════════════════════════════════════════════════════════════════
+
+    9 AI REVIEW + EXTENDED PIPELINE REVIEW SONUCU:
+    Gemini #1:     Eleştirdi → 3 risk mitigate edildi
+    Gemini #2:     Onayladı → "Jitter izole, Katman 3 kurtarıldı"
+    ChatGPT #1:    Scope uyarısı → Phase planı oluşturuldu
+    Opus 4.6 #1:   Sentez → Tasarım tamam, kodlamaya geç
+    Opus 4.6 #2:   Kripto onay → Token cache + CNSA trait + side-channel
+    Sonnet 4.6 #1: 9.5/10 → 6 boşluk kapatıldı
+    Sonnet 4.6 #2: u32 overflow + BLAKE3 keyed + CRC32 fix
+    Opus 4.6 #3:   v8.9 tam analiz → 6 düzeltme (politika+hesap+referans)
+    ChatGPT #2:    Pipeline review → WCET/determinizm/FI/release gate
+                   + Extended: IPC contract, observability, impl uyarıları
+                   + Final verdict: "artık büyük açık yok"
+
+    Kalan mimari hata: 0
+    Kalan belgeleme boşluğu: 0
+    Tasarım durumu: NİHAİ ✅
+
+══════════════════════════════════════════════════════════════════════════════
+
+    "Sipahi düşmez. Sipahi'nin düşmesi için devletin düşmesi gerekir."
+
+                                            — gzhno // Krul_Tepes
+
+══════════════════════════════════════════════════════════════════════════════
