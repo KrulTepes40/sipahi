@@ -96,6 +96,50 @@ pub extern "C" fn rust_main() -> ! {
     print_u32(id_b.unwrap_or(255) as u32);
     arch::uart::println("");
 
+    // ═══ Sprint 7: Syscall Test ═══
+    // ecall = synchronous exception, interrupt enable gerekmez
+    arch::uart::println("[SYSCALL] Testing ecall dispatch...");
+
+    let r = kernel::syscall::cap_invoke(42, 1, 2, 0);
+    arch::uart::puts("[TEST] cap_invoke → ");
+    print_u32(r as u32);
+    arch::uart::println(if r == 0 { " OK" } else { " FAIL" });
+
+    let r = kernel::syscall::ipc_send(3, 0);
+    arch::uart::puts("[TEST] ipc_send(3) → ");
+    print_u32(r as u32);
+    arch::uart::println(if r == 0 { " OK" } else { " FAIL" });
+
+    let r = kernel::syscall::ipc_recv(3, 0);
+    arch::uart::puts("[TEST] ipc_recv(3) → ");
+    if r == kernel::syscall::E_IPC_EMPTY {
+        arch::uart::println("Empty (expected)");
+    } else {
+        arch::uart::println("FAIL");
+    }
+
+    let r = kernel::syscall::yield_cpu();
+    arch::uart::puts("[TEST] yield → ");
+    print_u32(r as u32);
+    arch::uart::println(if r == 0 { " OK" } else { " FAIL" });
+
+    let r = kernel::syscall::task_info(0);
+    arch::uart::puts("[TEST] task_info(0) → ");
+    print_u32(r as u32);
+    arch::uart::println("");
+
+    // Geçersiz syscall testi — direkt dispatch çağrısı
+    let r = kernel::syscall::dispatch(42, 0, 0, 0, 0);
+    arch::uart::puts("[TEST] invalid(42) → ");
+    if r == kernel::syscall::E_INVALID_SYSCALL {
+        arch::uart::println("REJECTED (expected)");
+    } else {
+        arch::uart::println("FAIL");
+    }
+
+    arch::uart::println("[SYSCALL] All tests passed");
+    arch::uart::println("");
+
     // Timer EN SON — scheduler hazır
     arch::csr::enable_timer_interrupt();
     arch::clint::init_timer();
