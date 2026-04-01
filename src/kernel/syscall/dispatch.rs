@@ -1,33 +1,16 @@
-// Sipahi — Syscall Dispatch (Sprint 7)
+// Sipahi — Syscall Dispatch (Sprint 7-8)
 // Jump table dispatch — 5 syscall, O(1), deterministic
-//
-// ABI: a7 = syscall ID, a0-a3 = argümanlar, dönüş a0
-// Jump table: SYSCALL_TABLE[id](args) — 1 load + 1 indirect call
-// Geçersiz ID → E_INVALID_SYSCALL (bounds check)
-//
-// WCET: rdcycle ile giriş/çıkış farkı
-// Kani: bounds check, panic-freedom, hata kodları
+// Sprint 8: ipc_send/ipc_recv gerçek SPSC entegrasyonu
 
 #[cfg(not(kani))]
 use crate::arch::uart;
-
-// ═══════════════════════════════════════════════════════
-// Syscall ID sabitleri (dispatch'e özgü, usize)
-// config.rs'teki u64 versiyonlarla Kani proof'ta eşleştirilir
-// ═══════════════════════════════════════════════════════
 
 pub const SYS_CAP_INVOKE: usize = 0;
 pub const SYS_IPC_SEND: usize = 1;
 pub const SYS_IPC_RECV: usize = 2;
 pub const SYS_YIELD: usize = 3;
 pub const SYS_TASK_INFO: usize = 4;
-
-/// Jump table boyutu
 pub const SYSCALL_COUNT: usize = 5;
-
-// ═══════════════════════════════════════════════════════
-// Hata kodları (usize — a0'a yazılır)
-// ═══════════════════════════════════════════════════════
 
 pub const E_OK: usize = 0;
 pub const E_INVALID_SYSCALL: usize = usize::MAX;
@@ -36,43 +19,27 @@ pub const E_IPC_FULL: usize = usize::MAX - 2;
 pub const E_IPC_EMPTY: usize = usize::MAX - 3;
 pub const E_INVALID_ARG: usize = usize::MAX - 4;
 
-// ═══════════════════════════════════════════════════════
-// Jump Table — compile-time sabit
-// ═══════════════════════════════════════════════════════
-
 type SyscallHandler = fn(usize, usize, usize, usize) -> usize;
 
 static SYSCALL_TABLE: [SyscallHandler; SYSCALL_COUNT] = [
-    sys_cap_invoke,  // 0
-    sys_ipc_send,    // 1
-    sys_ipc_recv,    // 2
-    sys_yield,       // 3
-    sys_task_info,   // 4
+    sys_cap_invoke,
+    sys_ipc_send,
+    sys_ipc_recv,
+    sys_yield,
+    sys_task_info,
 ];
-
-// ═══════════════════════════════════════════════════════
-// rdcycle — WCET ölçümü
-// ═══════════════════════════════════════════════════════
 
 #[cfg(not(kani))]
 #[inline(always)]
 fn rdcycle() -> u64 {
     let val: u64;
-    unsafe {
-        core::arch::asm!("rdcycle {}", out(reg) val);
-    }
+    unsafe { core::arch::asm!("rdcycle {}", out(reg) val); }
     val
 }
 
 #[cfg(kani)]
 #[inline(always)]
-fn rdcycle() -> u64 {
-    0
-}
-
-// ═══════════════════════════════════════════════════════
-// WCET istatistik — tek hart, lock-free
-// ═══════════════════════════════════════════════════════
+fn rdcycle() -> u64 { 0 }
 
 static mut WCET_MAX: [u64; SYSCALL_COUNT] = [0; SYSCALL_COUNT];
 static mut WCET_LAST: [u64; SYSCALL_COUNT] = [0; SYSCALL_COUNT];
@@ -89,7 +56,6 @@ fn wcet_update(id: usize, cycles: u64) {
     }
 }
 
-/// WCET istatistiklerini yazdır (debug)
 #[cfg(not(kani))]
 pub fn print_wcet_stats() {
     uart::println("[WCET] Syscall cycle stats:");
@@ -108,14 +74,6 @@ pub fn print_wcet_stats() {
     }
 }
 
-// ═══════════════════════════════════════════════════════
-// Ana Dispatch — trap.rs'den çağrılır
-// ═══════════════════════════════════════════════════════
-
-/// Syscall dispatch — jump table ile O(1)
-///
-/// Geçerli ID: 1 bounds check + 1 table load + 1 call
-/// Geçersiz ID: 1 bounds check + hata dönüşü
 #[inline(never)]
 pub fn dispatch(
     syscall_id: usize,
@@ -124,7 +82,6 @@ pub fn dispatch(
     arg2: usize,
     arg3: usize,
 ) -> usize {
-    // Bounds check
     if syscall_id >= SYSCALL_COUNT {
         #[cfg(not(kani))]
         {
@@ -136,11 +93,8 @@ pub fn dispatch(
     }
 
     let start = rdcycle();
-
-    // Jump table — 1 load + 1 indirect call
     let handler = SYSCALL_TABLE[syscall_id];
     let result = handler(arg0, arg1, arg2, arg3);
-
     let end = rdcycle();
     wcet_update(syscall_id, end.wrapping_sub(start));
 
@@ -148,12 +102,9 @@ pub fn dispatch(
 }
 
 // ═══════════════════════════════════════════════════════
-// Syscall Stub Handler'lar
-// Sprint 7: stub — Sprint 8+ gerçek implementasyon
+// Syscall Handler'lar — Sprint 8: IPC gerçek
 // ═══════════════════════════════════════════════════════
 
-/// SYS 0: cap_invoke — Capability korumalı kaynak erişimi
-/// Sprint 9'da gerçek implementasyon
 fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> usize {
     #[cfg(not(kani))]
     {
@@ -168,50 +119,94 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
     E_OK
 }
 
-/// SYS 1: ipc_send — IPC kanalına mesaj gönder
-/// Sprint 8'de SPSC ring buffer entegrasyonu
-fn sys_ipc_send(channel_id: usize, _msg_ptr: usize, _: usize, _: usize) -> usize {
+/// ipc_send — GERÇEK SPSC entegrasyonu (Sprint 8)
+/// arg0 = channel_id, arg1 = mesaj pointer
+fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize {
     if channel_id >= 8 {
         #[cfg(not(kani))]
         uart::println("[SYS] ipc_send: invalid channel");
         return E_INVALID_ARG;
     }
+
     #[cfg(not(kani))]
     {
-        uart::puts("[SYS] ipc_send(ch=");
-        print_u64(channel_id as u64);
-        uart::println(")");
+        let ch = match crate::ipc::get_channel(channel_id) {
+            Some(c) => c,
+            None => return E_INVALID_ARG,
+        };
+
+        let msg = unsafe {
+            core::ptr::read_volatile(msg_ptr as *const crate::ipc::IpcMessage)
+        };
+
+        match ch.send(&msg) {
+            Ok(()) => {
+                uart::puts("[SYS] ipc_send(ch=");
+                print_u64(channel_id as u64);
+                uart::println(") OK");
+                E_OK
+            }
+            Err(()) => {
+                uart::puts("[SYS] ipc_send(ch=");
+                print_u64(channel_id as u64);
+                uart::println(") FULL");
+                E_IPC_FULL
+            }
+        }
     }
+
+    #[cfg(kani)]
     E_OK
 }
 
-/// SYS 2: ipc_recv — IPC kanalından mesaj al
-/// Sprint 8'de SPSC ring buffer entegrasyonu
-fn sys_ipc_recv(channel_id: usize, _buf_ptr: usize, _: usize, _: usize) -> usize {
+/// ipc_recv — GERÇEK SPSC entegrasyonu (Sprint 8)
+/// arg0 = channel_id, arg1 = buffer pointer
+fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize {
     if channel_id >= 8 {
         #[cfg(not(kani))]
         uart::println("[SYS] ipc_recv: invalid channel");
         return E_INVALID_ARG;
     }
+
     #[cfg(not(kani))]
     {
-        uart::puts("[SYS] ipc_recv(ch=");
-        print_u64(channel_id as u64);
-        uart::println(") -> Empty");
+        let ch = match crate::ipc::get_channel(channel_id) {
+            Some(c) => c,
+            None => return E_INVALID_ARG,
+        };
+
+        match ch.recv() {
+            Some(msg) => {
+                unsafe {
+                    core::ptr::write_volatile(buf_ptr as *mut crate::ipc::IpcMessage, msg);
+                }
+                uart::puts("[SYS] ipc_recv(ch=");
+                print_u64(channel_id as u64);
+                uart::println(") OK");
+                E_OK
+            }
+            None => {
+                uart::puts("[SYS] ipc_recv(ch=");
+                print_u64(channel_id as u64);
+                uart::println(") Empty");
+                E_IPC_EMPTY
+            }
+        }
     }
+
+    #[cfg(kani)]
     E_IPC_EMPTY
 }
 
-/// SYS 3: yield — Gönüllü CPU bırakma
-/// Sprint 10'da scheduler entegrasyonu
 fn sys_yield(_: usize, _: usize, _: usize, _: usize) -> usize {
     #[cfg(not(kani))]
-    uart::println("[SYS] yield");
+    {
+        uart::println("[SYS] yield");
+        crate::kernel::scheduler::schedule();
+    }
     E_OK
 }
 
-/// SYS 4: task_info — Task bilgisi sorgula
-/// Sprint 10'da gerçek scheduler state
 fn sys_task_info(info_type: usize, _: usize, _: usize, _: usize) -> usize {
     match info_type {
         0 => {
@@ -242,10 +237,6 @@ fn sys_task_info(info_type: usize, _: usize, _: usize, _: usize) -> usize {
     }
 }
 
-// ═══════════════════════════════════════════════════════
-// Yardımcı yazdırma
-// ═══════════════════════════════════════════════════════
-
 #[cfg(not(kani))]
 fn print_u64(mut val: u64) {
     if val == 0 {
@@ -266,14 +257,13 @@ fn print_u64(mut val: u64) {
 }
 
 // ═══════════════════════════════════════════════════════
-// Kani Formal Verification — Sprint 7
+// Kani — Sprint 7 proof'ları (değişmedi)
 // ═══════════════════════════════════════════════════════
 
 #[cfg(kani)]
 mod verification {
     use super::*;
 
-    /// Proof 26: Geçersiz syscall ID → E_INVALID_SYSCALL
     #[kani::proof]
     fn dispatch_invalid_id_rejected() {
         let id: usize = kani::any();
@@ -282,7 +272,6 @@ mod verification {
         assert!(result == E_INVALID_SYSCALL);
     }
 
-    /// Proof 27: ipc_send kanal ≥8 → E_INVALID_ARG
     #[kani::proof]
     fn ipc_send_invalid_channel() {
         let ch: usize = kani::any();
@@ -291,7 +280,6 @@ mod verification {
         assert!(result == E_INVALID_ARG);
     }
 
-    /// Proof 28: ipc_recv kanal ≥8 → E_INVALID_ARG
     #[kani::proof]
     fn ipc_recv_invalid_channel() {
         let ch: usize = kani::any();
@@ -300,22 +288,18 @@ mod verification {
         assert!(result == E_INVALID_ARG);
     }
 
-    /// Proof 29: task_info herhangi input → panic-free
     #[kani::proof]
     fn task_info_no_panic() {
         let info_type: usize = kani::any();
         let _result = sys_task_info(info_type, 0, 0, 0);
-        // panic olmazsa PASS
     }
 
-    /// Proof 30: Jump table boyutu == SYSCALL_COUNT
     #[kani::proof]
     fn syscall_table_size() {
         assert!(SYSCALL_TABLE.len() == SYSCALL_COUNT);
         assert!(SYSCALL_COUNT == 5);
     }
 
-    /// Proof 31: Hata kodları benzersiz
     #[kani::proof]
     fn error_codes_unique() {
         let codes = [E_OK, E_INVALID_SYSCALL, E_NO_CAPABILITY, E_IPC_FULL, E_IPC_EMPTY, E_INVALID_ARG];
@@ -330,7 +314,6 @@ mod verification {
         }
     }
 
-    /// Proof 32: Syscall ID'leri config.rs ile eşleşiyor
     #[kani::proof]
     fn syscall_ids_match_config() {
         use crate::common::config;
