@@ -1,11 +1,20 @@
-// Sipahi — Scheduler (Sprint 4)
-// Preemptive round-robin scheduler
+// Sipahi — Scheduler (Sprint 10)
+// Fixed-Priority Preemptive + Budget + Deadline
 //
-// 8 statik task, priority-based (Sprint 7'de)
-// Şimdilik: round-robin, timer tick ile preemption
+// Sprint 4:  Round-robin
+// Sprint 10: priority (0-15), budget_cycles, period_ticks, policy engine entegrasyonu
+//
+// Her tick:
+//   1. Tüm task'lar için period ilerlet → süre dolduysa bütçe sıfırla + READY
+//   2. Mevcut task bütçesini düş → 0 ise SUSPENDED + policy
+//   3. En yüksek öncelikli Ready task'ı seç (düşük sayı = yüksek öncelik)
+//   4. Context switch
+//
+// WCET: ≤0.8μs (doküman §SCHEDULER)
 
-use crate::common::config::{MAX_TASKS, TASK_STACK_SIZE};
+use crate::common::config::{MAX_TASKS, TASK_STACK_SIZE, CYCLES_PER_TICK};
 use crate::common::types::TaskState;
+use crate::kernel::policy::{FailureMode, PolicyEvent};
 
 // ═══════════════════════════════════════════════════════
 // TaskContext: callee-saved registers
@@ -47,29 +56,46 @@ impl TaskContext {
 // ═══════════════════════════════════════════════════════
 
 pub struct Task {
-    pub id: u8,
-    pub state: TaskState,
-    pub context: TaskContext,
+    pub id:               u8,
+    pub state:            TaskState,
+    pub context:          TaskContext,
+    pub entry:            usize,         // Giriş noktası (restart için)
+    pub stack_top:        usize,         // Hizalanmış stack üstü (restart için)
+    // Sprint 10: Budget + Priority
+    pub priority:         u8,            // 0-15 (0=en yüksek, DAL-A grubu 0-3)
+    pub dal:              u8,            // 0=A 1=B 2=C 3=D
+    pub budget_cycles:    u32,           // Periyot başına bütçe (cycle)
+    pub remaining_cycles: u32,           // Bu periyotta kalan cycle
+    pub period_ticks:     u32,           // Periyot uzunluğu (scheduler tick sayısı)
+    pub period_counter:   u32,           // Mevcut periyot içindeki tick sayacı
 }
 
 impl Task {
     pub const fn empty() -> Self {
         Task {
-            id: 0,
-            state: TaskState::Dead, // Başlatılmamış = Dead
-            context: TaskContext::zero(),
+            id:               0,
+            state:            TaskState::Dead,
+            context:          TaskContext::zero(),
+            entry:            0,
+            stack_top:        0,
+            priority:         15,         // En düşük öncelik (boş slot)
+            dal:              3,          // DAL-D (boş slot)
+            budget_cycles:    0,
+            remaining_cycles: 0,
+            period_ticks:     0,
+            period_counter:   0,
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════
-// Scheduler
+// Statik alanlar
 // ═══════════════════════════════════════════════════════
 
 /// Task stack'leri — statik, heap yok
 static mut TASK_STACKS: [[u8; TASK_STACK_SIZE]; MAX_TASKS] = [[0u8; TASK_STACK_SIZE]; MAX_TASKS];
 
-/// Task array — statik
+/// Task dizisi — statik
 static mut TASKS: [Task; MAX_TASKS] = [
     Task::empty(), Task::empty(), Task::empty(), Task::empty(),
     Task::empty(), Task::empty(), Task::empty(), Task::empty(),
@@ -77,6 +103,9 @@ static mut TASKS: [Task; MAX_TASKS] = [
 
 /// Aktif task sayısı
 static mut TASK_COUNT: usize = 0;
+
+/// DEGRADE mesajı bir kez yazdırılsın — spam önleme
+static mut DEGRADE_LOGGED: bool = false;
 
 /// Şu anki çalışan task index'i
 static mut CURRENT_TASK: usize = 0;
@@ -86,8 +115,22 @@ extern "C" {
     fn switch_context(old: *mut TaskContext, new: *const TaskContext);
 }
 
+// ═══════════════════════════════════════════════════════
+// Public API
+// ═══════════════════════════════════════════════════════
+
 /// Yeni task oluştur
-pub fn create_task(entry: fn() -> !) -> Option<u8> {
+/// priority: 0-15 (0=en yüksek, DAL-A=0-3, DAL-B=4-7, DAL-C=8-11, DAL-D=12-15)
+/// dal: 0=A 1=B 2=C 3=D
+/// budget_cycles: periyot başına CPU bütçesi (0 = sınırsız)
+/// period_ticks:  periyot uzunluğu tick cinsinden (0 = periyotsuz)
+pub fn create_task(
+    entry: fn() -> !,
+    priority: u8,
+    dal: u8,
+    budget_cycles: u32,
+    period_ticks: u32,
+) -> Option<u8> {
     unsafe {
         if TASK_COUNT >= MAX_TASKS {
             return None;
@@ -95,16 +138,23 @@ pub fn create_task(entry: fn() -> !) -> Option<u8> {
 
         let id = TASK_COUNT;
 
-        // Stack'in tepesini hesapla (stack yukarıdan aşağı büyür)
-        // 16-byte aligned olmalı (RISC-V ABI)
-        let stack_top = TASK_STACKS[id].as_ptr() as usize + TASK_STACK_SIZE;
+        // Stack tepesi — 16-byte hizalı (RISC-V ABI)
+        let stack_top         = TASK_STACKS[id].as_ptr() as usize + TASK_STACK_SIZE;
         let stack_top_aligned = stack_top & !0xF;
 
-        TASKS[id].id = id as u8;
-        TASKS[id].state = TaskState::Ready;
-        TASKS[id].context = TaskContext::zero();
-        TASKS[id].context.ra = entry as usize;
-        TASKS[id].context.sp = stack_top_aligned;
+        TASKS[id].id               = id as u8;
+        TASKS[id].state            = TaskState::Ready;
+        TASKS[id].context          = TaskContext::zero();
+        TASKS[id].context.ra       = entry as usize;
+        TASKS[id].context.sp       = stack_top_aligned;
+        TASKS[id].entry            = entry as usize;
+        TASKS[id].stack_top        = stack_top_aligned;
+        TASKS[id].priority         = priority;
+        TASKS[id].dal              = dal;
+        TASKS[id].budget_cycles    = budget_cycles;
+        TASKS[id].remaining_cycles = budget_cycles;
+        TASKS[id].period_ticks     = period_ticks;
+        TASKS[id].period_counter   = 0;
 
         TASK_COUNT += 1;
         Some(id as u8)
@@ -112,38 +162,99 @@ pub fn create_task(entry: fn() -> !) -> Option<u8> {
 }
 
 /// Scheduler tick — timer interrupt'tan çağrılır
-/// Round-robin: sıradaki Ready task'a geç
+/// WCET: ≤0.8μs @ 100MHz (doküman hedef)
 pub fn schedule() {
     unsafe {
         if TASK_COUNT < 2 {
             return;
         }
 
-        let old = CURRENT_TASK;
-        let mut next = (old + 1) % TASK_COUNT;
+        // Blackbox tick sayacını ilerlet (schedule() her çağrısında)
+        #[cfg(not(kani))]
+        crate::ipc::blackbox::advance_tick();
 
-        // Sıradaki Ready task'ı bul (bounded loop)
-        let mut i = 0;
+        let old = CURRENT_TASK;
+
+        // ─── Faz 1: Periyot ilerletme (tüm task'lar) ───
+        // Periyot dolarsa: bütçe sıfırla, SUSPENDED → READY
+        let mut i: usize = 0;
         while i < TASK_COUNT {
-            if TASKS[next].state == TaskState::Ready || TASKS[next].state == TaskState::Running {
-                break;
+            if TASKS[i].period_ticks > 0 {
+                TASKS[i].period_counter = TASKS[i].period_counter.wrapping_add(1);
+                if TASKS[i].period_counter >= TASKS[i].period_ticks {
+                    TASKS[i].period_counter   = 0;
+                    TASKS[i].remaining_cycles = TASKS[i].budget_cycles;
+                    if TASKS[i].state == TaskState::Suspended {
+                        TASKS[i].state = TaskState::Ready;
+                    }
+                }
             }
-            next = (next + 1) % TASK_COUNT;
             i += 1;
         }
 
-        if next == old {
+        // ─── Faz 2: Bütçe düşümü + politika (mevcut task) ───
+        // budget_cycles == 0 → sınırsız bütçe (bütçe izleme devre dışı)
+        if TASKS[old].budget_cycles > 0 && TASKS[old].state == TaskState::Running {
+            TASKS[old].remaining_cycles =
+                TASKS[old].remaining_cycles.saturating_sub(CYCLES_PER_TICK);
+
+            if TASKS[old].remaining_cycles == 0 {
+                TASKS[old].state = TaskState::Suspended;
+
+                // Blackbox: bütçe tükenmesi kaydı
+                #[cfg(not(kani))]
+                {
+                    let ev = [TASKS[old].id, TASKS[old].dal];
+                    crate::ipc::blackbox::log(
+                        crate::ipc::blackbox::BlackboxEvent::BudgetExhausted,
+                        TASKS[old].id,
+                        &ev,
+                    );
+                }
+
+                let action = crate::kernel::policy::apply_policy(
+                    TASKS[old].id,
+                    PolicyEvent::BudgetExhausted,
+                    TASKS[old].dal,
+                );
+                apply_action(old, action);
+            }
+        }
+
+        // ─── Faz 3: En yüksek öncelikli Ready task ───
+        // Düşük priority sayısı = yüksek öncelik (DAL-A = 0-3)
+        let mut next      = usize::MAX;
+        let mut best_prio = u8::MAX;
+        let mut j: usize  = 0;
+        while j < TASK_COUNT {
+            let s = TASKS[j].state;
+            if (s == TaskState::Ready || s == TaskState::Running)
+                && TASKS[j].priority < best_prio
+            {
+                best_prio = TASKS[j].priority;
+                next      = j;
+            }
+            j += 1;
+        }
+
+        if next == usize::MAX {
+            return; // Hiç Ready task yok
+        }
+
+        // Aynı task, hâlâ çalışıyor → context switch gerekmez
+        if next == old && TASKS[old].state == TaskState::Running {
             return;
         }
 
+        // ─── Faz 4: Context switch ───
         if TASKS[old].state == TaskState::Running {
             TASKS[old].state = TaskState::Ready;
         }
         TASKS[next].state = TaskState::Running;
-        CURRENT_TASK = next;
+        CURRENT_TASK      = next;
 
         let old_ctx = &mut TASKS[old].context as *mut TaskContext;
-        let new_ctx = &TASKS[next].context as *const TaskContext;
+        let new_ctx = &TASKS[next].context    as *const TaskContext;
         switch_context(old_ctx, new_ctx);
     }
 }
@@ -156,18 +267,140 @@ pub fn start_first_task() -> ! {
         }
 
         TASKS[0].state = TaskState::Running;
-        CURRENT_TASK = 0;
+        CURRENT_TASK   = 0;
 
-        let ctx = &TASKS[0].context;
+        let ctx   = &TASKS[0].context;
         let entry = ctx.ra;
-        let sp = ctx.sp;
+        let sp    = ctx.sp;
 
         core::arch::asm!(
             "mv sp, {sp}",
             "jr {entry}",
-            sp = in(reg) sp,
+            sp    = in(reg) sp,
             entry = in(reg) entry,
             options(noreturn)
         );
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// Policy action handler'ları (private)
+// ═══════════════════════════════════════════════════════
+
+/// Policy kararını uygula
+fn apply_action(task_id: usize, mode: FailureMode) {
+    match mode {
+        FailureMode::Restart => {
+            // Spam önleme: sadece ilk restart'ta yazdır (count artırılmış, 1 == ilk kez)
+            #[cfg(not(kani))]
+            {
+                let tid = unsafe { TASKS[task_id].id };
+                if crate::kernel::policy::get_restart_count(tid) == 1 {
+                    crate::arch::uart::println("[POLICY] RESTART (1) — periyot sonunda READY");
+                }
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::TaskRestart,
+                    tid, &[],
+                );
+            }
+            restart_task(task_id);
+        }
+        FailureMode::Isolate => {
+            #[cfg(not(kani))]
+            {
+                crate::arch::uart::println("[POLICY] ISOLATE — task durduruldu");
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
+                    unsafe { TASKS[task_id].id },
+                    &[],
+                );
+            }
+            isolate_task(task_id);
+        }
+        FailureMode::Degrade => {
+            #[cfg(not(kani))]
+            unsafe {
+                if !DEGRADE_LOGGED {
+                    DEGRADE_LOGGED = true;
+                    crate::arch::uart::println("[POLICY] DEGRADE — DAL-C/D durduruldu");
+                    crate::ipc::blackbox::log(
+                        crate::ipc::blackbox::BlackboxEvent::PolicyDegrade,
+                        TASKS[task_id].id,
+                        &[],
+                    );
+                }
+            }
+            degrade_system();
+        }
+        FailureMode::Failover => {
+            // v1.0 stub: yedek task mekanizması Sprint 12+
+            #[cfg(not(kani))]
+            {
+                crate::arch::uart::println("[POLICY] FAILOVER (stub) → DEGRADE");
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyFailover,
+                    unsafe { TASKS[task_id].id },
+                    &[],
+                );
+            }
+            degrade_system();
+        }
+        FailureMode::Alert => {
+            #[cfg(not(kani))]
+            crate::arch::uart::println("[POLICY] ALERT — operatör bildirildi, task devam");
+        }
+        FailureMode::Shutdown => {
+            #[cfg(not(kani))]
+            crate::ipc::blackbox::log(
+                crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
+                unsafe { TASKS[task_id].id },
+                &[],
+            );
+            shutdown_system();
+        }
+    }
+}
+
+/// Task yeniden başlat — SUSPENDED kalır, periyot reset'i READY yapar
+/// Kural: budget ve period_counter burada sıfırlanmaz — Faz 1 (periyot reset) halleder.
+/// Kural: state burada değişmez — task SUSPENDED kalır, periyot dolunca READY olur.
+/// Kural: restart_count burada sıfırlanmaz — apply_policy'de artırılır, birikir.
+fn restart_task(_id: usize) {
+    // Kasıtlı no-op: tüm sıfırlama Faz 1 (periyot reset) tarafından yapılır.
+    // Sprint 10.1: giriş noktasından context reset eklenecek.
+}
+
+/// Degrade — dal >= 2 (DAL-C/D) taskları askıya al
+fn degrade_system() {
+    unsafe {
+        let mut i: usize = 0;
+        while i < TASK_COUNT {
+            if TASKS[i].dal >= 2 && TASKS[i].state != TaskState::Dead {
+                TASKS[i].state = TaskState::Suspended;
+            }
+            i += 1;
+        }
+    }
+}
+
+/// İzole — task durdur + token revoke
+fn isolate_task(id: usize) {
+    unsafe {
+        if id < TASK_COUNT {
+            TASKS[id].state = TaskState::Suspended;
+            crate::kernel::capability::broker::invalidate_task(TASKS[id].id);
+        }
+    }
+}
+
+/// Kapatma — güvenli durum, sonsuz bekleme
+fn shutdown_system() -> ! {
+    #[cfg(not(kani))]
+    crate::arch::uart::println("[POLICY] SHUTDOWN — güvenli durum");
+    loop {
+        #[cfg(not(kani))]
+        unsafe { core::arch::asm!("wfi") };
+        #[cfg(kani)]
+        {}
     }
 }

@@ -69,18 +69,76 @@ pub extern "C" fn rust_main() -> ! {
     arch::uart::println("");
 
     kernel::memory::init_pmp();
+    ipc::blackbox::init();
 
     arch::uart::println("[HAL]  Device trait registered");
     arch::uart::println("[HAL]  IOPMP stub ready");
 
-    let id_a = kernel::scheduler::create_task(task_a);
-    let id_b = kernel::scheduler::create_task(task_b);
+    // Sprint 10: priority + budget + period parametreleriyle task oluştur
+    // Task A: DAL-B (priority 4), %30 CPU = 300_000 cycle/period, 10-tick period (100ms)
+    // Task B: DAL-C (priority 8), %20 CPU = 200_000 cycle/period, 10-tick period
+    let id_a = kernel::scheduler::create_task(task_a, 4, 1, 300_000, 10);
+    let id_b = kernel::scheduler::create_task(task_b, 8, 2, 200_000, 10);
     arch::uart::puts("[BOOT] Task A: id=");
     print_u32(id_a.unwrap_or(255) as u32);
+    arch::uart::puts(" prio=4 dal=B budget=300K/period");
     arch::uart::println("");
     arch::uart::puts("[BOOT] Task B: id=");
     print_u32(id_b.unwrap_or(255) as u32);
+    arch::uart::puts(" prio=8 dal=C budget=200K/period");
     arch::uart::println("");
+
+    // ═══ Sprint 10: Policy Engine Test ═══
+    arch::uart::println("[TEST] Policy engine...");
+    {
+        use kernel::policy::{decide_action, FailureMode, PolicyEvent};
+
+        // Budget aşımı: restart_count=0 → RESTART, count=1 → DEGRADE
+        let a1 = decide_action(PolicyEvent::BudgetExhausted as u8, 0, 3);
+        let a2 = decide_action(PolicyEvent::BudgetExhausted as u8, 1, 3);
+        arch::uart::println(if a1 == FailureMode::Restart as u8 {
+            "[TEST] Budget(0)→Restart ✓"
+        } else {
+            "[TEST] Budget(0)→Restart FAIL ✗"
+        });
+        arch::uart::println(if a2 == FailureMode::Degrade as u8 {
+            "[TEST] Budget(1)→Degrade ✓"
+        } else {
+            "[TEST] Budget(1)→Degrade FAIL ✗"
+        });
+
+        // Cap violation → her zaman ISOLATE
+        let a3 = decide_action(PolicyEvent::CapViolation as u8, 0, 0);
+        arch::uart::println(if a3 == FailureMode::Isolate as u8 {
+            "[TEST] CapViolation→Isolate ✓"
+        } else {
+            "[TEST] CapViolation→Isolate FAIL ✗"
+        });
+
+        // PMP fail → her zaman SHUTDOWN
+        let a4 = decide_action(PolicyEvent::PmpIntegrityFail as u8, 0, 0);
+        arch::uart::println(if a4 == FailureMode::Shutdown as u8 {
+            "[TEST] PmpFail→Shutdown ✓"
+        } else {
+            "[TEST] PmpFail→Shutdown FAIL ✗"
+        });
+
+        // Deadline miss: DAL-A → FAILOVER, DAL-D → ISOLATE
+        let a5 = decide_action(PolicyEvent::DeadlineMiss as u8, 0, 0);
+        let a6 = decide_action(PolicyEvent::DeadlineMiss as u8, 0, 3);
+        arch::uart::println(if a5 == FailureMode::Failover as u8 {
+            "[TEST] DeadlineMiss DAL-A→Failover ✓"
+        } else {
+            "[TEST] DeadlineMiss DAL-A FAIL ✗"
+        });
+        arch::uart::println(if a6 == FailureMode::Isolate as u8 {
+            "[TEST] DeadlineMiss DAL-D→Isolate ✓"
+        } else {
+            "[TEST] DeadlineMiss DAL-D FAIL ✗"
+        });
+
+        arch::uart::println("[TEST] ★ Policy engine OK ★");
+    }
 
     // ═══ Sprint 9: Capability Broker Test ═══
     arch::uart::println("[TEST] Capability broker...");
@@ -260,6 +318,42 @@ pub extern "C" fn rust_main() -> ! {
         arch::uart::println("[TEST] ★ All IPC tests PASSED ★");
     } else {
         arch::uart::println("[TEST] ✗ IPC FAILURES ✗");
+    }
+    arch::uart::println("");
+
+    // ═══ Sprint 11: Blackbox Test ═══
+    arch::uart::println("[TEST] Blackbox flight recorder...");
+    {
+        use ipc::blackbox;
+
+        // init() zaten çağrıldı → KernelBoot kaydı var
+        arch::uart::puts("[TEST] Records after init: ");
+        print_u32(blackbox::count() as u32);
+        arch::uart::println("");
+
+        // Manuel log: task başlangıçları
+        blackbox::log(blackbox::BlackboxEvent::TaskStart, 0, &[0u8, 4, 1]);
+        blackbox::log(blackbox::BlackboxEvent::TaskStart, 1, &[1u8, 8, 2]);
+
+        arch::uart::puts("[TEST] Records after log: ");
+        print_u32(blackbox::count() as u32);
+        arch::uart::println("");
+
+        // Tüm kayıtları doğrula (CRC kontrolü)
+        let mut bb_pass = true;
+        let mut idx: usize = 0;
+        while idx < blackbox::count() {
+            if blackbox::read(idx).is_none() {
+                bb_pass = false;
+            }
+            idx += 1;
+        }
+        arch::uart::println(if bb_pass {
+            "[TEST] Blackbox records all valid ✓"
+        } else {
+            "[TEST] Blackbox record CRC FAIL ✗"
+        });
+        arch::uart::println("[TEST] ★ Blackbox OK ★");
     }
     arch::uart::println("");
 

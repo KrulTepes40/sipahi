@@ -1,4 +1,6 @@
-// Sipahi — IPC SPSC Ring Buffer (Sprint 8)
+// Sipahi — IPC: SPSC Ring Buffer + Blackbox Flight Recorder
+// Sprint 8: SPSC kanallar
+// Sprint 11: Blackbox kayıt
 // Single-Producer Single-Consumer lock-free kanal
 //
 // Doktrin: AtomicU16 head/tail, O(1) send/recv
@@ -8,6 +10,8 @@
 // Slot sayısı: 16 per kanal (IPC_CHANNEL_SLOTS)
 //
 // CRC32: her mesajın son 4 byte'ı CRC (payload 60 byte)
+
+pub mod blackbox; // Sprint 11: flight recorder
 
 use core::sync::atomic::{AtomicU16, Ordering};
 use crate::common::config::{IPC_MSG_SIZE, IPC_CHANNEL_SLOTS, MAX_IPC_CHANNELS};
