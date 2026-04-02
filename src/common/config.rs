@@ -92,3 +92,14 @@ pub const COMPUTE_COPY: u8 = 0; // Bellek kopyala, WCET ~80c
 pub const COMPUTE_CRC: u8 = 1; // CRC32 bütünlük, WCET ~120c
 pub const COMPUTE_MAC: u8 = 2; // BLAKE3 keyed hash, WCET ~350c
 pub const COMPUTE_MATH: u8 = 3; // Q32.32 vektör dot, WCET ~200c
+
+// ═══════════════════════════════════════════════════════
+// Capability WCET hedefleri (Sprint 9)
+// ═══════════════════════════════════════════════════════
+
+/// Token cache hit WCET (cycle) — 4-slot sabit zamanlı tarama
+pub const WCET_TOKEN_CACHE_HIT: u64 = 10; // ≤0.1μs @ 100MHz
+
+/// Token full validation WCET (cycle) — SipahiMAC + ct_eq + cache insert
+/// Sprint 13'te BLAKE3 (~350c) ile güncellenecek — gerçek ölçüm FPGA'da
+pub const WCET_TOKEN_VALIDATE: u64 = 400; // ≤4μs @ 100MHz

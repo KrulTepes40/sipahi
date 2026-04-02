@@ -106,16 +106,21 @@ pub fn dispatch(
 // ═══════════════════════════════════════════════════════
 
 fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> usize {
+    // Cache-only fast path (~10c) — validate_full ile önceden kayıt edilmeli
     #[cfg(not(kani))]
     {
+        let ok = crate::kernel::capability::broker::validate_cached(
+            cap as u8,
+            resource as u16,
+            action as u8,
+        );
         uart::puts("[SYS] cap_invoke(cap=");
         print_u64(cap as u64);
-        uart::puts(", res=");
-        print_u64(resource as u64);
-        uart::puts(", act=");
-        print_u64(action as u64);
-        uart::println(")");
+        uart::puts(") ");
+        uart::println(if ok { "OK" } else { "DENIED" });
+        if ok { E_OK } else { E_NO_CAPABILITY }
     }
+    #[cfg(kani)]
     E_OK
 }
 

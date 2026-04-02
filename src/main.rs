@@ -82,10 +82,38 @@ pub extern "C" fn rust_main() -> ! {
     print_u32(id_b.unwrap_or(255) as u32);
     arch::uart::println("");
 
-    // ═══ Sprint 7: Syscall Test ═══
-    arch::uart::println("[TEST] Syscall dispatch...");
-    let r = kernel::syscall::cap_invoke(42, 1, 2, 0);
-    arch::uart::println(if r == 0 { "[TEST] cap_invoke OK" } else { "[TEST] cap_invoke FAIL" });
+    // ═══ Sprint 9: Capability Broker Test ═══
+    arch::uart::println("[TEST] Capability broker...");
+    {
+        use kernel::capability::{Token, ACTION_READ};
+        use kernel::capability::broker;
+
+        // 1. MAC key provisioning
+        let key = [0x5Au8; 32];
+        broker::provision_key(&key);
+
+        // 2. Token oluştur + MAC imzala (stub: provision_key gerekli)
+        let mut tok = Token::zeroed();
+        tok.id = 1;
+        tok.task_id = 0;
+        tok.resource = 1; // IPC kanal 1
+        tok.action = ACTION_READ;
+        tok.dal = 1; // DAL-B
+        tok.nonce = 42;
+        broker::sign_token(&mut tok); // SipahiMAC-STUB
+
+        // 3. Full validate → cache'e ekler
+        let v = broker::validate_full(&tok);
+        arch::uart::println(if v { "[TEST] validate_full OK ✓" } else { "[TEST] validate_full FAIL ✗" });
+
+        // 4. Cache hit via syscall (~10c)
+        let r = kernel::syscall::cap_invoke(1, 1, ACTION_READ as usize, 0);
+        arch::uart::println(if r == 0 { "[TEST] cap_invoke (cache) OK ✓" } else { "[TEST] cap_invoke FAIL ✗" });
+
+        // 5. Cache miss → DENIED (token hiç validate edilmedi)
+        let r2 = kernel::syscall::cap_invoke(99, 7, ACTION_READ as usize, 0);
+        arch::uart::println(if r2 != 0 { "[TEST] cap_invoke (miss) DENIED ✓" } else { "[TEST] cap_invoke miss FAIL ✗" });
+    }
     // yield testi task içinden yapılacak — boot sırasında schedule() crash yapar
     // let r = kernel::syscall::yield_cpu();
 

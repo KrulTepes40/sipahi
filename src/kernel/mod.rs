@@ -7,6 +7,6 @@ pub mod scheduler;
 #[cfg(not(kani))]
 pub mod memory;
 
-pub mod syscall;         // Sprint 7
-// pub mod capability;   // Sprint 9
-// pub mod policy;       // Sprint 10
+pub mod syscall;     // Sprint 7
+pub mod capability;  // Sprint 9
+// pub mod policy;  // Sprint 10
