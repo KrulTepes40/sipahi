@@ -136,7 +136,18 @@ static mut BB_TICK: u32 = 0;
 static mut BB_BOOT_EPOCH: u16 = 0;
 
 /// Tampondaki kayıt sayısı (max BLACKBOX_MAX_RECORDS)
+/// volatile: LTO/opt-level="s" altında LLVM register caching'ini engelle
 static mut BB_COUNT: u8 = 0;
+
+// Volatile yardımcıları — BB_COUNT her zaman memory'den okunur/yazılır
+#[inline(always)]
+unsafe fn bb_count_read() -> u8 {
+    core::ptr::read_volatile(core::ptr::addr_of!(BB_COUNT))
+}
+#[inline(always)]
+unsafe fn bb_count_write(v: u8) {
+    core::ptr::write_volatile(core::ptr::addr_of_mut!(BB_COUNT), v)
+}
 
 // ═══════════════════════════════════════════════════════
 // Public API
@@ -145,19 +156,22 @@ static mut BB_COUNT: u8 = 0;
 /// Boot başlangıcı — rust_main'de, zamanlayıcıdan önce çağrılır
 /// v1.0 (QEMU): tamponu sıfırdan başlatır, KernelBoot kaydı yazar
 /// v1.5+ (SRAM/FRAM): son geçerli seq'i tarar, kaldığı yerden devam eder
+///
+/// BSS clearing'e güvenilmez (binary layout değişince semboller kayar).
+/// Tüm static'ler explicit sıfırlanır — her koşulda çalışır.
 pub fn init() {
     unsafe {
+        // Buffer'ı explicit sıfırla — BSS clearing'e güvenme
+        let ptr = core::ptr::addr_of_mut!(BB_BUFFER) as *mut u8;
+        core::ptr::write_bytes(ptr, 0, core::mem::size_of::<[BlackboxRecord; BLACKBOX_MAX_RECORDS]>());
+
+        bb_count_write(0);
         BB_WRITE_POS  = 0;
         BB_NEXT_SEQ   = 0;
         BB_TICK       = 0;
         BB_BOOT_EPOCH = 0; // v1.0: QEMU'da kalıcı bellek yok, epoch her boot=0
-        BB_COUNT      = 0;
     }
-    // KernelBoot kaydı: data[0..2] = boot_epoch (little-endian)
-    let mut boot_data = [0u8; 46];
-    boot_data[0] = 0u8; // BB_BOOT_EPOCH low byte
-    boot_data[1] = 0u8; // BB_BOOT_EPOCH high byte
-    log(BlackboxEvent::KernelBoot, 0xFF, &boot_data);
+    log(BlackboxEvent::KernelBoot, 0xFF, &[]);
 }
 
 /// Tick sayacını ilerlet — schedule() her çağrısının başında çağrılır
@@ -204,8 +218,9 @@ pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 
         BB_NEXT_SEQ = BB_NEXT_SEQ.wrapping_add(1);
 
-        if (BB_COUNT as usize) < BLACKBOX_MAX_RECORDS {
-            BB_COUNT += 1;
+        let c = bb_count_read();
+        if (c as usize) < BLACKBOX_MAX_RECORDS {
+            bb_count_write(c + 1);
         }
     }
 }
@@ -214,10 +229,11 @@ pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 /// Dönüş: Some(record) — CRC geçerli; None — index aşımı veya bozuk kayıt
 pub fn read(index: usize) -> Option<BlackboxRecord> {
     unsafe {
-        if index >= BB_COUNT as usize {
+        let c = bb_count_read() as usize;
+        if index >= c {
             return None;
         }
-        let start = if (BB_COUNT as usize) < BLACKBOX_MAX_RECORDS {
+        let start = if c < BLACKBOX_MAX_RECORDS {
             0usize
         } else {
             BB_WRITE_POS as usize // Tampon dolu: en eski = write_pos
@@ -230,7 +246,7 @@ pub fn read(index: usize) -> Option<BlackboxRecord> {
 
 /// Tampondaki geçerli kayıt sayısı
 pub fn count() -> usize {
-    unsafe { BB_COUNT as usize }
+    unsafe { bb_count_read() as usize }
 }
 
 // ═══════════════════════════════════════════════════════

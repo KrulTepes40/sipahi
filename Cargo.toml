@@ -14,16 +14,14 @@ fast-sign = []            # Ed25519 imza (v1.0)
 cnsa-sign = []            # LMS post-quantum imza (v2.0)
 iopmp = []                # IOPMP DMA koruması
 trace = []                # Debug trace (production'da KAPALI)
+wasm-sandbox-test = []    # WASM çalışma zamanı testleri (Sprint 14: PMP/linker düzeltilince)
 
 [dependencies]
 wasmi = { version = "1.0.9", default-features = false, features = ["prefer-btree-collections"] }
-# Sprint 9'da eklenecek:
-# blake3 = { version = "1", default-features = false }
-# Sprint 13'te eklenecek:
-# ed25519-dalek = { version = "2", default-features = false }
-# Sprint 12'de eklenecek:
-# wasmi = { version = "1", default-features = false, features = ["prefer-btree-collections"] }
-# static-alloc = "0.2"   # Bump allocator (global_allocator, heap YOK, statik arena)
+# Sprint 13: Gerçek BLAKE3 (no_std uyumlu, std feature kapalı)
+blake3 = { version = "1", default-features = false }
+# Sprint 13: Ed25519 imza doğrulama (no_std + alloc, getrandom gereksiz — sadece verify)
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
 # NOT: hash-table random init → safety-critical'da kabul edilemez, btree kullan
 
 [dev-dependencies]

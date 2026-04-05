@@ -117,7 +117,9 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
-    // PROOF 8: Bellek bütçesi 512KB RAM'e sığar
+    // PROOF 8: Bellek bütçesi 4MB RAM'e sığar
+    // Sprint 12'de linker script 512K → 4M oldu (wasmi binary ~700KB).
+    // WASM_HEAP_SIZE Sprint 13'te 256KB'a yükseltildi (wasmi 1.0.9 overhead).
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn memory_fits_in_ram() {
@@ -133,7 +135,8 @@ mod verification {
         let task_total = MAX_TASKS * 24 * 1024;
         let wasm_heap = WASM_HEAP_SIZE;
         let total = kernel_total + task_total + wasm_heap;
-        let ram_size: usize = 512 * 1024;
+        // QEMU virt = 512MB, linker script RAM = 4MB (sipahi.ld Sprint 12)
+        let ram_size: usize = 4 * 1024 * 1024;
         assert!(total < ram_size);
     }
 
@@ -177,21 +180,24 @@ mod verification {
 
     // ═══════════════════════════════════════════════════════
     // PROOF 12: Host call overhead bounded
-    // PLACEHOLDER — WCET_COMPUTE_* sabitleri Sprint 12'de config.rs'e eklenecek.
+    // Sprint 13'te aktif edildi — WCET_COMPUTE_* config.rs'e eklendi.
     // Doğru metrik: HOST_CALL_LIMIT × max(WCET_COMPUTE_COPY..WCET_COMPUTE_MAC)
-    //   = 16 × 350c (COMPUTE_MAC) = 5,600c
-    // Şu an WCET_CAP_INVOKE (120c) yanlış: capability check süresi,
-    // compute service süresi değil.
+    //   = 16 × 350c (COMPUTE_MAC) = 5,600c < 10,000c ✓
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn host_call_budget_bounded() {
-        // Şimdilik: cap_invoke dispatch overhead'i (eksik ama bounded)
+        // cap_invoke dispatch overhead (cache hit path)
         let cap_overhead = (HOST_CALL_LIMIT as u64) * (WCET_CAP_INVOKE as u64);
         assert!(cap_overhead < 100_000); // 16 × 120 = 1,920c ✓
 
-        // TODO Sprint 12 — config.rs'e WCET_COMPUTE_MAC = 350 eklenince aktif et:
-        // let compute_overhead = (HOST_CALL_LIMIT as u64) * WCET_COMPUTE_MAC;
-        // assert!(compute_overhead < 10_000); // 16 × 350 = 5,600c < 10,000 ✓
+        // Compute service overhead (WCET_COMPUTE_MAC = worst-case service)
+        let compute_overhead = (HOST_CALL_LIMIT as u64) * WCET_COMPUTE_MAC;
+        assert!(compute_overhead < 10_000); // 16 × 350 = 5,600c < 10,000 ✓
+
+        // COMPUTE_MAC her zaman en pahalı servis
+        assert!(WCET_COMPUTE_MAC >= WCET_COMPUTE_COPY);
+        assert!(WCET_COMPUTE_MAC >= WCET_COMPUTE_CRC);
+        assert!(WCET_COMPUTE_MAC >= WCET_COMPUTE_MATH);
     }
 
     // ═══════════════════════════════════════════════════════

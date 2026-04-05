@@ -9,7 +9,8 @@ pub const MAX_TASKS: usize = 8;
 pub const TICK_PERIOD_US: u32 = 10_000; // 10ms
 
 /// Kernel stack boyutu (byte)
-pub const KERNEL_STACK_SIZE: usize = 4096; // 4KB
+/// Sprint 13: 4KB → 16KB — Ed25519-dalek + BLAKE3 test frame'leri 4KB'ı aşıyordu
+pub const KERNEL_STACK_SIZE: usize = 16384; // 16KB
 
 /// Task stack boyutu (byte)
 pub const TASK_STACK_SIZE: usize = 8192; // 8KB
@@ -24,7 +25,11 @@ pub const IPC_CHANNEL_SLOTS: usize = 16;
 pub const MAX_IPC_CHANNELS: usize = 8;
 
 /// WASM heap boyutu (byte)
-pub const WASM_HEAP_SIZE: usize = 65536; // 64KB
+/// Doküman §WASM başlangıç tahmini: 64KB. Ancak wasmi 1.0.9 register-based
+/// interpreter'ın Engine::new() + Module::new() iç yapıları (instruction array,
+/// type registry, instance tables) ~16MB talep eder (lazy allocation ile çoğu
+/// gerçekleşmez). 2MB pratik limit; QEMU 512MB RAM'de güvenli.
+pub const WASM_HEAP_SIZE: usize = 2097152; // 2MB
 
 /// Host call limiti (period başına)
 pub const HOST_CALL_LIMIT: u16 = 16;
@@ -126,6 +131,24 @@ pub const BUDGET_DAL_D: u32 = 100_000;
 
 /// Varsayılan period uzunluğu (tick) — 10 tick = 100ms @ 10ms/tick
 pub const DEFAULT_PERIOD_TICKS: u32 = 10;
+
+// ═══════════════════════════════════════════════════════
+// Compute service WCET hedefleri (Sprint 13 aktivasyonu)
+// Doküman: COMPUTE_COPY ~80c, COMPUTE_CRC ~120c, COMPUTE_MAC ~350c, COMPUTE_MATH ~200c
+// Proof 12 bu sabitlerle aktif edildi (verify.rs).
+// ═══════════════════════════════════════════════════════
+
+/// COMPUTE_COPY WCET hedefi (cycle) — 64B bellek bloğu kopyalama
+pub const WCET_COMPUTE_COPY: u64 = 80;
+
+/// COMPUTE_CRC WCET hedefi (cycle) — CRC32 hesaplama (64B input)
+pub const WCET_COMPUTE_CRC: u64 = 120;
+
+/// COMPUTE_MAC WCET hedefi (cycle) — BLAKE3 keyed hash (32B token input)
+pub const WCET_COMPUTE_MAC: u64 = 350;
+
+/// COMPUTE_MATH WCET hedefi (cycle) — Q32.32 vektör dot product
+pub const WCET_COMPUTE_MATH: u64 = 200;
 
 // ═══════════════════════════════════════════════════════
 // Blackbox sabitleri (Sprint 11)

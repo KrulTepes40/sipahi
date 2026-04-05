@@ -262,6 +262,25 @@ pub fn schedule() {
 /// İlk task'ı başlat (boot'tan çağrılır)
 pub fn start_first_task() -> ! {
     unsafe {
+        // Teşhis: TASK_COUNT ve TASKS[0].state — panic öncesi görünür
+        #[cfg(not(kani))]
+        {
+            crate::arch::uart::puts("[DBG] TASK_COUNT=");
+            crate::arch::uart::puts(match TASK_COUNT {
+                0 => "0", 1 => "1", 2 => "2", 3 => "3",
+                4 => "4", 5 => "5", 6 => "6", 7 => "7",
+                8 => "8", _ => "?",
+            });
+            crate::arch::uart::puts(" TASKS[0].state=");
+            crate::arch::uart::puts(match TASKS[0].state {
+                crate::common::types::TaskState::Dead      => "Dead",
+                crate::common::types::TaskState::Ready     => "Ready",
+                crate::common::types::TaskState::Running   => "Running",
+                crate::common::types::TaskState::Suspended => "Suspended",
+            });
+            crate::arch::uart::println("");
+        }
+
         if TASK_COUNT == 0 {
             panic!("No tasks to run!");
         }

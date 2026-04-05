@@ -1,5 +1,5 @@
 // Sipahi — WASM Bump Allocator (Sprint 12)
-// Doküman §WASM: "static WASM_HEAP: [u8; 65536] = [0; 65536]; // 64KB sabit"
+// Arena boyutu: config.rs::WASM_HEAP_SIZE — derleme zamanı sabit, değiştirmek için config'i güncelle
 //
 // Kural: SADECE WASM sandbox kullanır — kernel kodu asla alloc KULLANMAZ
 // Kural: dealloc = no-op (bump allocator, tek tek free yok)
@@ -41,13 +41,18 @@ unsafe impl GlobalAlloc for BumpAllocator {
         // Hizalamayı yukarı yuvarlat: aligned = ceil(old / align) * align
         let aligned = old.wrapping_add(align - 1) & !(align - 1);
 
-        // Yeni son ofset
+        // Hizalanmış başlangıç adresi arena içinde mi? (wrapping sonrası kontrol)
+        if aligned >= WASM_HEAP_SIZE {
+            return core::ptr::null_mut(); // OOM
+        }
+
+        // Yeni son ofset — overflow kontrolü
         let new_end = match aligned.checked_add(size) {
             Some(v) => v,
             None    => return core::ptr::null_mut(), // aritmetik taşma → OOM
         };
 
-        // Arena sınır kontrolü
+        // Arena sınır kontrolü: hem aligned hem new_end kontrol edilmeli
         if new_end > WASM_HEAP_SIZE {
             return core::ptr::null_mut(); // OOM → alloc_error_handler devreye girer
         }

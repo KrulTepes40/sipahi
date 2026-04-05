@@ -32,18 +32,22 @@ SECTIONS {
     } > RAM
 
     /* BSS — sıfırlanacak veriler */
-    /* KRİTİK: boot.S'de __bss_start → __bss_end arası sıfırlanmalı! */
-    .bss : ALIGN(4) {
+    /* KRİTİK: boot.S'de __bss_start → __bss_end arası sıfırlanmalı!   */
+    /* ALIGN(8): boot.S `sd` (8-byte store) + addi a0,a0,8 ile temizler */
+    /* __bss_end de ALIGN(8): son bloğun taşmasını önler                 */
+    .bss : ALIGN(8) {
         __bss_start = .;
         *(.bss .bss.*)
         *(COMMON)
+        . = ALIGN(8);
         __bss_end = .;
     } > RAM
 
-    /* Kernel stack (4KB, R1'in parçası) */
+    /* Kernel stack (16KB) — Sprint 13: Ed25519/BLAKE3 test frame'leri için büyütüldü */
+    /* config.rs::KERNEL_STACK_SIZE ile senkron tutulmalı                               */
     . = ALIGN(16);
     __stack_bottom = .;
-    . += 4096;
+    . += 16384;
     __stack_top = .;
 
     /* Stack guard — PMP ile korunacak */
