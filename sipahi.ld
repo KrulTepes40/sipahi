@@ -4,7 +4,8 @@
 ENTRY(_start)
 
 MEMORY {
-    RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 512K
+    /* Sprint 12: wasmi + alloc ~700KB ekledi. QEMU virt = 512MB, 4MB tahsis güvenli. */
+    RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 4M
 }
 
 SECTIONS {

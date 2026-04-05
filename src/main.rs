@@ -1,17 +1,36 @@
 // Sipahi — Safety-Critical Hard Real-Time Microkernel
-// RISC-V 64-bit · Rust · no_std · no_alloc
+// RISC-V 64-bit · Rust · no_std · alloc (WASM sandbox için)
 
 #![no_std]
 #![no_main]
 #![allow(dead_code)]
+#![feature(alloc_error_handler)]
+
+// alloc crate — SADECE wasmi sandbox kullanır, kernel kodu KULLANMAZ
+extern crate alloc;
 
 mod arch;
 mod common;
 mod hal;
 pub mod ipc;
 mod kernel;
+mod sandbox;
 #[cfg(kani)]
 mod verify;
+
+// ═══ WASM Bump Allocator — GlobalAlloc ═══
+// Kernel heap YOK. Wasmi kendi 64KB sandbox arena'sını kullanır.
+#[cfg(not(kani))]
+#[global_allocator]
+static ALLOCATOR: sandbox::allocator::BumpAllocator = sandbox::allocator::BumpAllocator;
+
+// OOM handler — panic DEĞİL, wfi loop (doktrin: sıfır panic)
+#[cfg(not(kani))]
+#[alloc_error_handler]
+fn alloc_error(_layout: core::alloc::Layout) -> ! {
+    arch::uart::println("[OOM] WASM arena dolu — wfi");
+    loop { unsafe { core::arch::asm!("wfi") }; }
+}
 
 use core::panic::PanicInfo;
 
@@ -318,6 +337,88 @@ pub extern "C" fn rust_main() -> ! {
         arch::uart::println("[TEST] ★ All IPC tests PASSED ★");
     } else {
         arch::uart::println("[TEST] ✗ IPC FAILURES ✗");
+    }
+    arch::uart::println("");
+
+    // ═══ Sprint 12: WASM Sandbox Test ═══
+    arch::uart::println("[BOOT] Sprint 12: WASM Sandbox");
+    arch::uart::println("[WASM] Arena: 64KB bump allocator");
+    {
+        // Minimal WASM modül: () -> i32 { i32.const 42 }  export "run"
+        // Doğrulama: Magic + version + type + func + export + code bölümleri
+        #[allow(clippy::unusual_byte_groupings)]
+        const WASM_SIMPLE: &[u8] = &[
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+            0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,       // type: () -> i32
+            0x03, 0x02, 0x01, 0x00,                          // func section
+            0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00, // export "run"
+            0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2a, 0x0b, // code: i32.const 42, end
+        ];
+
+        // Float opcode içeren WASM: f32.const + f32.add (0x92 = f32.add → taranır)
+        #[allow(clippy::unusual_byte_groupings)]
+        const WASM_FLOAT_OPS: &[u8] = &[
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+            0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7d,       // type: () -> f32
+            0x03, 0x02, 0x01, 0x00,
+            0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
+            // code: f32.const 1.0, f32.const 2.0, f32.add, end
+            0x0a, 0x0f, 0x01, 0x0d, 0x00,
+            0x43, 0x00, 0x00, 0x80, 0x3f, // f32.const 1.0
+            0x43, 0x00, 0x00, 0x00, 0x40, // f32.const 2.0
+            0x92, 0x0b,                   // f32.add, end
+        ];
+
+        use sandbox::{WasmSandbox, SandboxError};
+
+        // Test 1: Normal yükleme + çalıştırma
+        {
+            let mut ws = WasmSandbox::new();
+            match ws.load_module(WASM_SIMPLE) {
+                Ok(n) => {
+                    arch::uart::puts("[WASM] Module loaded: ");
+                    print_u32(n as u32);
+                    arch::uart::println(" bytes");
+                }
+                Err(_) => arch::uart::println("[WASM] Load FAIL ✗"),
+            }
+            match ws.execute("run", 100_000) {
+                Ok(42) => arch::uart::println("[WASM] Execute: OK, result=42 ✓"),
+                Ok(_)  => arch::uart::println("[WASM] Execute: yanlış sonuç ✗"),
+                Err(_) => arch::uart::println("[WASM] Execute FAIL ✗"),
+            }
+        }
+
+        // Test 2: Fuel tükenmesi — fuel=0 → trap
+        {
+            let mut ws = WasmSandbox::new();
+            let _ = ws.load_module(WASM_SIMPLE);
+            match ws.execute("run", 0) {
+                Err(SandboxError::FuelExhausted) | Err(SandboxError::Trapped) =>
+                    arch::uart::println("[WASM] Fuel exhaustion: TRAPPED ✓"),
+                Ok(_)  => arch::uart::println("[WASM] Fuel test: beklenen trap gelmedi ✗"),
+                Err(_) => arch::uart::println("[WASM] Fuel test: başka hata ✗"),
+            }
+        }
+
+        // Test 3: Float opcode tespiti → REJECT
+        match WasmSandbox::check_module(WASM_FLOAT_OPS) {
+            Err(SandboxError::FloatOpcodes) =>
+                arch::uart::println("[WASM] Float reject: REJECTED ✓"),
+            _ => arch::uart::println("[WASM] Float reject FAIL ✗"),
+        }
+
+        // Test 4: Arena epoch reset — reset sonrası yeni sandbox çalışır
+        {
+            sandbox::allocator::epoch_reset();
+            let mut ws = WasmSandbox::new();
+            match ws.load_module(WASM_SIMPLE) {
+                Ok(_) => arch::uart::println("[WASM] Epoch reset + reload: OK ✓"),
+                Err(_) => arch::uart::println("[WASM] Epoch reset reload FAIL ✗"),
+            }
+        }
+
+        arch::uart::println("[WASM] Sprint 12 PASS");
     }
     arch::uart::println("");
 

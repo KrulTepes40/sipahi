@@ -4,7 +4,7 @@ KERNEL = target/$(TARGET)/release/sipahi
 KERNEL_DBG = target/$(TARGET)/debug/sipahi
 
 # build-std burada — config.toml'da değil (Kani çakışması önlenir)
-BUILD_STD = -Z build-std=core -Z build-std-features=compiler-builtins-mem
+BUILD_STD = -Z build-std=core,alloc -Z build-std-features=compiler-builtins-mem
 
 .PHONY: build run clean check kani debug
 

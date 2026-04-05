@@ -16,6 +16,7 @@ iopmp = []                # IOPMP DMA koruması
 trace = []                # Debug trace (production'da KAPALI)
 
 [dependencies]
+wasmi = { version = "1.0.9", default-features = false, features = ["prefer-btree-collections"] }
 # Sprint 9'da eklenecek:
 # blake3 = { version = "1", default-features = false }
 # Sprint 13'te eklenecek:
