@@ -119,21 +119,4 @@ pub fn init_pmp() {
     uart::println("[PMP]   Task stack PMP: Sprint 7 (U-mode + context switch)");
 }
 
-fn print_hex(mut val: usize) {
-    let hex = b"0123456789abcdef";
-    let mut buf = [0u8; 16];
-    let mut i = 0;
-    if val == 0 {
-        uart::putc(b'0');
-        return;
-    }
-    while val > 0 {
-        buf[i] = hex[val & 0xF];
-        val >>= 4;
-        i += 1;
-    }
-    while i > 0 {
-        i -= 1;
-        uart::putc(buf[i]);
-    }
-}
+use crate::common::fmt::print_hex;

@@ -81,11 +81,12 @@ pub const WCET_YIELD: u64 = 10; // ≤0.1μs @ 100MHz
 // Syscall ID'leri (Sprint 7'de kullanılacak)
 // ═══════════════════════════════════════════════════════
 
-pub const SYS_CAP_INVOKE: u64 = 0;
-pub const SYS_IPC_SEND: u64 = 1;
-pub const SYS_IPC_RECV: u64 = 2;
-pub const SYS_YIELD: u64 = 3;
-pub const SYS_TASK_INFO: u64 = 4;
+pub const SYS_CAP_INVOKE: usize = 0;
+pub const SYS_IPC_SEND: usize = 1;
+pub const SYS_IPC_RECV: usize = 2;
+pub const SYS_YIELD: usize = 3;
+pub const SYS_TASK_INFO: usize = 4;
+pub const SYSCALL_COUNT: usize = 5;
 
 // ═══════════════════════════════════════════════════════
 // Compute service ID'leri (Sprint 12'de kullanılacak)

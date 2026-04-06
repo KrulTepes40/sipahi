@@ -383,13 +383,22 @@ fn apply_action(task_id: usize, mode: FailureMode) {
     }
 }
 
-/// Task yeniden başlat — SUSPENDED kalır, periyot reset'i READY yapar
-/// Kural: budget ve period_counter burada sıfırlanmaz — Faz 1 (periyot reset) halleder.
-/// Kural: state burada değişmez — task SUSPENDED kalır, periyot dolunca READY olur.
-/// Kural: restart_count burada sıfırlanmaz — apply_policy'de artırılır, birikir.
-fn restart_task(_id: usize) {
-    // Kasıtlı no-op: tüm sıfırlama Faz 1 (periyot reset) tarafından yapılır.
-    // Sprint 10.1: giriş noktasından context reset eklenecek.
+/// Task yeniden başlat — context sıfırla, giriş noktasından başlat
+///
+/// State SUSPENDED kalır — Faz 1 periyot reset'i READY yapar.
+/// Budget ve period_counter burada sıfırlanmaz — Faz 1 halleder.
+/// restart_count burada sıfırlanmaz — apply_policy'de artırılır, birikir.
+fn restart_task(id: usize) {
+    unsafe {
+        if id >= TASK_COUNT { return; }
+
+        // Tüm callee-saved register'ları sıfırla
+        TASKS[id].context = TaskContext::zero();
+
+        // Giriş noktası + temiz stack
+        TASKS[id].context.ra = TASKS[id].entry;
+        TASKS[id].context.sp = TASKS[id].stack_top;
+    }
 }
 
 /// Degrade — dal >= 2 (DAL-C/D) taskları askıya al

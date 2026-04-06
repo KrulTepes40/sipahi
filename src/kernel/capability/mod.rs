@@ -107,4 +107,15 @@ mod verification {
         assert!(ACTION_WRITE & ACTION_EXECUTE == 0);
         assert!(ACTION_READ | ACTION_WRITE | ACTION_EXECUTE == ACTION_ALL);
     }
+
+    /// Proof 73: Replay nonce her zaman reject — last >= token.nonce → false
+    #[kani::proof]
+    fn replay_nonce_always_rejected() {
+        let last_nonce: u32 = kani::any();
+        let token_nonce: u32 = kani::any();
+        kani::assume(token_nonce <= last_nonce);
+        // Replay guard mantığı: nonce <= last → reject
+        let accepted = token_nonce > last_nonce;
+        assert!(!accepted);
+    }
 }

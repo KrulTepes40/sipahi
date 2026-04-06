@@ -28,4 +28,6 @@ pub enum SipahiError {
     DeviceNotReady,
     /// Geçersiz indeks veya parametre
     InvalidParameter,
+    /// Token nonce tekrarı (replay attack)
+    ReplayDetected,
 }

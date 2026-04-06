@@ -19,6 +19,9 @@ use crate::common::crypto::Crypto;
 static mut MAC_KEY: [u8; 32] = [0u8; 32];
 static mut KEY_READY: bool = false;
 
+/// Son kabul edilen nonce — replay guard (monoton artan)
+static mut LAST_NONCE: u32 = 0;
+
 /// Token cache — statik, heap yok
 static mut TOKEN_CACHE: TokenCache = TokenCache::new();
 
@@ -46,8 +49,8 @@ pub fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
     }
 }
 
-/// Full token validation — MAC hesapla, cache'e ekle (~400c)
-/// Returns: true = geçerli + cache'e eklendi, false = RED
+/// Full token validation — MAC hesapla, nonce kontrol, cache'e ekle (~400c)
+/// Returns: true = geçerli + cache'e eklendi, false = RED (MAC/nonce/key fail)
 #[cfg(feature = "fast-crypto")]
 pub fn validate_full(token: &Token) -> bool {
     unsafe {
@@ -58,10 +61,16 @@ pub fn validate_full(token: &Token) -> bool {
         if !KEY_READY {
             return false;
         }
+        // Replay guard: nonce kesinlikle monoton artan olmalı
+        let last = core::ptr::read_volatile(core::ptr::addr_of!(LAST_NONCE));
+        if token.nonce <= last {
+            return false; // replay veya stale token
+        }
         let header = token.header_bytes();
         let key = &*core::ptr::addr_of!(MAC_KEY);
         let expected = Crypto::keyed_hash(key, &header);
         if ct_eq_16(&token.mac, &expected) {
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(LAST_NONCE), token.nonce);
             let cache_mut = &mut *core::ptr::addr_of_mut!(TOKEN_CACHE);
             cache_mut.insert(token.id, token.resource, token.action);
             true

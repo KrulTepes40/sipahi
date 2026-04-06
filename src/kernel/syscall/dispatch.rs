@@ -5,12 +5,10 @@
 #[cfg(not(kani))]
 use crate::arch::uart;
 
-pub const SYS_CAP_INVOKE: usize = 0;
-pub const SYS_IPC_SEND: usize = 1;
-pub const SYS_IPC_RECV: usize = 2;
-pub const SYS_YIELD: usize = 3;
-pub const SYS_TASK_INFO: usize = 4;
-pub const SYSCALL_COUNT: usize = 5;
+pub use crate::common::config::{
+    SYS_CAP_INVOKE, SYS_IPC_SEND, SYS_IPC_RECV,
+    SYS_YIELD, SYS_TASK_INFO, SYSCALL_COUNT,
+};
 
 pub const E_OK: usize = 0;
 pub const E_INVALID_SYSCALL: usize = usize::MAX;
@@ -243,23 +241,7 @@ fn sys_task_info(info_type: usize, _: usize, _: usize, _: usize) -> usize {
 }
 
 #[cfg(not(kani))]
-fn print_u64(mut val: u64) {
-    if val == 0 {
-        uart::putc(b'0');
-        return;
-    }
-    let mut buf = [0u8; 20];
-    let mut i = 0usize;
-    while val > 0 && i < 20 {
-        buf[i] = b'0' + (val % 10) as u8;
-        val /= 10;
-        i += 1;
-    }
-    while i > 0 {
-        i -= 1;
-        uart::putc(buf[i]);
-    }
-}
+use crate::common::fmt::print_u64;
 
 // ═══════════════════════════════════════════════════════
 // Kani — Sprint 7 proof'ları (değişmedi)

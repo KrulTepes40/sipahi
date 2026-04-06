@@ -108,45 +108,5 @@ pub extern "C" fn trap_handler(
     }
 }
 
-// ═══════════════════════════════════════════════════════
-// Yardımcı yazdırma
-// ═══════════════════════════════════════════════════════
-
 #[cfg(not(kani))]
-fn print_u64(mut val: u64) {
-    if val == 0 {
-        uart::putc(b'0');
-        return;
-    }
-    let mut buf = [0u8; 20];
-    let mut i = 0usize;
-    while val > 0 && i < 20 {
-        buf[i] = b'0' + (val % 10) as u8;
-        val /= 10;
-        i += 1;
-    }
-    while i > 0 {
-        i -= 1;
-        uart::putc(buf[i]);
-    }
-}
-
-#[cfg(not(kani))]
-fn print_hex(mut val: usize) {
-    let hex = b"0123456789abcdef";
-    if val == 0 {
-        uart::putc(b'0');
-        return;
-    }
-    let mut buf = [0u8; 16];
-    let mut i = 0usize;
-    while val > 0 && i < 16 {
-        buf[i] = hex[val & 0xF];
-        val >>= 4;
-        i += 1;
-    }
-    while i > 0 {
-        i -= 1;
-        uart::putc(buf[i]);
-    }
-}
+use crate::common::fmt::{print_u64, print_hex};

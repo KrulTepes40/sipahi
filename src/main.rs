@@ -389,48 +389,41 @@ pub extern "C" fn rust_main() -> ! {
             });
         }
 
-        // Test 2: Ed25519 imza doğrulama — RFC 8032 Test Vector #1 (geçerli imza)
+        // Test 2-4: Ed25519 — test-keys ile derlenmeli (release'de zero key ile atlanır)
+        #[cfg(any(debug_assertions, feature = "test-keys"))]
         {
             use hal::secure_boot::secure_boot_check;
             use hal::key::{QEMU_TEST_PUBKEY, QEMU_TEST_SIGNATURE};
 
-            // RFC 8032 TV1: mesaj = boş bayt dizisi, imza geçerli
+            // Test 2: RFC 8032 TV1 geçerli imza
             let valid = secure_boot_check(&[], &QEMU_TEST_PUBKEY, &QEMU_TEST_SIGNATURE);
             arch::uart::println(if valid {
                 "[SEC] Ed25519 RFC8032 TV1 ✓"
             } else {
                 "[SEC] Ed25519 RFC8032 TV1 FAIL ✗"
             });
-        }
 
-        // Test 3: Bozulmuş imza → RED (1 bit flip tespiti)
-        {
-            use hal::secure_boot::secure_boot_check;
-            use hal::key::{QEMU_TEST_PUBKEY, QEMU_TEST_SIGNATURE};
-
+            // Test 3: Bozulmuş imza → RED
             let mut bad_sig = QEMU_TEST_SIGNATURE;
-            bad_sig[0] ^= 0xFF; // ilk byte boz
+            bad_sig[0] ^= 0xFF;
             let rejected = secure_boot_check(&[], &QEMU_TEST_PUBKEY, &bad_sig);
             arch::uart::println(if !rejected {
                 "[SEC] Ed25519 tampered sig RED ✓"
             } else {
                 "[SEC] Ed25519 tamper tespiti FAIL ✗"
             });
-        }
 
-        // Test 4: Yanlış public key → RED
-        {
-            use hal::secure_boot::secure_boot_check;
-            use hal::key::QEMU_TEST_SIGNATURE;
-
-            let wrong_key = [0xFFu8; 32]; // geçersiz Edwards noktası
-            let rejected = secure_boot_check(&[], &wrong_key, &QEMU_TEST_SIGNATURE);
-            arch::uart::println(if !rejected {
+            // Test 4: Yanlış public key → RED
+            let wrong_key = [0xFFu8; 32];
+            let rejected2 = secure_boot_check(&[], &wrong_key, &QEMU_TEST_SIGNATURE);
+            arch::uart::println(if !rejected2 {
                 "[SEC] Ed25519 wrong key RED ✓"
             } else {
                 "[SEC] Ed25519 wrong key FAIL ✗"
             });
         }
+        #[cfg(not(any(debug_assertions, feature = "test-keys")))]
+        arch::uart::println("[SEC] Ed25519 tests SKIP (no test-keys)");
 
         #[cfg(feature = "debug-boot")]
         { arch::uart::puts("[DBG] Arena after crypto: offset=");
@@ -577,23 +570,7 @@ pub extern "C" fn rust_main() -> ! {
 }
 
 #[cfg(not(kani))]
-fn print_hex(mut val: usize) {
-    let hex = b"0123456789abcdef";
-    let mut buf = [0u8; 16];
-    let mut i = 0;
-    if val == 0 { arch::uart::putc(b'0'); return; }
-    while val > 0 { buf[i] = hex[val & 0xF]; val >>= 4; i += 1; }
-    while i > 0 { i -= 1; arch::uart::putc(buf[i]); }
-}
-
-#[cfg(not(kani))]
-fn print_u32(mut val: u32) {
-    if val == 0 { arch::uart::putc(b'0'); return; }
-    let mut buf = [0u8; 10];
-    let mut i = 0;
-    while val > 0 { buf[i] = b'0' + (val % 10) as u8; val /= 10; i += 1; }
-    while i > 0 { i -= 1; arch::uart::putc(buf[i]); }
-}
+use common::fmt::{print_u32, print_hex};
 
 #[cfg(not(kani))]
 #[panic_handler]
