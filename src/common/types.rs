@@ -19,6 +19,9 @@ pub enum TaskState {
     Running,
     Suspended,
     Dead,
+    /// Sprint 14: Kalıcı izolasyon — capability revoke + period reset'ten muaf.
+    /// Suspended'dan farkı: periyot dolunca Ready'ye DÖNMEZ.
+    Isolated,
 }
 
 /// DO-178C DAL seviyeleri

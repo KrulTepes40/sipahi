@@ -345,9 +345,10 @@ pub extern "C" fn rust_main() -> ! {
     // ═══ Sprint 13: Secure Boot + Real BLAKE3 Test ═══
     arch::uart::println("[BOOT] Sprint 13: Secure Boot & Real BLAKE3");
     {
-        arch::uart::puts("[DBG] Arena before crypto: offset=");
-        print_u32(sandbox::allocator::current_offset() as u32);
-        arch::uart::println("");
+        #[cfg(feature = "debug-boot")]
+        { arch::uart::puts("[DBG] Arena before crypto: offset=");
+          print_u32(sandbox::allocator::current_offset() as u32);
+          arch::uart::println(""); }
         // Test 1: BLAKE3 gerçek keyed hash — deterministik ve key-bağımlı
         {
             use common::crypto::provider::HashProvider;
@@ -431,9 +432,10 @@ pub extern "C" fn rust_main() -> ! {
             });
         }
 
-        arch::uart::puts("[DBG] Arena after crypto: offset=");
-        print_u32(sandbox::allocator::current_offset() as u32);
-        arch::uart::println("");
+        #[cfg(feature = "debug-boot")]
+        { arch::uart::puts("[DBG] Arena after crypto: offset=");
+          print_u32(sandbox::allocator::current_offset() as u32);
+          arch::uart::println(""); }
 
         arch::uart::println("[BOOT] Sprint 13 PASS");
     }
@@ -535,18 +537,14 @@ pub extern "C" fn rust_main() -> ! {
     {
         use ipc::blackbox;
 
-        // Teşhis 1: init() sonrası count (beklenen: 1)
-        arch::uart::puts("[DBG] BB count after boot-init: ");
-        print_u32(blackbox::count() as u32);
-        arch::uart::println("");
-
-        // Test öncesi tekrar init() — eğer bu 1 döndürüyorsa
-        // boot-init çalıştı ama aradan bozuldu demektir.
-        // Eğer hâlâ 255 ise → memory corruption devam ediyor.
-        blackbox::init();
-        arch::uart::puts("[DBG] BB count after re-init: ");
-        print_u32(blackbox::count() as u32);
-        arch::uart::println("");
+        #[cfg(feature = "debug-boot")]
+        { arch::uart::puts("[DBG] BB count after boot-init: ");
+          print_u32(blackbox::count() as u32);
+          arch::uart::println("");
+          blackbox::init();
+          arch::uart::puts("[DBG] BB count after re-init: ");
+          print_u32(blackbox::count() as u32);
+          arch::uart::println(""); }
 
         arch::uart::puts("[TEST] Records after init: ");
         print_u32(blackbox::count() as u32);

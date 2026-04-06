@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTUP_TOOLCHAIN: nightly-2026-03-01
+
+jobs:
+  build:
+    name: Clippy + Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust nightly-2026-03-01
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          targets: riscv64imac-unknown-none-elf
+          components: clippy, rust-src
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Clippy (warnings as errors)
+        run: cargo clippy
+          -Z build-std=core,alloc
+          -Z build-std-features=compiler-builtins-mem
+          --target riscv64imac-unknown-none-elf
+          --release
+          -- -D warnings
+
+      - name: Build
+        run: cargo build
+          --release
+          -Z build-std=core,alloc
+          -Z build-std-features=compiler-builtins-mem
+          --target riscv64imac-unknown-none-elf

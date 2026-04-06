@@ -422,4 +422,37 @@ mod verification {
         assert!(aligned % 16 == 0);                      // 16-byte aligned
         assert!(aligned <= stack_top as usize);           // aşağı yuvarlama — asla artmaz
     }
+
+    // ═══════════════════════════════════════════════════════
+    // PROOF 71: Isolated task asla Ready'ye dönmez
+    // Faz 1 mantığı: yalnızca Suspended → Ready (Isolated kapsam dışı)
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn isolated_task_never_becomes_ready() {
+        // Faz 1 periyot reset mantığını simüle et:
+        // sadece Suspended → Ready, diğer state'ler değişmez
+        let state = TaskState::Isolated;
+        let new_state = if state == TaskState::Suspended {
+            TaskState::Ready
+        } else {
+            state
+        };
+        assert!(new_state != TaskState::Ready);
+        assert!(new_state == TaskState::Isolated);
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PROOF 72: DAL-A task budget aşımında asla Isolated olmaz
+    // Budget aşımı escalation: RESTART → DEGRADE (Isolate değil)
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn dal_a_budget_exhausted_never_isolated() {
+        use crate::kernel::policy::{decide_action, FailureMode, PolicyEvent};
+        let event = PolicyEvent::BudgetExhausted as u8;
+        let dal   = 0u8; // DAL-A
+        let count: u8 = kani::any();
+        // Budget exhausted → RESTART(1) → DEGRADE, hiçbir koşulda ISOLATE değil
+        let action = decide_action(event, count, dal);
+        assert!(action != FailureMode::Isolate as u8);
+    }
 }

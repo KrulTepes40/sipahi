@@ -186,6 +186,8 @@ pub fn schedule() {
                     TASKS[i].remaining_cycles = TASKS[i].budget_cycles;
                     if TASKS[i].state == TaskState::Suspended {
                         TASKS[i].state = TaskState::Ready;
+                        // Not: Isolated task'lar bu blokta hiç eşleşmez —
+                        // kasıtlı. Isolated → periyot reset ile READY yapılmaz.
                     }
                 }
             }
@@ -262,8 +264,8 @@ pub fn schedule() {
 /// İlk task'ı başlat (boot'tan çağrılır)
 pub fn start_first_task() -> ! {
     unsafe {
-        // Teşhis: TASK_COUNT ve TASKS[0].state — panic öncesi görünür
-        #[cfg(not(kani))]
+        // Teşhis: TASK_COUNT ve TASKS[0].state — sadece debug-boot feature ile
+        #[cfg(all(not(kani), feature = "debug-boot"))]
         {
             crate::arch::uart::puts("[DBG] TASK_COUNT=");
             crate::arch::uart::puts(match TASK_COUNT {
@@ -277,6 +279,7 @@ pub fn start_first_task() -> ! {
                 crate::common::types::TaskState::Ready     => "Ready",
                 crate::common::types::TaskState::Running   => "Running",
                 crate::common::types::TaskState::Suspended => "Suspended",
+                crate::common::types::TaskState::Isolated  => "Isolated",
             });
             crate::arch::uart::println("");
         }
@@ -390,11 +393,15 @@ fn restart_task(_id: usize) {
 }
 
 /// Degrade — dal >= 2 (DAL-C/D) taskları askıya al
+/// Not: Isolated task'lar bu işlemde değiştirilmez — zaten daha kısıtlı.
 fn degrade_system() {
     unsafe {
         let mut i: usize = 0;
         while i < TASK_COUNT {
-            if TASKS[i].dal >= 2 && TASKS[i].state != TaskState::Dead {
+            if TASKS[i].dal >= 2
+                && TASKS[i].state != TaskState::Dead
+                && TASKS[i].state != TaskState::Isolated
+            {
                 TASKS[i].state = TaskState::Suspended;
             }
             i += 1;
@@ -403,10 +410,11 @@ fn degrade_system() {
 }
 
 /// İzole — task durdur + token revoke
+/// Isolated: Suspended'dan farklı, periyot reset ile READY'ye dönmez.
 fn isolate_task(id: usize) {
     unsafe {
         if id < TASK_COUNT {
-            TASKS[id].state = TaskState::Suspended;
+            TASKS[id].state = TaskState::Isolated;
             crate::kernel::capability::broker::invalidate_task(TASKS[id].id);
         }
     }

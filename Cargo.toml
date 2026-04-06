@@ -15,6 +15,7 @@ cnsa-sign = []            # LMS post-quantum imza (v2.0)
 iopmp = []                # IOPMP DMA koruması
 trace = []                # Debug trace (production'da KAPALI)
 wasm-sandbox-test = []    # WASM çalışma zamanı testleri (Sprint 14: PMP/linker düzeltilince)
+debug-boot = []           # Boot sırasında [DBG] teşhis çıktıları (üretimde KAPALI)
 
 [dependencies]
 wasmi = { version = "1.0.9", default-features = false, features = ["prefer-btree-collections"] }
