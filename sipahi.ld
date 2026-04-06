@@ -4,8 +4,8 @@
 ENTRY(_start)
 
 MEMORY {
-    /* Sprint 12: wasmi + alloc ~700KB ekledi. QEMU virt = 512MB, 4MB tahsis güvenli. */
-    RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 4M
+    /* 4MB WASM arena + kernel + stack. QEMU virt = 512MB, 8MB güvenli. */
+    RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 8M
 }
 
 SECTIONS {
@@ -52,6 +52,10 @@ SECTIONS {
 
     /* Stack guard — PMP ile korunacak */
     __stack_guard = __stack_bottom;
+
+    /* _end: Tüm kernel belleğinin (data+bss+stack) bittiği nokta.     */
+    /* PMP RW bölgesinin TOR üst sınırı bu sembolü kullanmalıdır.       */
+    _end = .;
 
     /* ═══════════════════════════════════════════════════════════ */
     /* Sprint'lerde eklenecek bölgeler:                           */

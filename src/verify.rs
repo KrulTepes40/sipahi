@@ -135,8 +135,8 @@ mod verification {
         let task_total = MAX_TASKS * 24 * 1024;
         let wasm_heap = WASM_HEAP_SIZE;
         let total = kernel_total + task_total + wasm_heap;
-        // QEMU virt = 512MB, linker script RAM = 4MB (sipahi.ld Sprint 12)
-        let ram_size: usize = 4 * 1024 * 1024;
+        // QEMU virt = 512MB, linker script RAM = 8MB (sipahi.ld)
+        let ram_size: usize = 8 * 1024 * 1024;
         assert!(total < ram_size);
     }
 

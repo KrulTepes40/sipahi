@@ -25,11 +25,9 @@ pub const IPC_CHANNEL_SLOTS: usize = 16;
 pub const MAX_IPC_CHANNELS: usize = 8;
 
 /// WASM heap boyutu (byte)
-/// Doküman §WASM başlangıç tahmini: 64KB. Ancak wasmi 1.0.9 register-based
-/// interpreter'ın Engine::new() + Module::new() iç yapıları (instruction array,
-/// type registry, instance tables) ~16MB talep eder (lazy allocation ile çoğu
-/// gerçekleşmez). 2MB pratik limit; QEMU 512MB RAM'de güvenli.
-pub const WASM_HEAP_SIZE: usize = 2097152; // 2MB
+/// wasmi 1.0.9 Engine::new() + Module::new() lazy allocation ile ~4MB kullanır.
+/// QEMU 512MB RAM, linker script 8MB — 4MB arena güvenli.
+pub const WASM_HEAP_SIZE: usize = 4194304; // 4MB
 
 /// Host call limiti (period başına)
 pub const HOST_CALL_LIMIT: u16 = 16;

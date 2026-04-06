@@ -136,17 +136,23 @@ static mut BB_TICK: u32 = 0;
 static mut BB_BOOT_EPOCH: u16 = 0;
 
 /// Tampondaki kayıt sayısı (max BLACKBOX_MAX_RECORDS)
-/// volatile: LTO/opt-level="s" altında LLVM register caching'ini engelle
 static mut BB_COUNT: u8 = 0;
 
-// Volatile yardımcıları — BB_COUNT her zaman memory'den okunur/yazılır
-#[inline(always)]
-unsafe fn bb_count_read() -> u8 {
-    core::ptr::read_volatile(core::ptr::addr_of!(BB_COUNT))
+// ═══════════════════════════════════════════════════════
+// Volatile yardımcıları — LTO + opt-level="s" altında
+// LLVM static mut'ı register'a cache'leyebilir.
+// Tüm BB_* erişimleri volatile read/write kullanır.
+// ═══════════════════════════════════════════════════════
+
+macro_rules! vol_read {
+    ($var:ident -> $ty:ty) => {
+        core::ptr::read_volatile(core::ptr::addr_of!($var))
+    };
 }
-#[inline(always)]
-unsafe fn bb_count_write(v: u8) {
-    core::ptr::write_volatile(core::ptr::addr_of_mut!(BB_COUNT), v)
+macro_rules! vol_write {
+    ($var:ident, $val:expr) => {
+        core::ptr::write_volatile(core::ptr::addr_of_mut!($var), $val)
+    };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -165,11 +171,11 @@ pub fn init() {
         let ptr = core::ptr::addr_of_mut!(BB_BUFFER) as *mut u8;
         core::ptr::write_bytes(ptr, 0, core::mem::size_of::<[BlackboxRecord; BLACKBOX_MAX_RECORDS]>());
 
-        bb_count_write(0);
-        BB_WRITE_POS  = 0;
-        BB_NEXT_SEQ   = 0;
-        BB_TICK       = 0;
-        BB_BOOT_EPOCH = 0; // v1.0: QEMU'da kalıcı bellek yok, epoch her boot=0
+        vol_write!(BB_COUNT, 0u8);
+        vol_write!(BB_WRITE_POS, 0u8);
+        vol_write!(BB_NEXT_SEQ, 0u16);
+        vol_write!(BB_TICK, 0u32);
+        vol_write!(BB_BOOT_EPOCH, 0u16);
     }
     log(BlackboxEvent::KernelBoot, 0xFF, &[]);
 }
@@ -177,7 +183,10 @@ pub fn init() {
 /// Tick sayacını ilerlet — schedule() her çağrısının başında çağrılır
 #[inline]
 pub fn advance_tick() {
-    unsafe { BB_TICK = BB_TICK.wrapping_add(1); }
+    unsafe {
+        let t = vol_read!(BB_TICK -> u32);
+        vol_write!(BB_TICK, t.wrapping_add(1));
+    }
 }
 
 /// Olay kaydet — SADECE KERNEL çağırır (tek yazar garantisi)
@@ -187,13 +196,15 @@ pub fn advance_tick() {
 /// data:    En fazla 46 byte olay verisi (kısa girişler sıfır doldurulur)
 pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
     unsafe {
-        let pos = BB_WRITE_POS as usize;
+        let pos = vol_read!(BB_WRITE_POS -> u8) as usize;
+        let seq = vol_read!(BB_NEXT_SEQ -> u16);
+        let tick = vol_read!(BB_TICK -> u32);
 
         let mut rec = BlackboxRecord::zeroed();
         rec.magic     = MAGIC;
         rec.version   = RECORD_VERSION;
-        rec.seq       = BB_NEXT_SEQ;
-        rec.timestamp = BB_TICK;
+        rec.seq       = seq;
+        rec.timestamp = tick;
         rec.task_id   = task_id;
         rec.event     = event as u8;
 
@@ -210,17 +221,13 @@ pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
         BB_BUFFER[pos] = rec;
 
         // Konumu ilerlet — döngüsel sarma
-        BB_WRITE_POS = if pos + 1 >= BLACKBOX_MAX_RECORDS {
-            0
-        } else {
-            (pos + 1) as u8
-        };
+        let next_pos = if pos + 1 >= BLACKBOX_MAX_RECORDS { 0u8 } else { (pos + 1) as u8 };
+        vol_write!(BB_WRITE_POS, next_pos);
+        vol_write!(BB_NEXT_SEQ, seq.wrapping_add(1));
 
-        BB_NEXT_SEQ = BB_NEXT_SEQ.wrapping_add(1);
-
-        let c = bb_count_read();
+        let c = vol_read!(BB_COUNT -> u8);
         if (c as usize) < BLACKBOX_MAX_RECORDS {
-            bb_count_write(c + 1);
+            vol_write!(BB_COUNT, c + 1);
         }
     }
 }
@@ -229,15 +236,12 @@ pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 /// Dönüş: Some(record) — CRC geçerli; None — index aşımı veya bozuk kayıt
 pub fn read(index: usize) -> Option<BlackboxRecord> {
     unsafe {
-        let c = bb_count_read() as usize;
+        let c = vol_read!(BB_COUNT -> u8) as usize;
         if index >= c {
             return None;
         }
-        let start = if c < BLACKBOX_MAX_RECORDS {
-            0usize
-        } else {
-            BB_WRITE_POS as usize // Tampon dolu: en eski = write_pos
-        };
+        let wp = vol_read!(BB_WRITE_POS -> u8) as usize;
+        let start = if c < BLACKBOX_MAX_RECORDS { 0usize } else { wp };
         let actual = (start + index) % BLACKBOX_MAX_RECORDS;
         let rec = BB_BUFFER[actual];
         if rec.is_valid() { Some(rec) } else { None }
@@ -246,7 +250,7 @@ pub fn read(index: usize) -> Option<BlackboxRecord> {
 
 /// Tampondaki geçerli kayıt sayısı
 pub fn count() -> usize {
-    unsafe { bb_count_read() as usize }
+    unsafe { vol_read!(BB_COUNT -> u8) as usize }
 }
 
 // ═══════════════════════════════════════════════════════

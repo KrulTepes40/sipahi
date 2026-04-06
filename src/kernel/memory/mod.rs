@@ -33,6 +33,8 @@ extern "C" {
     static __data_start: u8;
     static __bss_end: u8;
     static __stack_top: u8;
+    /// _end: data + bss + stack sonrası — PMP RW TOR üst sınırı
+    static _end: u8;
 }
 
 /// PMP bölgelerini ayarla
@@ -42,7 +44,7 @@ pub fn init_pmp() {
     let rodata_start = unsafe { &__rodata_start as *const u8 as usize };
     let rodata_end = unsafe { &__rodata_end as *const u8 as usize };
     let data_start = unsafe { &__data_start as *const u8 as usize };
-    let stack_top = unsafe { &__stack_top as *const u8 as usize };
+    let end        = unsafe { &_end as *const u8 as usize };
 
     const UART_START: usize = 0x1000_0000;
     const UART_END: usize = 0x1000_0100;
@@ -65,7 +67,7 @@ pub fn init_pmp() {
     pmp::write_pmpaddr(2, rodata_start);
     pmp::write_pmpaddr(3, rodata_end);
     pmp::write_pmpaddr(4, data_start);
-    pmp::write_pmpaddr(5, stack_top);
+    pmp::write_pmpaddr(5, end);
     pmp::write_pmpaddr(6, UART_START);
     pmp::write_pmpaddr(7, UART_END);
 
@@ -101,7 +103,7 @@ pub fn init_pmp() {
     uart::puts("[PMP]   .data    RW  0x");
     print_hex(data_start);
     uart::puts(" - 0x");
-    print_hex(stack_top);
+    print_hex(end);
     uart::println("");
 
     uart::puts("[PMP]   UART     RW  0x");
