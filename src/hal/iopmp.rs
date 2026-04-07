@@ -1,3 +1,5 @@
+//! IOPMP (I/O Physical Memory Protection) stub — software emulation for v1.0.
+#![allow(dead_code)] // Stub — activated when iopmp feature + real hardware.
 // Sipahi — IOPMP Stub (Sprint 6)
 //
 // IOPMP = I/O Physical Memory Protection

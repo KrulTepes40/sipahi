@@ -1,3 +1,4 @@
+//! Hardware Abstraction Layer: device trait, IOPMP, key store, secure boot.
 // Sipahi — HAL (Hardware Abstraction Layer)
 // Sprint 6:  Device trait + IOPMP stub
 // Sprint 13: Secure boot Ed25519 + Key provisioning

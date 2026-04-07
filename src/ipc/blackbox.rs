@@ -1,3 +1,4 @@
+//! 64-byte CRC32-protected circular blackbox flight recorder (8 KB, 128 records).
 // Sipahi — Blackbox Flight Recorder (Sprint 11)
 // Circular buffer · PMP R4 · 8KB · 128 kayıt
 //
@@ -97,6 +98,7 @@ impl BlackboxRecord {
     /// SAFETY: repr(C), boyut=64, padding yok — Proof 52 ile doğrulandı
     pub fn set_crc(&mut self) {
         let bytes: &[u8; BLACKBOX_RECORD_SIZE] =
+            // SAFETY: repr(C) struct, size verified by Proof 52, no padding.
             unsafe { &*(self as *const Self as *const [u8; BLACKBOX_RECORD_SIZE]) };
         self.crc = super::crc32(&bytes[..60]);
     }
@@ -104,6 +106,7 @@ impl BlackboxRecord {
     /// CRC32 doğrula — yanlış ise kayıt bozuk (power-loss)
     pub fn verify_crc(&self) -> bool {
         let bytes: &[u8; BLACKBOX_RECORD_SIZE] =
+            // SAFETY: repr(C) struct, size verified by Proof 52, no padding.
             unsafe { &*(self as *const Self as *const [u8; BLACKBOX_RECORD_SIZE]) };
         let computed = super::crc32(&bytes[..60]);
         self.crc == computed
@@ -166,6 +169,7 @@ macro_rules! vol_write {
 /// BSS clearing'e güvenilmez (binary layout değişince semboller kayar).
 /// Tüm static'ler explicit sıfırlanır — her koşulda çalışır.
 pub fn init() {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         // Buffer'ı explicit sıfırla — BSS clearing'e güvenme
         let ptr = core::ptr::addr_of_mut!(BB_BUFFER) as *mut u8;
@@ -183,6 +187,7 @@ pub fn init() {
 /// Tick sayacını ilerlet — schedule() her çağrısının başında çağrılır
 #[inline]
 pub fn advance_tick() {
+    // SAFETY: Volatile access prevents compiler from caching static mut in register.
     unsafe {
         let t = vol_read!(BB_TICK -> u32);
         vol_write!(BB_TICK, t.wrapping_add(1));
@@ -195,6 +200,7 @@ pub fn advance_tick() {
 /// task_id: Tetikleyen task ID (0xFF = kernel dahili olay)
 /// data:    En fazla 46 byte olay verisi (kısa girişler sıfır doldurulur)
 pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         let pos = vol_read!(BB_WRITE_POS -> u8) as usize;
         let seq = vol_read!(BB_NEXT_SEQ -> u16);
@@ -235,6 +241,7 @@ pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 /// Kayıt oku — 0 = en eski, count()-1 = en yeni
 /// Dönüş: Some(record) — CRC geçerli; None — index aşımı veya bozuk kayıt
 pub fn read(index: usize) -> Option<BlackboxRecord> {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         let c = vol_read!(BB_COUNT -> u8) as usize;
         if index >= c {
@@ -250,6 +257,7 @@ pub fn read(index: usize) -> Option<BlackboxRecord> {
 
 /// Tampondaki geçerli kayıt sayısı
 pub fn count() -> usize {
+    // SAFETY: Volatile access prevents compiler from caching static mut in register.
     unsafe { vol_read!(BB_COUNT -> u8) as usize }
 }
 

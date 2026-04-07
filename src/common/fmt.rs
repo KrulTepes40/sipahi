@@ -1,3 +1,4 @@
+//! Shared formatting helpers: print_u32, print_u64, print_hex over UART.
 // Sipahi — Ortak yazdırma yardımcıları
 // print_u32, print_u64, print_hex — UART üzerinden
 //

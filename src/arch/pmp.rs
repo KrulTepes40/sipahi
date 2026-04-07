@@ -1,3 +1,4 @@
+//! RISC-V PMP (Physical Memory Protection) register access and configuration.
 // Sipahi — PMP (Physical Memory Protection) Register Access
 // Sprint 5: RISC-V PMP CSR okuma/yazma
 //
@@ -38,6 +39,7 @@ pub const PMP_L: u8 = 1 << 7;   // Lock (M-mode dahil)
 #[cfg(not(kani))]
 pub fn write_pmpaddr(index: usize, addr: usize) {
     let shifted = addr >> 2; // PMP adresi 4-byte granülarite
+    // SAFETY: CSR read/write in M-mode — always accessible.
     unsafe {
         match index {
             0 => asm!("csrw pmpaddr0, {}", in(reg) shifted),
@@ -61,6 +63,7 @@ pub fn write_pmpaddr(index: usize, addr: usize) {
 /// RV64'te pmpcfg0 = 64 bit, 8 entry × 8 bit
 #[cfg(not(kani))]
 pub fn write_pmpcfg0(value: u64) {
+    // SAFETY: CSR read/write in M-mode — always accessible.
     unsafe {
         asm!("csrw pmpcfg0, {}", in(reg) value);
     }
@@ -70,6 +73,7 @@ pub fn write_pmpcfg0(value: u64) {
 #[cfg(not(kani))]
 pub fn read_pmpcfg0() -> u64 {
     let val: u64;
+    // SAFETY: CSR read/write in M-mode — always accessible.
     unsafe {
         asm!("csrr {}, pmpcfg0", out(reg) val);
     }

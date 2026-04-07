@@ -1,3 +1,5 @@
+//! Core type definitions: Q32.32 fixed-point, TaskState, DAL levels.
+#![allow(dead_code)] // API types — used by Kani proofs and future U-mode tasks.
 // Sipahi — Ortak tipler
 // Q32.32 fixed-point, task durumu, DAL seviyeleri
 

@@ -1,3 +1,4 @@
+//! M-mode trap handler — timer interrupt, ECALL dispatch, fault reporting.
 // Sipahi — Trap Handler (Sprint 2-7)
 // trap.S'den çağrılır:
 //   a0 = mcause
@@ -34,6 +35,7 @@ static mut TICK_COUNT: u64 = 0;
 
 #[cfg(not(kani))]
 pub fn get_tick_count() -> u64 {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe { TICK_COUNT }
 }
 
@@ -54,6 +56,7 @@ pub extern "C" fn trap_handler(
         match code {
             7 => {
                 // Machine Timer Interrupt
+                // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
                 unsafe { TICK_COUNT += 1 };
                 let ticks = get_tick_count();
 

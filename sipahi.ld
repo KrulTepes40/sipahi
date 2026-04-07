@@ -1,4 +1,18 @@
-/* sipahi.ld — Sipahi Microkernel Linker Script */
+/* sipahi.ld — Sipahi Microkernel Linker Script
+ * ====================================
+ * Sipahi Memory Map (QEMU virt, RV64)
+ *
+ * 0x80000000  .text    (RX)   ~490KB  Kernel + Wasmi code
+ * 0x800798xx  .rodata  (R)    ~84KB   Constants, Wasmi tables
+ * 0x8008xxxx  .data    (RW)   ~150KB  Initialized data
+ * 0x800xxxxx  .bss     (RW)   ~4.1MB  Arena(4MB) + stacks + statics
+ * 0x804xxxxx  stack    (RW)   16KB    Kernel stack
+ * 0x804xxxxx  _end             End of all kernel memory
+ *
+ * RAM: 8MB allocated (0x80000000-0x80800000), QEMU 512MB available
+ * PMP: 4 TOR regions (text RXL, rodata RL, data+bss RWL, UART RWL)
+ * Arena: 4MB bump allocator for Wasmi (v1.5: reduce with AOT compile)
+ */
 /* QEMU virt machine, RV64, RAM @ 0x80000000   */
 
 ENTRY(_start)

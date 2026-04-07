@@ -1,3 +1,4 @@
+//! NS16550A UART driver for QEMU virt machine — putc, puts, println.
 // Sipahi — UART Driver (Sprint 1)
 // QEMU virt: ns16550a @ 0x10000000
 //
@@ -8,6 +9,7 @@ use crate::common::config::UART_BASE;
 
 #[cfg(not(kani))]
 pub fn putc(c: u8) {
+    // SAFETY: MMIO register access at hardware-defined address.
     unsafe {
         core::ptr::write_volatile(UART_BASE as *mut u8, c);
     }

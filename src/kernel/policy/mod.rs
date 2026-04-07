@@ -1,3 +1,5 @@
+//! 6-mode failure policy engine: RESTART → ISOLATE → DEGRADE → SHUTDOWN.
+#![allow(dead_code)] // PolicyEvent variants + reset_restart_count used by Kani + scheduler.
 // Sipahi — Failure Policy Engine (Sprint 10)
 // 6 mod: RESTART, ISOLATE, DEGRADE, FAILOVER, ALERT, SHUTDOWN
 //
@@ -69,6 +71,7 @@ static mut RESTART_COUNTS: [u8; MAX_TASKS] = [0u8; MAX_TASKS];
 /// Restart sayacını sıfırla (task yeniden oluşturulduğunda)
 pub fn reset_restart_count(task_id: u8) {
     if (task_id as usize) < MAX_TASKS {
+        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
         unsafe { RESTART_COUNTS[task_id as usize] = 0; }
     }
 }
@@ -76,6 +79,7 @@ pub fn reset_restart_count(task_id: u8) {
 /// Restart sayacını oku (test/debug için)
 pub fn get_restart_count(task_id: u8) -> u8 {
     if (task_id as usize) < MAX_TASKS {
+        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
         unsafe { RESTART_COUNTS[task_id as usize] }
     } else {
         0
@@ -143,6 +147,7 @@ pub const fn decide_action(event: u8, restart_count: u8, dal: u8) -> u8 {
 pub fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureMode {
     let id    = task_id as usize;
     let count = if id < MAX_TASKS {
+        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
         unsafe { RESTART_COUNTS[id] }
     } else {
         0
@@ -153,6 +158,7 @@ pub fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureMode {
 
     // RESTART → sayacı artır (doygun — eskalasyon için MAX tutulur)
     if action == FailureMode::Restart && id < MAX_TASKS {
+        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
         unsafe {
             RESTART_COUNTS[id] = RESTART_COUNTS[id].saturating_add(1);
         }

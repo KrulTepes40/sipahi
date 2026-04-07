@@ -1,3 +1,4 @@
+//! Kernel subsystems: scheduler, syscall, capability, policy, memory.
 // Sipahi — Kernel Katmanı
 // Sprint 4: Scheduler
 // Sprint 5: Memory protection (PMP)

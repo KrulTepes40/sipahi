@@ -1,3 +1,5 @@
+//! Compile-time constants: memory layout, WCET budgets, syscall IDs, tick periods.
+#![allow(dead_code)] // Spec-defined constants — used by Kani, FPGA, WASM host calls.
 // Sipahi — Compile-time sabitleri
 // Bu dosyadaki her değer derleme zamanında sabit.
 // Runtime'da değişmez. Sipahi doktrini.

@@ -1,3 +1,4 @@
+//! Token MAC validation with BLAKE3, nonce replay guard, and 4-slot cache.
 // Sipahi — Capability Broker (Sprint 9)
 // Token doğrulama: MAC + constant-time compare + cache
 //
@@ -28,6 +29,16 @@ static mut TOKEN_CACHE: TokenCache = TokenCache::new();
 /// MAC key provisioning — boot sequence'de BİR KEZ çağrılır
 /// Tekrar çağrı yoksayılır (key rotation Sprint 13)
 pub fn provision_key(key: &[u8; 32]) {
+    // Sıfır key → güvenli varsayılan: KEY_READY false kalır
+    let mut all_zero = true;
+    let mut j = 0;
+    while j < 32 {
+        if key[j] != 0 { all_zero = false; }
+        j += 1;
+    }
+    if all_zero { return; }
+
+    // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
         if !KEY_READY {
             let mut i = 0;
@@ -43,6 +54,7 @@ pub fn provision_key(key: &[u8; 32]) {
 /// Cache-only lookup — sys_cap_invoke fast path (~10c)
 /// validate_full ile cache'e eklenmemiş token → false döner
 pub fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
+    // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
         let cache = &*core::ptr::addr_of!(TOKEN_CACHE);
         cache.lookup(token_id, resource, action)
@@ -53,6 +65,7 @@ pub fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
 /// Returns: true = geçerli + cache'e eklendi, false = RED (MAC/nonce/key fail)
 #[cfg(feature = "fast-crypto")]
 pub fn validate_full(token: &Token) -> bool {
+    // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
         let cache = &*core::ptr::addr_of!(TOKEN_CACHE);
         if cache.lookup(token.id, token.resource, token.action) {
@@ -84,6 +97,7 @@ pub fn validate_full(token: &Token) -> bool {
 /// Kullanım: boot test, token üretimi (gerçek sistemde HSM yapar)
 #[cfg(feature = "fast-crypto")]
 pub fn sign_token(token: &mut Token) {
+    // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
         if !KEY_READY {
             return;
@@ -96,6 +110,7 @@ pub fn sign_token(token: &mut Token) {
 
 /// Cache invalidate — task exit veya token revocation
 pub fn invalidate_task(token_id: u8) {
+    // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
         let cache_mut = &mut *core::ptr::addr_of_mut!(TOKEN_CACHE);
         cache_mut.invalidate(token_id);

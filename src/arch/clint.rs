@@ -1,3 +1,4 @@
+//! RISC-V CLINT timer driver — mtime/mtimecmp access for periodic scheduler ticks.
 // Sipahi — CLINT Timer Driver (Sprint 3)
 // QEMU virt: CLINT @ 0x2000000
 //
@@ -10,12 +11,14 @@ use crate::common::config::{CLINT_BASE, CLINT_MTIME_OFFSET, CLINT_MTIMECMP_OFFSE
 #[cfg(not(kani))]
 pub fn read_mtime() -> u64 {
     let addr = (CLINT_BASE + CLINT_MTIME_OFFSET) as *const u64;
+    // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
     unsafe { core::ptr::read_volatile(addr) }
 }
 
 #[cfg(not(kani))]
 pub fn write_mtimecmp(value: u64) {
     let addr = (CLINT_BASE + CLINT_MTIMECMP_OFFSET) as *mut u64;
+    // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
     unsafe { core::ptr::write_volatile(addr, value) }
 }
 

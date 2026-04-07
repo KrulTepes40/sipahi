@@ -1,3 +1,5 @@
+//! Kernel error types — every failure is explicit, no silent drops.
+#![allow(dead_code)] // All variants needed — used by HAL, policy, sandbox.
 // Sipahi — Hata Tipleri
 // Safety-critical: her hata açık, sessiz başarısızlık YOK
 

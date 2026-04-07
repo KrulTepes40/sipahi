@@ -1,3 +1,4 @@
+//! Kani formal verification harnesses — panic-freedom and invariant proofs.
 // Sipahi — Kani Verification Harnesses
 // Sprint 6: 25 formal verification proof
 //
@@ -293,24 +294,26 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
-    // PROOF 19: Hiçbir bölge L (lock) biti set değil
+    // PROOF 19: Tüm TOR entry'lerde L-bit (lock) set — M-mode dahil kilitli
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
-    fn pmp_no_lock_bit() {
+    fn pmp_all_tor_entries_locked() {
         use crate::arch::pmp;
         let configs: [u8; 8] = [
             0,
-            pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_X,
+            pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_X | pmp::PMP_L,
             0,
-            pmp::PMP_TOR | pmp::PMP_R,
+            pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_L,
             0,
-            pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W,
+            pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,
             0,
-            pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W,
+            pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,
         ];
         let mut i = 0;
         while i < 8 {
-            assert!(configs[i] & pmp::PMP_L == 0);
+            if configs[i] & pmp::PMP_TOR != 0 {
+                assert!(configs[i] & pmp::PMP_L != 0);
+            }
             i += 1;
         }
     }
@@ -321,7 +324,7 @@ mod verification {
     #[kani::proof]
     fn pmp_pack_unpack_roundtrip() {
         use crate::arch::pmp;
-        let original: [u8; 8] = [0, 0x0D, 0, 0x09, 0, 0x0B, 0, 0x0B];
+        let original: [u8; 8] = [0, 0x8D, 0, 0x89, 0, 0x8B, 0, 0x8B]; // L-bit set
         let packed = pmp::pack_pmpcfg(original);
         let mut i = 0;
         while i < 8 {

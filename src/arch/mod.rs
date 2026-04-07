@@ -1,3 +1,4 @@
+//! Architecture-specific support: boot, UART, PMP, CLINT, CSR, trap entry.
 // Katman 0: Donanım Soyutlama — Arch
 // RISC-V 64-bit, CVA6, M/S/U Mode
 

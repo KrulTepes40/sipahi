@@ -1,3 +1,4 @@
+//! Bump allocator for WASM sandbox — epoch-resettable, OOM-safe.
 // Sipahi — WASM Bump Allocator (Sprint 12)
 // Arena boyutu: config.rs::WASM_HEAP_SIZE — derleme zamanı sabit, değiştirmek için config'i güncelle
 //
@@ -30,6 +31,7 @@ static ARENA_OFFSET: AtomicUsize = AtomicUsize::new(0);
 /// Sıfır boyutlu tip — GlobalAlloc impl için yeterli
 pub struct BumpAllocator;
 
+// SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
 unsafe impl GlobalAlloc for BumpAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let size  = layout.size();

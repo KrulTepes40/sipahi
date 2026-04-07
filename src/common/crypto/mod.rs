@@ -1,3 +1,4 @@
+//! Cryptographic provider selection — compile-time feature-gated (BLAKE3 / SHA-384).
 // Modüler Kriptografi — Compile-time trait seçimi
 // v1.0: BLAKE3 + Ed25519 (fast-crypto)
 // v2.0: SHA-384/Zknh + LMS (cnsa-crypto)

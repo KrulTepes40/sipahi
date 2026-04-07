@@ -1,3 +1,4 @@
+//! BLAKE3 keyed hash provider — 32-byte key, 16-byte MAC output (no_std).
 // Sipahi — Gerçek BLAKE3 Keyed Hash (Sprint 13)
 // Önceki: SipahiMAC-STUB (kriptografik değildi, Sprint 9'dan beri placeholder)
 // Sprint 13: blake3 crate ile gerçek implementasyon (no_std uyumlu)

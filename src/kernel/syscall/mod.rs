@@ -1,3 +1,5 @@
+//! Syscall module: kernel dispatch + userspace ECALL wrappers.
+#![allow(dead_code)] // Userspace wrappers — called by tasks in U-mode (Sprint 7+).
 // Sipahi — Syscall Modülü (Sprint 7)
 // 5 syscall: cap_invoke, ipc_send, ipc_recv, yield, task_info
 //
@@ -32,6 +34,7 @@ pub use dispatch::{
 #[inline(always)]
 pub fn cap_invoke(cap: usize, resource: usize, action: usize, arg: usize) -> usize {
     let result: usize;
+    // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -50,6 +53,7 @@ pub fn cap_invoke(cap: usize, resource: usize, action: usize, arg: usize) -> usi
 #[inline(always)]
 pub fn ipc_send(channel_id: usize, msg_ptr: usize) -> usize {
     let result: usize;
+    // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -66,6 +70,7 @@ pub fn ipc_send(channel_id: usize, msg_ptr: usize) -> usize {
 #[inline(always)]
 pub fn ipc_recv(channel_id: usize, buf_ptr: usize) -> usize {
     let result: usize;
+    // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -82,6 +87,7 @@ pub fn ipc_recv(channel_id: usize, buf_ptr: usize) -> usize {
 #[inline(always)]
 pub fn yield_cpu() -> usize {
     let result: usize;
+    // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -97,6 +103,7 @@ pub fn yield_cpu() -> usize {
 #[inline(always)]
 pub fn task_info(info_type: usize) -> usize {
     let result: usize;
+    // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
     unsafe {
         core::arch::asm!(
             "ecall",

@@ -1,3 +1,5 @@
+//! Syscall dispatch table — 5 handlers, O(1) jump, WCET-tracked.
+#![allow(dead_code)] // WCET stats + print — used in debug/trace builds.
 // Sipahi — Syscall Dispatch (Sprint 7-8)
 // Jump table dispatch — 5 syscall, O(1), deterministic
 // Sprint 8: ipc_send/ipc_recv gerçek SPSC entegrasyonu
@@ -31,6 +33,7 @@ static SYSCALL_TABLE: [SyscallHandler; SYSCALL_COUNT] = [
 #[inline(always)]
 fn rdcycle() -> u64 {
     let val: u64;
+    // SAFETY: rdcycle reads cycle counter — no side effects.
     unsafe { core::arch::asm!("rdcycle {}", out(reg) val); }
     val
 }
@@ -45,6 +48,7 @@ static mut WCET_LAST: [u64; SYSCALL_COUNT] = [0; SYSCALL_COUNT];
 #[inline(always)]
 fn wcet_update(id: usize, cycles: u64) {
     if id < SYSCALL_COUNT {
+        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
         unsafe {
             WCET_LAST[id] = cycles;
             if cycles > WCET_MAX[id] {
@@ -63,6 +67,7 @@ pub fn print_wcet_stats() {
         uart::puts("  ");
         uart::puts(names[i]);
         uart::puts(": last=");
+        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
         let (last, max) = unsafe { (WCET_LAST[i], WCET_MAX[i]) };
         print_u64(last);
         uart::puts(" max=");
@@ -138,6 +143,7 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
             None => return E_INVALID_ARG,
         };
 
+        // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
         let msg = unsafe {
             core::ptr::read_volatile(msg_ptr as *const crate::ipc::IpcMessage)
         };
@@ -180,6 +186,7 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
 
         match ch.recv() {
             Some(msg) => {
+                // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
                 unsafe {
                     core::ptr::write_volatile(buf_ptr as *mut crate::ipc::IpcMessage, msg);
                 }

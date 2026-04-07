@@ -1,3 +1,4 @@
+//! Capability-based access control: token broker, MAC cache, action flags.
 // Sipahi — Capability System (Sprint 9)
 // token.rs: 32B Token struct, ACTION_* sabitleri
 // cache.rs: 4-slot constant-time TokenCache

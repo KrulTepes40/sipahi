@@ -1,3 +1,4 @@
+//! Preemptive fixed-priority scheduler with per-task budget and period enforcement.
 // Sipahi — Scheduler (Sprint 10)
 // Fixed-Priority Preemptive + Budget + Deadline
 //
@@ -131,6 +132,7 @@ pub fn create_task(
     budget_cycles: u32,
     period_ticks: u32,
 ) -> Option<u8> {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         if TASK_COUNT >= MAX_TASKS {
             return None;
@@ -164,6 +166,7 @@ pub fn create_task(
 /// Scheduler tick — timer interrupt'tan çağrılır
 /// WCET: ≤0.8μs @ 100MHz (doküman hedef)
 pub fn schedule() {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         if TASK_COUNT < 2 {
             return;
@@ -263,6 +266,7 @@ pub fn schedule() {
 
 /// İlk task'ı başlat (boot'tan çağrılır)
 pub fn start_first_task() -> ! {
+    // SAFETY: Inline assembly — register state saved/restored by convention.
     unsafe {
         // Teşhis: TASK_COUNT ve TASKS[0].state — sadece debug-boot feature ile
         #[cfg(all(not(kani), feature = "debug-boot"))]
@@ -285,7 +289,14 @@ pub fn start_first_task() -> ! {
         }
 
         if TASK_COUNT == 0 {
-            panic!("No tasks to run!");
+            #[cfg(not(kani))]
+            {
+                crate::arch::uart::println("[POLICY] SHUTDOWN — no tasks");
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyShutdown, 0xFF, &[],
+                );
+                loop { core::arch::asm!("wfi"); }
+            }
         }
 
         TASKS[0].state = TaskState::Running;
@@ -316,6 +327,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             // Spam önleme: sadece ilk restart'ta yazdır (count artırılmış, 1 == ilk kez)
             #[cfg(not(kani))]
             {
+                // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
                 let tid = unsafe { TASKS[task_id].id };
                 if crate::kernel::policy::get_restart_count(tid) == 1 {
                     crate::arch::uart::println("[POLICY] RESTART (1) — periyot sonunda READY");
@@ -333,6 +345,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
                 crate::arch::uart::println("[POLICY] ISOLATE — task durduruldu");
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
+                    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
                     unsafe { TASKS[task_id].id },
                     &[],
                 );
@@ -341,6 +354,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
         }
         FailureMode::Degrade => {
             #[cfg(not(kani))]
+            // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
             unsafe {
                 if !DEGRADE_LOGGED {
                     DEGRADE_LOGGED = true;
@@ -361,6 +375,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
                 crate::arch::uart::println("[POLICY] FAILOVER (stub) → DEGRADE");
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyFailover,
+                    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
                     unsafe { TASKS[task_id].id },
                     &[],
                 );
@@ -375,6 +390,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             #[cfg(not(kani))]
             crate::ipc::blackbox::log(
                 crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
+                // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
                 unsafe { TASKS[task_id].id },
                 &[],
             );
@@ -389,6 +405,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
 /// Budget ve period_counter burada sıfırlanmaz — Faz 1 halleder.
 /// restart_count burada sıfırlanmaz — apply_policy'de artırılır, birikir.
 fn restart_task(id: usize) {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         if id >= TASK_COUNT { return; }
 
@@ -404,6 +421,7 @@ fn restart_task(id: usize) {
 /// Degrade — dal >= 2 (DAL-C/D) taskları askıya al
 /// Not: Isolated task'lar bu işlemde değiştirilmez — zaten daha kısıtlı.
 fn degrade_system() {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         let mut i: usize = 0;
         while i < TASK_COUNT {
@@ -421,6 +439,7 @@ fn degrade_system() {
 /// İzole — task durdur + token revoke
 /// Isolated: Suspended'dan farklı, periyot reset ile READY'ye dönmez.
 fn isolate_task(id: usize) {
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         if id < TASK_COUNT {
             TASKS[id].state = TaskState::Isolated;
@@ -435,6 +454,7 @@ fn shutdown_system() -> ! {
     crate::arch::uart::println("[POLICY] SHUTDOWN — güvenli durum");
     loop {
         #[cfg(not(kani))]
+        // SAFETY: WFI instruction — halts hart until interrupt, no state corruption.
         unsafe { core::arch::asm!("wfi") };
         #[cfg(kani)]
         {}

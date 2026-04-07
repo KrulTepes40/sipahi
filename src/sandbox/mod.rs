@@ -1,3 +1,5 @@
+//! WASM sandbox: Wasmi 1.0.9 runtime with fuel metering and float rejection.
+#![allow(dead_code)] // Compute services — called via WASM host_call bridge.
 // Sipahi — WASM Sandbox (Sprint 12)
 // Katman 3: Mixed-Criticality WASM İzolasyon
 //
@@ -173,13 +175,20 @@ fn compute_crc(data: &[u8]) -> i32 {
     result as i32
 }
 
-/// COMPUTE_MAC — BLAKE3 keyed hash stub (sabit zaman, WCET ~350c)
+/// COMPUTE_MAC — BLAKE3 keyed hash (sabit zaman, WCET ~350c)
+/// Giriş: data[0..32] = 32-byte key, data[32..] = mesaj
+/// Dönüş: MAC'in ilk 4 byte'ı i32 olarak (LE)
 fn compute_mac(data: &[u8]) -> i32 {
-    // Sprint 13'te gerçek BLAKE3 ile değiştirilecek (SipahiMAC-STUB)
-    if data.len() < 4 { return -1; }
-    // Stub: ilk 4 byte'ın XOR'u
-    let stub = data.iter().fold(0u32, |acc, &b| acc ^ b as u32);
-    stub as i32
+    if data.len() < 32 { return -1; }
+    let mut key = [0u8; 32];
+    let mut i = 0;
+    while i < 32 { key[i] = data[i]; i += 1; }
+    let msg = &data[32..];
+
+    use crate::common::crypto::provider::HashProvider;
+    use crate::common::crypto::Blake3Provider;
+    let mac = Blake3Provider::keyed_hash(&key, msg);
+    i32::from_le_bytes([mac[0], mac[1], mac[2], mac[3]])
 }
 
 /// COMPUTE_MATH — Q32.32 vektör dot product (sabit zaman, WCET ~200c)

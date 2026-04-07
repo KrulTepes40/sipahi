@@ -1,3 +1,4 @@
+//! SPSC lock-free IPC ring buffers with CRC32 integrity and host-call limiting.
 // Sipahi — IPC: SPSC Ring Buffer + Blackbox Flight Recorder
 // Sprint 8: SPSC kanallar
 // Sprint 11: Blackbox kayıt
@@ -171,7 +172,7 @@ pub fn get_channel(id: usize) -> Option<&'static mut SpscChannel> {
     if id >= MAX_IPC_CHANNELS {
         return None;
     }
-    // SAFETY: tek hart, interrupt'lar kapalı olmalı çağrılırken
+    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe { Some(&mut IPC_CHANNELS[id]) }
 }
 

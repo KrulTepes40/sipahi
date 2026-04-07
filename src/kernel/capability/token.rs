@@ -1,3 +1,5 @@
+//! 32-byte capability token: id, resource, action, nonce, expiry, MAC.
+#![allow(dead_code)] // ACTION_* constants used by Kani proofs + validate_full.
 // Sipahi — Capability Token (Sprint 9)
 // 32B sabit boyut, #[repr(C)], stack-only, heap yok
 //

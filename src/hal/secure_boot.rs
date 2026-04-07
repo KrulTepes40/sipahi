@@ -1,3 +1,5 @@
+//! Ed25519 signature verification for secure boot (RFC 8032).
+#![allow(dead_code)] // Called from boot with test-keys; production uses OTP path.
 // Sipahi — Secure Boot Ed25519 İmza Doğrulama (Sprint 13)
 // Doküman §SECURE_BOOT:
 //

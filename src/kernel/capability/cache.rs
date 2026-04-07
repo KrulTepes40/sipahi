@@ -1,3 +1,4 @@
+//! Constant-time 4-slot token lookup cache — O(1) hit path.
 // Sipahi — Token Cache (Sprint 9)
 // 4-slot constant-time lookup — her zaman 4 entry tarar, erken çıkış YOK
 // Hit ~10c (4 × branch-free compare), miss = caller'a döner

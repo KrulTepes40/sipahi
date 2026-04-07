@@ -1,3 +1,5 @@
+//! HAL device trait — static-dispatch hardware abstraction (no vtable).
+#![allow(dead_code)] // HAL API — v2.0 SPI/I2C/GPIO will use this trait.
 // Sipahi — Device Access Trait (Sprint 6)
 //
 // Tüm donanım aygıtları bu trait'i implemente eder.
@@ -62,12 +64,14 @@ impl DeviceAccess for UartDevice {
             return Err(SipahiError::DeviceNotReady);
         }
         // LSR (Line Status Register) bit 0: Data Ready
+        // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
         let lsr = unsafe {
             core::ptr::read_volatile((self.base_addr + 5) as *const u8)
         };
         if lsr & 1 == 0 {
             return Err(SipahiError::DeviceNotReady);
         }
+        // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
         let byte = unsafe {
             core::ptr::read_volatile(self.base_addr as *const u8)
         };
@@ -79,12 +83,14 @@ impl DeviceAccess for UartDevice {
             return Err(SipahiError::DeviceNotReady);
         }
         // LSR bit 5: Transmit Holding Register Empty
+        // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
         let lsr = unsafe {
             core::ptr::read_volatile((self.base_addr + 5) as *const u8)
         };
         if lsr & 0x20 == 0 {
             return Err(SipahiError::DeviceNotReady);
         }
+        // SAFETY: MMIO register access at hardware-defined address.
         unsafe {
             core::ptr::write_volatile(self.base_addr as *mut u8, byte);
         }

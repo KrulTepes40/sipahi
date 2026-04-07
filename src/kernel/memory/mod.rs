@@ -1,3 +1,4 @@
+//! PMP region setup — .text RX, .rodata R, .data+bss+stack RW, UART RW.
 // Sipahi — Memory Protection (Sprint 5)
 // PMP ile kernel bellek bölgelerini koruma
 //
@@ -39,6 +40,7 @@ extern "C" {
 
 /// PMP bölgelerini ayarla
 pub fn init_pmp() {
+    // SAFETY: Linker-provided symbol address — valid for duration of program.
     let text_start = unsafe { &__text_start as *const u8 as usize };
     let text_end = unsafe { &__text_end as *const u8 as usize };
     let rodata_start = unsafe { &__rodata_start as *const u8 as usize };
@@ -72,15 +74,18 @@ pub fn init_pmp() {
     pmp::write_pmpaddr(7, UART_END);
 
     // ─── PMP Config (pmpcfg0) ───
+    // L-bit: Entry kilitleme — M-mode da bu izinlere tabi.
+    // Eşleşmeyen adresler (CLINT 0x200_0000) → M-mode tam erişir (spec).
+    // Scheduler PMP değiştirmediği için L-bit güvenle eklenebilir.
     let configs: [u8; 8] = [
-        0,                                           // Entry 0: OFF (alt sınır)
-        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_X,     // Entry 1: .text RX
-        0,                                           // Entry 2: OFF (alt sınır)
-        pmp::PMP_TOR | pmp::PMP_R,                   // Entry 3: .rodata R
-        0,                                           // Entry 4: OFF (alt sınır)
-        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W,     // Entry 5: .data+bss+stack RW
-        0,                                           // Entry 6: OFF (alt sınır)
-        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W,     // Entry 7: UART RW
+        0,                                                       // Entry 0: OFF (alt sınır)
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_X | pmp::PMP_L,   // Entry 1: .text RX (locked)
+        0,                                                       // Entry 2: OFF (alt sınır)
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_L,                 // Entry 3: .rodata R (locked)
+        0,                                                       // Entry 4: OFF (alt sınır)
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,   // Entry 5: .data+bss+stack RW (locked)
+        0,                                                       // Entry 6: OFF (alt sınır)
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,   // Entry 7: UART RW (locked)
     ];
 
     pmp::write_pmpcfg0(pmp::pack_pmpcfg(configs));
