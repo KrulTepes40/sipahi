@@ -37,6 +37,10 @@ pub struct Token {
     pub mac:      [u8; 16],
 }
 
+impl Default for Token {
+    fn default() -> Self { Self::zeroed() }
+}
+
 impl Token {
     pub const fn zeroed() -> Self {
         Token {

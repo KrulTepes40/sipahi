@@ -9,3 +9,4 @@ pub mod error;
 pub mod crypto;
 pub mod fmt;
 pub mod sync;
+pub mod diagnostic;

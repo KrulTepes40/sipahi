@@ -81,6 +81,10 @@ pub struct BlackboxRecord {
     pub crc:       u32,
 }
 
+impl Default for BlackboxRecord {
+    fn default() -> Self { Self::zeroed() }
+}
+
 impl BlackboxRecord {
     pub const fn zeroed() -> Self {
         BlackboxRecord {
@@ -344,5 +348,40 @@ mod verification {
         // 8KB / 64B = 128 kayıt
         assert!(crate::common::config::BLACKBOX_SIZE / BLACKBOX_RECORD_SIZE
                 == BLACKBOX_MAX_RECORDS);
+    }
+
+    /// Proof 82: 128 kayıt sonrası write_pos başa döner (tam tur)
+    #[kani::proof]
+    #[kani::unwind(129)]
+    fn blackbox_wrap_around_bounded() {
+        let write_pos: u8 = kani::any();
+        kani::assume((write_pos as usize) < BLACKBOX_MAX_RECORDS);
+
+        let mut pos = write_pos;
+        let mut i: u8 = 0;
+        while i < 128 {
+            pos = if (pos as usize) + 1 >= BLACKBOX_MAX_RECORDS {
+                0
+            } else {
+                pos + 1
+            };
+            assert!((pos as usize) < BLACKBOX_MAX_RECORDS);
+            i += 1;
+        }
+        // Tam tur: 128 adım sonrası başlangıca dönmeli
+        assert!(pos == write_pos);
+    }
+
+    /// Proof 83: next write_pos her zaman buffer sınırları içinde
+    #[kani::proof]
+    fn blackbox_next_pos_always_bounded() {
+        let pos: u8 = kani::any();
+        kani::assume((pos as usize) < BLACKBOX_MAX_RECORDS);
+        let next = if (pos as usize) + 1 >= BLACKBOX_MAX_RECORDS {
+            0u8
+        } else {
+            pos + 1
+        };
+        assert!((next as usize) < BLACKBOX_MAX_RECORDS);
     }
 }

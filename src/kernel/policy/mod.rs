@@ -95,6 +95,7 @@ pub fn get_restart_count(task_id: u8) -> u8 {
 /// event: PolicyEvent as u8
 /// dal:   0=A 1=B 2=C 3=D
 /// Kani'de decide_action ile test edilir (apply_policy'nin yan etkileri yok)
+#[must_use = "policy decision must be applied"]
 pub const fn decide_action(event: u8, restart_count: u8, dal: u8) -> u8 {
     match event {
         // Budget aşımı → RESTART(MAX_RESTART_BUDGET) → DEGRADE

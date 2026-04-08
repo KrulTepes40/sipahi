@@ -93,16 +93,16 @@ impl SpscChannel {
     }
 
     /// Mesaj gönder — O(1), lock-free, &self
-    /// Producer çağırır. Buffer doluysa Err döner.
-    #[allow(clippy::result_unit_err)]
-    pub fn send(&self, msg: &IpcMessage) -> Result<(), ()> {
+    /// Producer çağırır. Buffer doluysa Err(BufferFull) döner.
+    #[must_use = "send result must be checked for BufferFull"]
+    pub fn send(&self, msg: &IpcMessage) -> Result<(), crate::common::error::SipahiError> {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
 
         let next_head = (head + 1) % (IPC_CHANNEL_SLOTS as u16);
 
         if next_head == tail {
-            return Err(());
+            return Err(crate::common::error::SipahiError::BufferFull);
         }
 
         // SAFETY: Producer owns head index — no concurrent write to slots[head].

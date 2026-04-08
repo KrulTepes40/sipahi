@@ -28,6 +28,10 @@ pub struct TokenCache {
     next_slot: u8, // round-robin eviction pointer
 }
 
+impl Default for TokenCache {
+    fn default() -> Self { Self::new() }
+}
+
 impl TokenCache {
     pub const fn new() -> Self {
         TokenCache {

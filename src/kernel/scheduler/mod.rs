@@ -475,3 +475,91 @@ pub fn query_task_info(task_id: usize) -> usize {
         (state << 8) | (prio << 4) | dal
     }
 }
+
+/// Pure task seçim fonksiyonu — Kani'de doğrulanabilir
+/// En düşük priority değeri olan Ready/Running task'ı seç
+#[allow(dead_code)] // Used by Kani proofs; mirrors schedule() Faz 3 logic.
+pub fn select_highest_priority(
+    states: &[TaskState],
+    priorities: &[u8],
+    count: usize,
+) -> Option<usize> {
+    let mut best: Option<usize> = None;
+    let mut best_prio: u8 = u8::MAX;
+    let mut i = 0;
+    while i < count && i < states.len() && i < priorities.len() {
+        if (states[i] == TaskState::Ready || states[i] == TaskState::Running)
+            && priorities[i] < best_prio
+        {
+            best = Some(i);
+            best_prio = priorities[i];
+        }
+        i += 1;
+    }
+    best
+}
+
+// ═══════════════════════════════════════════════════════
+// Kani — Scheduler proofs
+// ═══════════════════════════════════════════════════════
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+    use crate::common::config::MAX_TASKS;
+
+    /// Proof 79: En az bir Ready task varsa her zaman birini seçer,
+    /// seçilen index geçerli ve state Ready/Running
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn scheduler_always_selects_ready() {
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let priorities = [15u8; MAX_TASKS];
+        let count: usize = kani::any();
+        kani::assume(count >= 1 && count <= MAX_TASKS);
+
+        let ready_idx: usize = kani::any();
+        kani::assume(ready_idx < count);
+        states[ready_idx] = TaskState::Ready;
+
+        let selected = select_highest_priority(&states, &priorities, count);
+        assert!(selected.is_some());
+
+        if let Some(sel) = selected {
+            assert!(sel < count);
+            assert!(sel < MAX_TASKS);
+            assert!(states[sel] == TaskState::Ready || states[sel] == TaskState::Running);
+        }
+    }
+
+    /// Proof 80: Dead ve Isolated task'lar asla seçilmez
+    #[kani::proof]
+    fn scheduler_never_selects_dead_or_isolated() {
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let priorities = [5u8; MAX_TASKS];
+        states[0] = TaskState::Dead;
+        states[1] = TaskState::Isolated;
+        let selected = select_highest_priority(&states, &priorities, 2);
+        assert!(selected.is_none());
+    }
+
+    /// Proof 81: Isolated task en yüksek öncelikte bile seçilmez
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn scheduler_isolated_never_selected() {
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let mut priorities = [15u8; MAX_TASKS];
+        let count: usize = kani::any();
+        kani::assume(count >= 1 && count <= MAX_TASKS);
+
+        let iso_idx: usize = kani::any();
+        kani::assume(iso_idx < count);
+        states[iso_idx] = TaskState::Isolated;
+        priorities[iso_idx] = 0; // en yüksek öncelik
+
+        let selected = select_highest_priority(&states, &priorities, count);
+        if let Some(sel) = selected {
+            assert!(states[sel] != TaskState::Isolated);
+        }
+    }
+}

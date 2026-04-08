@@ -54,6 +54,7 @@ pub fn provision_key(key: &[u8; 32]) {
 
 /// Cache-only lookup — sys_cap_invoke fast path (~10c)
 /// validate_full ile cache'e eklenmemiş token → false döner
+#[must_use = "cache lookup result must be checked"]
 pub fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
@@ -65,6 +66,7 @@ pub fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
 /// Full token validation — MAC hesapla, nonce kontrol, cache'e ekle (~400c)
 /// Returns: true = geçerli + cache'e eklendi, false = RED (MAC/nonce/key fail)
 #[cfg(feature = "fast-crypto")]
+#[must_use = "validation result must be checked"]
 pub fn validate_full(token: &Token) -> bool {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {

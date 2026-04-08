@@ -39,6 +39,7 @@ fn kernel_end_addr() -> usize {
 
 /// User pointer doğrulama — kernel belleğine erişim engellenmiş mi?
 /// ptr == 0 → reject, ptr+size overflow → reject, ptr < kernel_end → reject
+#[must_use = "pointer validation result must be checked"]
 fn is_valid_user_ptr(ptr: usize, size: usize) -> bool {
     if ptr == 0 { return false; }
     let end = match ptr.checked_add(size) {
@@ -105,6 +106,40 @@ pub fn print_wcet_stats() {
         print_u64(max);
         uart::println(" cycles");
         i += 1;
+    }
+}
+
+/// WCET limit kontrolü — max cycle'lar hedefleri aşıyor mu?
+/// true = tüm syscall'lar limit altında, false = en az biri aşıyor
+#[cfg(not(kani))]
+pub fn check_wcet_limits() -> bool {
+    use crate::common::config;
+    let limits: [u64; SYSCALL_COUNT] = [
+        config::WCET_CAP_INVOKE,
+        config::WCET_IPC_SEND,
+        config::WCET_IPC_RECV,
+        config::WCET_YIELD,
+        config::WCET_SCHEDULER_TICK,
+    ];
+    // SAFETY: Single-hart, no concurrent mutation.
+    unsafe {
+        let mut i = 0;
+        let mut all_ok = true;
+        while i < SYSCALL_COUNT {
+            let max = (*WCET_MAX.get())[i];
+            if max > limits[i] {
+                uart::puts("[WCET] EXCEED syscall ");
+                print_u64(i as u64);
+                uart::puts(": max=");
+                print_u64(max);
+                uart::puts(" limit=");
+                print_u64(limits[i]);
+                uart::println("");
+                all_ok = false;
+            }
+            i += 1;
+        }
+        all_ok
     }
 }
 
@@ -189,7 +224,7 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
                 uart::println(") OK");
                 E_OK
             }
-            Err(()) => {
+            Err(_) => {
                 uart::puts("[SYS] ipc_send(ch=");
                 print_u64(channel_id as u64);
                 uart::println(") FULL");

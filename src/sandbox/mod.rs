@@ -113,12 +113,11 @@ pub fn is_float_opcode(b: u8) -> bool {
     )
 }
 
-/// WASM modülünde float opcode var mı?
-/// false = güvenli (yüklenebilir), true = float tespit edildi (REJECT)
-pub fn has_float_opcodes(bytes: &[u8]) -> bool {
+/// v1 byte-level tarama (yedek, Kani prooflarında kullanılır)
+pub fn has_float_opcodes_v1(bytes: &[u8]) -> bool {
     let code = match find_code_section(bytes) {
         Some(c) => c,
-        None    => return false, // Kod bölümü yok → float kontrol edilemez
+        None    => return false,
     };
     let mut i = 0;
     while i < code.len() {
@@ -128,7 +127,70 @@ pub fn has_float_opcodes(bytes: &[u8]) -> bool {
     false
 }
 
+/// Instruction-aware skip — LEB128 immediate'leri atlayarak false positive önler
+fn skip_instruction(code: &[u8], pos: usize) -> Option<usize> {
+    if pos >= code.len() { return None; }
+    let op = code[pos];
+    match op {
+        // i32.const → signed LEB128 immediate
+        0x41 => {
+            let mut p = pos + 1;
+            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
+            if p < code.len() { Some(p + 1) } else { None }
+        }
+        // i64.const → signed LEB128 immediate
+        0x42 => {
+            let mut p = pos + 1;
+            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
+            if p < code.len() { Some(p + 1) } else { None }
+        }
+        // f32.const → 4 byte IEEE754
+        0x43 => Some(pos + 5),
+        // f64.const → 8 byte IEEE754
+        0x44 => Some(pos + 9),
+        // block/loop/if → blocktype (1 byte)
+        0x02..=0x04 => Some(pos + 2),
+        // br, br_if, call, local.get/set/tee, global.get/set, memory.size/grow → LEB128 index
+        0x0C | 0x0D | 0x10 | 0x20..=0x24 | 0x3F | 0x40 => {
+            let mut p = pos + 1;
+            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
+            if p < code.len() { Some(p + 1) } else { None }
+        }
+        // load/store → 2× LEB128 (align + offset)
+        0x28..=0x3E => {
+            let mut p = pos + 1;
+            // align
+            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
+            if p >= code.len() { return None; }
+            p += 1;
+            // offset
+            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
+            if p < code.len() { Some(p + 1) } else { None }
+        }
+        // Diğer tüm opcode'lar: 1 byte (immediate yok)
+        _ => Some(pos + 1),
+    }
+}
+
+/// v2 instruction-level float tarama — LEB128 immediate atlanır
+pub fn has_float_opcodes(bytes: &[u8]) -> bool {
+    let code = match find_code_section(bytes) {
+        Some(c) => c,
+        None    => return false,
+    };
+    let mut pos = 0;
+    while pos < code.len() {
+        if is_float_opcode(code[pos]) { return true; }
+        pos = match skip_instruction(code, pos) {
+            Some(next) => next,
+            None => return false,
+        };
+    }
+    false
+}
+
 /// Modül ön-doğrulama: magic + version + boyut + float taraması
+#[must_use = "module validation result must be checked"]
 pub fn validate_module(bytes: &[u8]) -> Result<(), SandboxError> {
     if bytes.len() < 8 { return Err(SandboxError::InvalidMagic); }
     if bytes[0..4] != WASM_MAGIC   { return Err(SandboxError::InvalidMagic); }
@@ -192,14 +254,15 @@ fn compute_mac(data: &[u8]) -> i32 {
 }
 
 /// COMPUTE_MATH — Q32.32 vektör dot product (sabit zaman, WCET ~200c)
+/// Dönüş: Q32.32 sonuç (i32), -1 = kısa veri, -2 = overflow
 fn compute_math(data: &[u8]) -> i32 {
-    // Stub: 2 adet i64 (Q32.32) skalar çarpım
     if data.len() < 16 { return -1; }
     let a = i64::from_le_bytes([data[0],data[1],data[2],data[3],data[4],data[5],data[6],data[7]]);
     let b = i64::from_le_bytes([data[8],data[9],data[10],data[11],data[12],data[13],data[14],data[15]]);
-    // Saturating multiply (SORUN 7: overflow politikası)
-    let result = a.saturating_mul(b) >> 32; // Q32.32 → Q32.32
-    result as i32
+    match a.checked_mul(b) {
+        Some(result) => (result >> 32) as i32,
+        None => -2, // overflow
+    }
 }
 
 // ═══════════════════════════════════════════════════════

@@ -244,3 +244,14 @@ pub fn test_ipc() {
     }
     arch::uart::println("");
 }
+
+// ═══ WCET Regression Check ═══
+pub fn test_wcet_limits() {
+    arch::uart::println("[TEST] WCET regression check...");
+    let ok = kernel::syscall::dispatch::check_wcet_limits();
+    if ok {
+        arch::uart::println("[TEST] ★ WCET limits OK ★");
+    } else {
+        arch::uart::println("[TEST] ⚠ WCET limit exceeded (QEMU TCG — informational only)");
+    }
+}

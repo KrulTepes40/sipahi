@@ -32,4 +32,6 @@ pub enum SipahiError {
     InvalidParameter,
     /// Token nonce tekrarı (replay attack)
     ReplayDetected,
+    /// Geçersiz kullanıcı pointer'ı (kernel belleğine erişim girişimi)
+    InvalidPointer,
 }

@@ -46,6 +46,10 @@ pub struct IopmpController {
     enabled: bool,
 }
 
+impl Default for IopmpController {
+    fn default() -> Self { Self::new() }
+}
+
 impl IopmpController {
     pub const fn new() -> Self {
         IopmpController {

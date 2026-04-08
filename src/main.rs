@@ -123,6 +123,9 @@ pub extern "C" fn rust_main() -> ! {
     // ═══ Sprint 8: IPC Test ═══
     tests::test_ipc();
 
+    // ═══ WCET Regression ═══
+    tests::test_wcet_limits();
+
     // ═══ Sprint 13: Secure Boot + Real BLAKE3 Test ═══
     arch::uart::println("[BOOT] Sprint 13: Secure Boot & Real BLAKE3");
     {
