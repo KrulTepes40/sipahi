@@ -171,7 +171,7 @@ pub extern "C" fn rust_main() -> ! {
         }
 
         // Test 2-4: Ed25519 — test-keys ile derlenmeli (release'de zero key ile atlanır)
-        #[cfg(any(debug_assertions, feature = "test-keys"))]
+        #[cfg(feature = "test-keys")]
         {
             use hal::secure_boot::secure_boot_check;
             use hal::key::{QEMU_TEST_PUBKEY, QEMU_TEST_SIGNATURE};
@@ -203,7 +203,7 @@ pub extern "C" fn rust_main() -> ! {
                 "[SEC] Ed25519 wrong key FAIL ✗"
             });
         }
-        #[cfg(not(any(debug_assertions, feature = "test-keys")))]
+        #[cfg(not(feature = "test-keys"))]
         arch::uart::println("[SEC] Ed25519 tests SKIP (no test-keys)");
 
         #[cfg(feature = "debug-boot")]

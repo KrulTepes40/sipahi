@@ -30,7 +30,7 @@ pub const SIGNATURE_SIZE: usize = 64;
 ///
 /// Production'da OTP fuse'dan okunur; bu sabit SADECE QEMU/test ortamı içindir.
 /// Release build'de test-keys feature olmadan derlenmez.
-#[cfg(any(debug_assertions, feature = "test-keys"))]
+#[cfg(feature = "test-keys")]
 pub const QEMU_TEST_PUBKEY: [u8; OTP_KEY_SIZE] = [
     0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7,
     0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
@@ -39,7 +39,7 @@ pub const QEMU_TEST_PUBKEY: [u8; OTP_KEY_SIZE] = [
 ];
 
 /// QEMU geliştirme ortamı test imzası — RFC 8032 Test Vector #1 (mesaj: boş)
-#[cfg(any(debug_assertions, feature = "test-keys"))]
+#[cfg(feature = "test-keys")]
 pub const QEMU_TEST_SIGNATURE: [u8; SIGNATURE_SIZE] = [
     0xe5, 0x56, 0x43, 0x00, 0xc3, 0x60, 0xac, 0x72,
     0x90, 0x86, 0xe2, 0xcc, 0x80, 0x6e, 0x82, 0x8a,
@@ -52,11 +52,11 @@ pub const QEMU_TEST_SIGNATURE: [u8; SIGNATURE_SIZE] = [
 ];
 
 /// Production placeholder — OTP fuse'dan okunacak (v2.0)
-#[cfg(not(any(debug_assertions, feature = "test-keys")))]
+#[cfg(not(feature = "test-keys"))]
 pub const QEMU_TEST_PUBKEY: [u8; OTP_KEY_SIZE] = [0u8; OTP_KEY_SIZE];
 
 /// Production placeholder — HSM tarafından üretilecek (v2.0)
-#[cfg(not(any(debug_assertions, feature = "test-keys")))]
+#[cfg(not(feature = "test-keys"))]
 pub const QEMU_TEST_SIGNATURE: [u8; SIGNATURE_SIZE] = [0u8; SIGNATURE_SIZE];
 
 /// Root public key'i döndür.

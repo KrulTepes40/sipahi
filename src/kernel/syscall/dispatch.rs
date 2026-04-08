@@ -19,6 +19,35 @@ pub const E_IPC_FULL: usize = usize::MAX - 2;
 pub const E_IPC_EMPTY: usize = usize::MAX - 3;
 pub const E_INVALID_ARG: usize = usize::MAX - 4;
 
+// Linker-provided symbol — kernel memory end
+#[cfg(not(kani))]
+extern "C" { static _end: u8; }
+
+/// Kernel bellek sınırını al — Kani'de sabit mock (0x80800000)
+#[inline]
+fn kernel_end_addr() -> usize {
+    #[cfg(not(kani))]
+    {
+        // SAFETY: Linker-provided symbol address.
+        unsafe { &_end as *const u8 as usize }
+    }
+    #[cfg(kani)]
+    { 0x80800000 } // 8MB RAM mock
+}
+
+/// User pointer doğrulama — kernel belleğine erişim engellenmiş mi?
+/// ptr == 0 → reject, ptr+size overflow → reject, ptr < kernel_end → reject
+fn is_valid_user_ptr(ptr: usize, size: usize) -> bool {
+    if ptr == 0 { return false; }
+    let end = match ptr.checked_add(size) {
+        Some(e) => e,
+        None => return false,
+    };
+    let ke = kernel_end_addr();
+    if ptr < ke || end < ke { return false; }
+    true
+}
+
 type SyscallHandler = fn(usize, usize, usize, usize) -> usize;
 
 static SYSCALL_TABLE: [SyscallHandler; SYSCALL_COUNT] = [
@@ -135,6 +164,9 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
         uart::println("[SYS] ipc_send: invalid channel");
         return E_INVALID_ARG;
     }
+    if !is_valid_user_ptr(msg_ptr, 64) {
+        return E_INVALID_ARG;
+    }
 
     #[cfg(not(kani))]
     {
@@ -143,7 +175,7 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
             None => return E_INVALID_ARG,
         };
 
-        // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
+        // SAFETY: Pointer validated by is_valid_user_ptr — outside kernel memory.
         let msg = unsafe {
             core::ptr::read_volatile(msg_ptr as *const crate::ipc::IpcMessage)
         };
@@ -174,6 +206,9 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
     if channel_id >= 8 {
         #[cfg(not(kani))]
         uart::println("[SYS] ipc_recv: invalid channel");
+        return E_INVALID_ARG;
+    }
+    if !is_valid_user_ptr(buf_ptr, 64) {
         return E_INVALID_ARG;
     }
 
@@ -217,34 +252,22 @@ fn sys_yield(_: usize, _: usize, _: usize, _: usize) -> usize {
     E_OK
 }
 
-fn sys_task_info(info_type: usize, _: usize, _: usize, _: usize) -> usize {
-    match info_type {
-        0 => {
-            #[cfg(not(kani))]
-            uart::println("[SYS] task_info(task_id) -> 0");
-            0
-        }
-        1 => {
-            #[cfg(not(kani))]
-            uart::println("[SYS] task_info(priority) -> 1");
-            1
-        }
-        2 => {
-            #[cfg(not(kani))]
-            uart::println("[SYS] task_info(budget) -> 10000");
-            10_000
-        }
-        3 => {
-            #[cfg(not(kani))]
-            uart::println("[SYS] task_info(state) -> RUNNING");
-            0
-        }
-        _ => {
-            #[cfg(not(kani))]
-            uart::println("[SYS] task_info: invalid type");
-            E_INVALID_ARG
-        }
+/// task_info — gerçek task bilgisi sorgula
+/// arg0 = task_id
+/// Dönüş: (state << 8) | (priority << 4) | dal, geçersiz id → 0
+fn sys_task_info(task_id: usize, _: usize, _: usize, _: usize) -> usize {
+    #[cfg(not(kani))]
+    {
+        let info = crate::kernel::scheduler::query_task_info(task_id);
+        uart::puts("[SYS] task_info(id=");
+        print_u64(task_id as u64);
+        uart::puts(") -> ");
+        print_u64(info as u64);
+        uart::println("");
+        info
     }
+    #[cfg(kani)]
+    0
 }
 
 #[cfg(not(kani))]
@@ -306,6 +329,26 @@ mod verification {
             }
             i += 1;
         }
+    }
+
+    #[kani::proof]
+    fn null_pointer_always_rejected() {
+        assert!(!is_valid_user_ptr(0, 64));
+        assert!(!is_valid_user_ptr(0, 0));
+    }
+
+    #[kani::proof]
+    fn kernel_addr_always_rejected() {
+        let ptr: usize = kani::any();
+        kani::assume(ptr < kernel_end_addr());
+        kani::assume(ptr > 0);
+        assert!(!is_valid_user_ptr(ptr, 64));
+    }
+
+    #[kani::proof]
+    fn ipc_send_null_ptr_rejected() {
+        let result = sys_ipc_send(0, 0, 0, 0);
+        assert!(result == E_INVALID_ARG);
     }
 
     #[kani::proof]

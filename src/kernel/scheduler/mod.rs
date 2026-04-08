@@ -460,3 +460,17 @@ fn shutdown_system() -> ! {
         {}
     }
 }
+
+/// Task bilgisi sorgula — sys_task_info dispatch'ten çağrılır
+/// Dönüş: (state << 8) | (priority << 4) | dal
+/// task_id geçersizse 0 döner
+pub fn query_task_info(task_id: usize) -> usize {
+    // SAFETY: Single-hart, no concurrent mutation during syscall.
+    unsafe {
+        if task_id >= TASK_COUNT { return 0; }
+        let state = TASKS[task_id].state as usize;
+        let prio  = TASKS[task_id].priority as usize;
+        let dal   = TASKS[task_id].dal as usize;
+        (state << 8) | (prio << 4) | dal
+    }
+}
