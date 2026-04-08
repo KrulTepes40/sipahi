@@ -12,19 +12,20 @@
 use super::token::Token;
 use super::cache::TokenCache;
 use crate::common::crypto::provider::HashProvider;
+use crate::common::sync::SingleHartCell;
 
 #[cfg(feature = "fast-crypto")]
 use crate::common::crypto::Crypto;
 
 /// MAC key — boot'ta provision_key() ile bir kez yazılır
-static mut MAC_KEY: [u8; 32] = [0u8; 32];
-static mut KEY_READY: bool = false;
+static MAC_KEY: SingleHartCell<[u8; 32]> = SingleHartCell::new([0u8; 32]);
+static KEY_READY: SingleHartCell<bool> = SingleHartCell::new(false);
 
 /// Son kabul edilen nonce — replay guard (monoton artan)
-static mut LAST_NONCE: u32 = 0;
+static LAST_NONCE: SingleHartCell<u32> = SingleHartCell::new(0);
 
 /// Token cache — statik, heap yok
-static mut TOKEN_CACHE: TokenCache = TokenCache::new();
+static TOKEN_CACHE: SingleHartCell<TokenCache> = SingleHartCell::new(TokenCache::new());
 
 /// MAC key provisioning — boot sequence'de BİR KEZ çağrılır
 /// Tekrar çağrı yoksayılır (key rotation Sprint 13)
@@ -40,13 +41,13 @@ pub fn provision_key(key: &[u8; 32]) {
 
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
-        if !KEY_READY {
+        if !*KEY_READY.get() {
             let mut i = 0;
             while i < 32 {
-                MAC_KEY[i] = key[i];
+                (*MAC_KEY.get_mut())[i] = key[i];
                 i += 1;
             }
-            KEY_READY = true;
+            *KEY_READY.get_mut() = true;
         }
     }
 }
@@ -56,7 +57,7 @@ pub fn provision_key(key: &[u8; 32]) {
 pub fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
-        let cache = &*core::ptr::addr_of!(TOKEN_CACHE);
+        let cache = TOKEN_CACHE.get();
         cache.lookup(token_id, resource, action)
     }
 }
@@ -67,24 +68,24 @@ pub fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
 pub fn validate_full(token: &Token) -> bool {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
-        let cache = &*core::ptr::addr_of!(TOKEN_CACHE);
+        let cache = TOKEN_CACHE.get();
         if cache.lookup(token.id, token.resource, token.action) {
             return true;
         }
-        if !KEY_READY {
+        if !*KEY_READY.get() {
             return false;
         }
         // Replay guard: nonce kesinlikle monoton artan olmalı
-        let last = core::ptr::read_volatile(core::ptr::addr_of!(LAST_NONCE));
+        let last = core::ptr::read_volatile(LAST_NONCE.as_ptr());
         if token.nonce <= last {
             return false; // replay veya stale token
         }
         let header = token.header_bytes();
-        let key = &*core::ptr::addr_of!(MAC_KEY);
+        let key = MAC_KEY.get();
         let expected = Crypto::keyed_hash(key, &header);
         if ct_eq_16(&token.mac, &expected) {
-            core::ptr::write_volatile(core::ptr::addr_of_mut!(LAST_NONCE), token.nonce);
-            let cache_mut = &mut *core::ptr::addr_of_mut!(TOKEN_CACHE);
+            core::ptr::write_volatile(LAST_NONCE.as_ptr(), token.nonce);
+            let cache_mut = TOKEN_CACHE.get_mut();
             cache_mut.insert(token.id, token.resource, token.action);
             true
         } else {
@@ -99,11 +100,11 @@ pub fn validate_full(token: &Token) -> bool {
 pub fn sign_token(token: &mut Token) {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
-        if !KEY_READY {
+        if !*KEY_READY.get() {
             return;
         }
         let header = token.header_bytes();
-        let key = &*core::ptr::addr_of!(MAC_KEY);
+        let key = MAC_KEY.get();
         token.mac = Crypto::keyed_hash(key, &header);
     }
 }
@@ -112,7 +113,7 @@ pub fn sign_token(token: &mut Token) {
 pub fn invalidate_task(token_id: u8) {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
-        let cache_mut = &mut *core::ptr::addr_of_mut!(TOKEN_CACHE);
+        let cache_mut = TOKEN_CACHE.get_mut();
         cache_mut.invalidate(token_id);
     }
 }

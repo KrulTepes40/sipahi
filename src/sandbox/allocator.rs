@@ -13,13 +13,14 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::common::config::WASM_HEAP_SIZE;
+use crate::common::sync::SingleHartCell;
 
 // ═══════════════════════════════════════════════════════
 // Statik alan — 64KB sabit arena
 // ═══════════════════════════════════════════════════════
 
 /// WASM bellek arenası — 64KB, BSS'te sıfır başlatımlı
-static mut ARENA: [u8; WASM_HEAP_SIZE] = [0u8; WASM_HEAP_SIZE];
+static ARENA: SingleHartCell<[u8; WASM_HEAP_SIZE]> = SingleHartCell::new([0u8; WASM_HEAP_SIZE]);
 
 /// Bir sonraki serbest baytın ofseti
 static ARENA_OFFSET: AtomicUsize = AtomicUsize::new(0);
@@ -63,8 +64,8 @@ unsafe impl GlobalAlloc for BumpAllocator {
         ARENA_OFFSET.store(new_end, Ordering::Relaxed);
 
         // Hizalanmış blok başlangıcını dön
-        // &raw mut: referans oluşturmadan ham işaretçi (static_mut_refs uyarısını önler)
-        (&raw mut ARENA).cast::<u8>().add(aligned)
+        // as_ptr: referans oluşturmadan ham işaretçi (static_mut_refs uyarısını önler)
+        ARENA.as_ptr().cast::<u8>().add(aligned)
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {

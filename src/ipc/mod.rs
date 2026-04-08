@@ -14,6 +14,7 @@
 
 pub mod blackbox; // Sprint 11: flight recorder
 
+use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU16, Ordering};
 use crate::common::config::{IPC_MSG_SIZE, IPC_CHANNEL_SLOTS, MAX_IPC_CHANNELS};
 
@@ -61,70 +62,71 @@ impl IpcMessage {
 // SPSC Ring Buffer — lock-free, O(1)
 // ═══════════════════════════════════════════════════════
 
-/// SPSC kanal — tek producer, tek consumer
+/// SPSC kanal — tek producer, tek consumer, &self API
 pub struct SpscChannel {
     /// Yazma pozisyonu (producer artırır)
     head: AtomicU16,
     /// Okuma pozisyonu (consumer artırır)
     tail: AtomicU16,
-    /// Mesaj slot'ları — statik array
-    slots: [IpcMessage; IPC_CHANNEL_SLOTS],
+    /// Mesaj slot'ları — UnsafeCell ile interior mutability
+    slots: UnsafeCell<[IpcMessage; IPC_CHANNEL_SLOTS]>,
 }
- impl Default for SpscChannel {
+
+// SAFETY: Single-producer single-consumer guarantee.
+// Producer only writes head + slots[head]. Consumer only writes tail + reads slots[tail].
+// AtomicU16 head/tail ile senkronize — Release/Acquire ordering.
+unsafe impl Sync for SpscChannel {}
+
+impl Default for SpscChannel {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl SpscChannel {
     pub const fn new() -> Self {
         SpscChannel {
             head: AtomicU16::new(0),
             tail: AtomicU16::new(0),
-            slots: [IpcMessage::zeroed(); IPC_CHANNEL_SLOTS],
+            slots: UnsafeCell::new([IpcMessage::zeroed(); IPC_CHANNEL_SLOTS]),
         }
     }
 
-    /// Mesaj gönder — O(1), lock-free
+    /// Mesaj gönder — O(1), lock-free, &self
     /// Producer çağırır. Buffer doluysa Err döner.
-    #[allow(clippy::result_unit_err)] 
-    pub fn send(&mut self, msg: &IpcMessage) -> Result<(), ()> {
+    #[allow(clippy::result_unit_err)]
+    pub fn send(&self, msg: &IpcMessage) -> Result<(), ()> {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
 
         let next_head = (head + 1) % (IPC_CHANNEL_SLOTS as u16);
 
-        // Buffer dolu mu?
         if next_head == tail {
-            return Err(()); // BufferFull
+            return Err(());
         }
 
-        // Mesajı kopyala
-        self.slots[head as usize] = *msg;
+        // SAFETY: Producer owns head index — no concurrent write to slots[head].
+        unsafe { (*self.slots.get())[head as usize] = *msg; }
 
-        // Head'i ilerlet — Release: consumer bu yazımı görsün
         self.head.store(next_head, Ordering::Release);
-
         Ok(())
     }
 
-    /// Mesaj al — O(1), lock-free
+    /// Mesaj al — O(1), lock-free, &self
     /// Consumer çağırır. Buffer boşsa None döner.
-    pub fn recv(&mut self) -> Option<IpcMessage> {
+    pub fn recv(&self) -> Option<IpcMessage> {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
 
-        // Buffer boş mu?
         if tail == head {
-            return None; // Empty
+            return None;
         }
 
-        // Mesajı kopyala
-        let msg = self.slots[tail as usize];
+        // SAFETY: Consumer owns tail index — no concurrent read from slots[tail].
+        let msg = unsafe { (*self.slots.get())[tail as usize] };
 
-        // Tail'i ilerlet — Release: producer bu okumayı görsün
         let next_tail = (tail + 1) % (IPC_CHANNEL_SLOTS as u16);
         self.tail.store(next_tail, Ordering::Release);
-
         Some(msg)
     }
 
@@ -132,26 +134,19 @@ impl SpscChannel {
     pub fn is_full(&self) -> bool {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
-        let next_head = (head + 1) % (IPC_CHANNEL_SLOTS as u16);
-        next_head == tail
+        (head + 1) % (IPC_CHANNEL_SLOTS as u16) == tail
     }
 
     /// Kanal boş mu?
     pub fn is_empty(&self) -> bool {
-        let head = self.head.load(Ordering::Acquire);
-        let tail = self.tail.load(Ordering::Relaxed);
-        tail == head
+        self.tail.load(Ordering::Relaxed) == self.head.load(Ordering::Acquire)
     }
 
-    /// Kaçç mesaj var?
+    /// Kaç mesaj var?
     pub fn len(&self) -> usize {
         let head = self.head.load(Ordering::Acquire) as usize;
         let tail = self.tail.load(Ordering::Relaxed) as usize;
-        if head >= tail {
-            head - tail
-        } else {
-            IPC_CHANNEL_SLOTS - tail + head
-        }
+        if head >= tail { head - tail } else { IPC_CHANNEL_SLOTS - tail + head }
     }
 }
 
@@ -159,8 +154,8 @@ impl SpscChannel {
 // IPC Pool — 8 statik kanal
 // ═══════════════════════════════════════════════════════
 
-/// 8 SPSC kanal — statik, heap yok
-static mut IPC_CHANNELS: [SpscChannel; MAX_IPC_CHANNELS] = [
+/// 8 SPSC kanal — statik, heap yok. &self API sayesinde static mut gerekmez.
+static IPC_CHANNELS: [SpscChannel; MAX_IPC_CHANNELS] = [
     SpscChannel::new(), SpscChannel::new(),
     SpscChannel::new(), SpscChannel::new(),
     SpscChannel::new(), SpscChannel::new(),
@@ -168,12 +163,11 @@ static mut IPC_CHANNELS: [SpscChannel; MAX_IPC_CHANNELS] = [
 ];
 
 /// Kanal referansı al (bounds check dahil)
-pub fn get_channel(id: usize) -> Option<&'static mut SpscChannel> {
+pub fn get_channel(id: usize) -> Option<&'static SpscChannel> {
     if id >= MAX_IPC_CHANNELS {
         return None;
     }
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-    unsafe { Some(&mut IPC_CHANNELS[id]) }
+    Some(&IPC_CHANNELS[id])
 }
 
 // ═══════════════════════════════════════════════════════
@@ -213,17 +207,17 @@ mod verification {
     /// Proof 33: Boş kanaldan recv → None
     #[kani::proof]
     fn empty_channel_recv_none() {
-        let mut ch = SpscChannel::new();
+        let ch = SpscChannel::new();
         assert!(ch.recv().is_none());
         assert!(ch.is_empty());
         assert!(!ch.is_full());
         assert!(ch.len() == 0);
     }
 
-    /// Proof 34: Send sonra recv → aynı veri
+    /// Proof 34: Send sonra recv → aynı veri (&self API)
     #[kani::proof]
     fn send_recv_roundtrip() {
-        let mut ch = SpscChannel::new();
+        let ch = SpscChannel::new();
         let mut msg = IpcMessage::zeroed();
         msg.data[0] = 0x42;
         msg.data[1] = 0xAB;

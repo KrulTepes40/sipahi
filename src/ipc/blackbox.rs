@@ -17,6 +17,7 @@
 // WCET: log() = O(1), 64B kopyalama + CRC(60B) = sabit zaman
 
 use crate::common::config::{BLACKBOX_RECORD_SIZE, BLACKBOX_MAX_RECORDS};
+use crate::common::sync::SingleHartCell;
 
 // ═══════════════════════════════════════════════════════
 // Sabitler
@@ -123,23 +124,23 @@ impl BlackboxRecord {
 // ═══════════════════════════════════════════════════════
 
 /// Döngüsel blackbox tamponu — 128 × 64B = 8KB
-static mut BB_BUFFER: [BlackboxRecord; BLACKBOX_MAX_RECORDS] =
-    [BlackboxRecord::zeroed(); BLACKBOX_MAX_RECORDS];
+static BB_BUFFER: SingleHartCell<[BlackboxRecord; BLACKBOX_MAX_RECORDS]> =
+    SingleHartCell::new([BlackboxRecord::zeroed(); BLACKBOX_MAX_RECORDS]);
 
 /// Sonraki yazma konumu [0, BLACKBOX_MAX_RECORDS)
-static mut BB_WRITE_POS: u8 = 0;
+static BB_WRITE_POS: SingleHartCell<u8> = SingleHartCell::new(0);
 
 /// Sonraki sıra numarası (u16, saturating add değil wrapping — ring buffer)
-static mut BB_NEXT_SEQ: u16 = 0;
+static BB_NEXT_SEQ: SingleHartCell<u16> = SingleHartCell::new(0);
 
 /// Boot'tan bu yana geçen tick — schedule() her çağrısında advance_tick() artırır
-static mut BB_TICK: u32 = 0;
+static BB_TICK: SingleHartCell<u32> = SingleHartCell::new(0);
 
 /// Boot dönemi — timestamp u32 wrap-around çözümü için (v1.0: daima 0)
-static mut BB_BOOT_EPOCH: u16 = 0;
+static BB_BOOT_EPOCH: SingleHartCell<u16> = SingleHartCell::new(0);
 
 /// Tampondaki kayıt sayısı (max BLACKBOX_MAX_RECORDS)
-static mut BB_COUNT: u8 = 0;
+static BB_COUNT: SingleHartCell<u8> = SingleHartCell::new(0);
 
 // ═══════════════════════════════════════════════════════
 // Volatile yardımcıları — LTO + opt-level="s" altında
@@ -149,12 +150,12 @@ static mut BB_COUNT: u8 = 0;
 
 macro_rules! vol_read {
     ($var:ident -> $ty:ty) => {
-        core::ptr::read_volatile(core::ptr::addr_of!($var))
+        core::ptr::read_volatile($var.as_ptr())
     };
 }
 macro_rules! vol_write {
     ($var:ident, $val:expr) => {
-        core::ptr::write_volatile(core::ptr::addr_of_mut!($var), $val)
+        core::ptr::write_volatile($var.as_ptr(), $val)
     };
 }
 
@@ -172,7 +173,7 @@ pub fn init() {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         // Buffer'ı explicit sıfırla — BSS clearing'e güvenme
-        let ptr = core::ptr::addr_of_mut!(BB_BUFFER) as *mut u8;
+        let ptr = BB_BUFFER.as_ptr() as *mut u8;
         core::ptr::write_bytes(ptr, 0, core::mem::size_of::<[BlackboxRecord; BLACKBOX_MAX_RECORDS]>());
 
         vol_write!(BB_COUNT, 0u8);
@@ -224,7 +225,7 @@ pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 
         // CRC hesapla ve yaz — power-loss koruması için son adım
         rec.set_crc();
-        BB_BUFFER[pos] = rec;
+        (*BB_BUFFER.get_mut())[pos] = rec;
 
         // Konumu ilerlet — döngüsel sarma
         let next_pos = if pos + 1 >= BLACKBOX_MAX_RECORDS { 0u8 } else { (pos + 1) as u8 };
@@ -250,7 +251,7 @@ pub fn read(index: usize) -> Option<BlackboxRecord> {
         let wp = vol_read!(BB_WRITE_POS -> u8) as usize;
         let start = if c < BLACKBOX_MAX_RECORDS { 0usize } else { wp };
         let actual = (start + index) % BLACKBOX_MAX_RECORDS;
-        let rec = BB_BUFFER[actual];
+        let rec = (*BB_BUFFER.get())[actual];
         if rec.is_valid() { Some(rec) } else { None }
     }
 }

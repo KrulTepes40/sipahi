@@ -19,6 +19,8 @@ use crate::arch::uart;
 use crate::arch::clint;
 #[cfg(not(kani))]
 use crate::kernel::scheduler;
+#[cfg(not(kani))]
+use crate::common::sync::SingleHartCell;
 
 /// RV64 mcause interrupt bit — bit 63
 const INTERRUPT_BIT: usize = 1 << 63;
@@ -31,12 +33,12 @@ const ECALL_M: usize = 11;
 
 /// Tick sayacı
 #[cfg(not(kani))]
-static mut TICK_COUNT: u64 = 0;
+static TICK_COUNT: SingleHartCell<u64> = SingleHartCell::new(0);
 
 #[cfg(not(kani))]
 pub fn get_tick_count() -> u64 {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-    unsafe { TICK_COUNT }
+    unsafe { *TICK_COUNT.get() }
 }
 
 #[cfg(not(kani))]
@@ -57,7 +59,7 @@ pub extern "C" fn trap_handler(
             7 => {
                 // Machine Timer Interrupt
                 // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-                unsafe { TICK_COUNT += 1 };
+                unsafe { *TICK_COUNT.get_mut() += 1 };
                 let ticks = get_tick_count();
 
                 if ticks <= 5 {

@@ -20,6 +20,7 @@
 //   Scheduler bu kararı alır ve uygular (döngüsel bağımlılık yok)
 
 use crate::common::config::MAX_TASKS;
+use crate::common::sync::SingleHartCell;
 
 // ═══════════════════════════════════════════════════════
 // Tipler
@@ -66,13 +67,13 @@ pub const MAX_RESTART_FAULT: u8 = 3;
 pub const MAX_RESTART_WATCHDOG: u8 = 1;
 
 /// Task başına restart sayacı — eskalasyon için
-static mut RESTART_COUNTS: [u8; MAX_TASKS] = [0u8; MAX_TASKS];
+static RESTART_COUNTS: SingleHartCell<[u8; MAX_TASKS]> = SingleHartCell::new([0u8; MAX_TASKS]);
 
 /// Restart sayacını sıfırla (task yeniden oluşturulduğunda)
 pub fn reset_restart_count(task_id: u8) {
     if (task_id as usize) < MAX_TASKS {
         // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-        unsafe { RESTART_COUNTS[task_id as usize] = 0; }
+        unsafe { (*RESTART_COUNTS.get_mut())[task_id as usize] = 0; }
     }
 }
 
@@ -80,7 +81,7 @@ pub fn reset_restart_count(task_id: u8) {
 pub fn get_restart_count(task_id: u8) -> u8 {
     if (task_id as usize) < MAX_TASKS {
         // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-        unsafe { RESTART_COUNTS[task_id as usize] }
+        unsafe { (*RESTART_COUNTS.get())[task_id as usize] }
     } else {
         0
     }
@@ -148,7 +149,7 @@ pub fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureMode {
     let id    = task_id as usize;
     let count = if id < MAX_TASKS {
         // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-        unsafe { RESTART_COUNTS[id] }
+        unsafe { (*RESTART_COUNTS.get())[id] }
     } else {
         0
     };
@@ -160,7 +161,7 @@ pub fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureMode {
     if action == FailureMode::Restart && id < MAX_TASKS {
         // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
         unsafe {
-            RESTART_COUNTS[id] = RESTART_COUNTS[id].saturating_add(1);
+            (*RESTART_COUNTS.get_mut())[id] = (*RESTART_COUNTS.get())[id].saturating_add(1);
         }
     }
 

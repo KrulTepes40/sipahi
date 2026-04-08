@@ -14,6 +14,7 @@
 // WCET: ≤0.8μs (doküman §SCHEDULER)
 
 use crate::common::config::{MAX_TASKS, TASK_STACK_SIZE, CYCLES_PER_TICK};
+use crate::common::sync::SingleHartCell;
 use crate::common::types::TaskState;
 use crate::kernel::policy::{FailureMode, PolicyEvent};
 
@@ -94,22 +95,22 @@ impl Task {
 // ═══════════════════════════════════════════════════════
 
 /// Task stack'leri — statik, heap yok
-static mut TASK_STACKS: [[u8; TASK_STACK_SIZE]; MAX_TASKS] = [[0u8; TASK_STACK_SIZE]; MAX_TASKS];
+static TASK_STACKS: SingleHartCell<[[u8; TASK_STACK_SIZE]; MAX_TASKS]> = SingleHartCell::new([[0u8; TASK_STACK_SIZE]; MAX_TASKS]);
 
 /// Task dizisi — statik
-static mut TASKS: [Task; MAX_TASKS] = [
+static TASKS: SingleHartCell<[Task; MAX_TASKS]> = SingleHartCell::new([
     Task::empty(), Task::empty(), Task::empty(), Task::empty(),
     Task::empty(), Task::empty(), Task::empty(), Task::empty(),
-];
+]);
 
 /// Aktif task sayısı
-static mut TASK_COUNT: usize = 0;
+static TASK_COUNT: SingleHartCell<usize> = SingleHartCell::new(0);
 
 /// DEGRADE mesajı bir kez yazdırılsın — spam önleme
-static mut DEGRADE_LOGGED: bool = false;
+static DEGRADE_LOGGED: SingleHartCell<bool> = SingleHartCell::new(false);
 
 /// Şu anki çalışan task index'i
-static mut CURRENT_TASK: usize = 0;
+static CURRENT_TASK: SingleHartCell<usize> = SingleHartCell::new(0);
 
 // context.S'deki switch_context fonksiyonu
 extern "C" {
@@ -134,31 +135,31 @@ pub fn create_task(
 ) -> Option<u8> {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
-        if TASK_COUNT >= MAX_TASKS {
+        if *TASK_COUNT.get() >= MAX_TASKS {
             return None;
         }
 
-        let id = TASK_COUNT;
+        let id = *TASK_COUNT.get();
 
         // Stack tepesi — 16-byte hizalı (RISC-V ABI)
-        let stack_top         = TASK_STACKS[id].as_ptr() as usize + TASK_STACK_SIZE;
+        let stack_top         = TASK_STACKS.get_mut()[id].as_ptr() as usize + TASK_STACK_SIZE;
         let stack_top_aligned = stack_top & !0xF;
 
-        TASKS[id].id               = id as u8;
-        TASKS[id].state            = TaskState::Ready;
-        TASKS[id].context          = TaskContext::zero();
-        TASKS[id].context.ra       = entry as usize;
-        TASKS[id].context.sp       = stack_top_aligned;
-        TASKS[id].entry            = entry as usize;
-        TASKS[id].stack_top        = stack_top_aligned;
-        TASKS[id].priority         = priority;
-        TASKS[id].dal              = dal;
-        TASKS[id].budget_cycles    = budget_cycles;
-        TASKS[id].remaining_cycles = budget_cycles;
-        TASKS[id].period_ticks     = period_ticks;
-        TASKS[id].period_counter   = 0;
+        TASKS.get_mut()[id].id               = id as u8;
+        TASKS.get_mut()[id].state            = TaskState::Ready;
+        TASKS.get_mut()[id].context          = TaskContext::zero();
+        TASKS.get_mut()[id].context.ra       = entry as usize;
+        TASKS.get_mut()[id].context.sp       = stack_top_aligned;
+        TASKS.get_mut()[id].entry            = entry as usize;
+        TASKS.get_mut()[id].stack_top        = stack_top_aligned;
+        TASKS.get_mut()[id].priority         = priority;
+        TASKS.get_mut()[id].dal              = dal;
+        TASKS.get_mut()[id].budget_cycles    = budget_cycles;
+        TASKS.get_mut()[id].remaining_cycles = budget_cycles;
+        TASKS.get_mut()[id].period_ticks     = period_ticks;
+        TASKS.get_mut()[id].period_counter   = 0;
 
-        TASK_COUNT += 1;
+        *TASK_COUNT.get_mut() += 1;
         Some(id as u8)
     }
 }
@@ -168,7 +169,7 @@ pub fn create_task(
 pub fn schedule() {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
-        if TASK_COUNT < 2 {
+        if *TASK_COUNT.get() < 2 {
             return;
         }
 
@@ -176,19 +177,19 @@ pub fn schedule() {
         #[cfg(not(kani))]
         crate::ipc::blackbox::advance_tick();
 
-        let old = CURRENT_TASK;
+        let old = *CURRENT_TASK.get();
 
         // ─── Faz 1: Periyot ilerletme (tüm task'lar) ───
         // Periyot dolarsa: bütçe sıfırla, SUSPENDED → READY
         let mut i: usize = 0;
-        while i < TASK_COUNT {
-            if TASKS[i].period_ticks > 0 {
-                TASKS[i].period_counter = TASKS[i].period_counter.wrapping_add(1);
-                if TASKS[i].period_counter >= TASKS[i].period_ticks {
-                    TASKS[i].period_counter   = 0;
-                    TASKS[i].remaining_cycles = TASKS[i].budget_cycles;
-                    if TASKS[i].state == TaskState::Suspended {
-                        TASKS[i].state = TaskState::Ready;
+        while i < *TASK_COUNT.get() {
+            if TASKS.get_mut()[i].period_ticks > 0 {
+                TASKS.get_mut()[i].period_counter = TASKS.get_mut()[i].period_counter.wrapping_add(1);
+                if TASKS.get_mut()[i].period_counter >= TASKS.get_mut()[i].period_ticks {
+                    TASKS.get_mut()[i].period_counter   = 0;
+                    TASKS.get_mut()[i].remaining_cycles = TASKS.get_mut()[i].budget_cycles;
+                    if TASKS.get_mut()[i].state == TaskState::Suspended {
+                        TASKS.get_mut()[i].state = TaskState::Ready;
                         // Not: Isolated task'lar bu blokta hiç eşleşmez —
                         // kasıtlı. Isolated → periyot reset ile READY yapılmaz.
                     }
@@ -199,28 +200,28 @@ pub fn schedule() {
 
         // ─── Faz 2: Bütçe düşümü + politika (mevcut task) ───
         // budget_cycles == 0 → sınırsız bütçe (bütçe izleme devre dışı)
-        if TASKS[old].budget_cycles > 0 && TASKS[old].state == TaskState::Running {
-            TASKS[old].remaining_cycles =
-                TASKS[old].remaining_cycles.saturating_sub(CYCLES_PER_TICK);
+        if TASKS.get_mut()[old].budget_cycles > 0 && TASKS.get_mut()[old].state == TaskState::Running {
+            TASKS.get_mut()[old].remaining_cycles =
+                TASKS.get_mut()[old].remaining_cycles.saturating_sub(CYCLES_PER_TICK);
 
-            if TASKS[old].remaining_cycles == 0 {
-                TASKS[old].state = TaskState::Suspended;
+            if TASKS.get_mut()[old].remaining_cycles == 0 {
+                TASKS.get_mut()[old].state = TaskState::Suspended;
 
                 // Blackbox: bütçe tükenmesi kaydı
                 #[cfg(not(kani))]
                 {
-                    let ev = [TASKS[old].id, TASKS[old].dal];
+                    let ev = [TASKS.get_mut()[old].id, TASKS.get_mut()[old].dal];
                     crate::ipc::blackbox::log(
                         crate::ipc::blackbox::BlackboxEvent::BudgetExhausted,
-                        TASKS[old].id,
+                        TASKS.get_mut()[old].id,
                         &ev,
                     );
                 }
 
                 let action = crate::kernel::policy::apply_policy(
-                    TASKS[old].id,
+                    TASKS.get_mut()[old].id,
                     PolicyEvent::BudgetExhausted,
-                    TASKS[old].dal,
+                    TASKS.get_mut()[old].dal,
                 );
                 apply_action(old, action);
             }
@@ -231,12 +232,12 @@ pub fn schedule() {
         let mut next      = usize::MAX;
         let mut best_prio = u8::MAX;
         let mut j: usize  = 0;
-        while j < TASK_COUNT {
-            let s = TASKS[j].state;
+        while j < *TASK_COUNT.get() {
+            let s = TASKS.get_mut()[j].state;
             if (s == TaskState::Ready || s == TaskState::Running)
-                && TASKS[j].priority < best_prio
+                && TASKS.get_mut()[j].priority < best_prio
             {
-                best_prio = TASKS[j].priority;
+                best_prio = TASKS.get_mut()[j].priority;
                 next      = j;
             }
             j += 1;
@@ -247,19 +248,19 @@ pub fn schedule() {
         }
 
         // Aynı task, hâlâ çalışıyor → context switch gerekmez
-        if next == old && TASKS[old].state == TaskState::Running {
+        if next == old && TASKS.get_mut()[old].state == TaskState::Running {
             return;
         }
 
         // ─── Faz 4: Context switch ───
-        if TASKS[old].state == TaskState::Running {
-            TASKS[old].state = TaskState::Ready;
+        if TASKS.get_mut()[old].state == TaskState::Running {
+            TASKS.get_mut()[old].state = TaskState::Ready;
         }
-        TASKS[next].state = TaskState::Running;
-        CURRENT_TASK      = next;
+        TASKS.get_mut()[next].state = TaskState::Running;
+        *CURRENT_TASK.get_mut()     = next;
 
-        let old_ctx = &mut TASKS[old].context as *mut TaskContext;
-        let new_ctx = &TASKS[next].context    as *const TaskContext;
+        let old_ctx = &mut TASKS.get_mut()[old].context as *mut TaskContext;
+        let new_ctx = &TASKS.get_mut()[next].context    as *const TaskContext;
         switch_context(old_ctx, new_ctx);
     }
 }
@@ -272,13 +273,13 @@ pub fn start_first_task() -> ! {
         #[cfg(all(not(kani), feature = "debug-boot"))]
         {
             crate::arch::uart::puts("[DBG] TASK_COUNT=");
-            crate::arch::uart::puts(match TASK_COUNT {
+            crate::arch::uart::puts(match *TASK_COUNT.get() {
                 0 => "0", 1 => "1", 2 => "2", 3 => "3",
                 4 => "4", 5 => "5", 6 => "6", 7 => "7",
                 8 => "8", _ => "?",
             });
             crate::arch::uart::puts(" TASKS[0].state=");
-            crate::arch::uart::puts(match TASKS[0].state {
+            crate::arch::uart::puts(match TASKS.get_mut()[0].state {
                 crate::common::types::TaskState::Dead      => "Dead",
                 crate::common::types::TaskState::Ready     => "Ready",
                 crate::common::types::TaskState::Running   => "Running",
@@ -288,7 +289,7 @@ pub fn start_first_task() -> ! {
             crate::arch::uart::println("");
         }
 
-        if TASK_COUNT == 0 {
+        if *TASK_COUNT.get() == 0 {
             #[cfg(not(kani))]
             {
                 crate::arch::uart::println("[POLICY] SHUTDOWN — no tasks");
@@ -299,10 +300,10 @@ pub fn start_first_task() -> ! {
             }
         }
 
-        TASKS[0].state = TaskState::Running;
-        CURRENT_TASK   = 0;
+        TASKS.get_mut()[0].state = TaskState::Running;
+        *CURRENT_TASK.get_mut()  = 0;
 
-        let ctx   = &TASKS[0].context;
+        let ctx   = &TASKS.get_mut()[0].context;
         let entry = ctx.ra;
         let sp    = ctx.sp;
 
@@ -328,7 +329,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             #[cfg(not(kani))]
             {
                 // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-                let tid = unsafe { TASKS[task_id].id };
+                let tid = unsafe { TASKS.get_mut()[task_id].id };
                 if crate::kernel::policy::get_restart_count(tid) == 1 {
                     crate::arch::uart::println("[POLICY] RESTART (1) — periyot sonunda READY");
                 }
@@ -346,7 +347,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
                     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-                    unsafe { TASKS[task_id].id },
+                    unsafe { TASKS.get_mut()[task_id].id },
                     &[],
                 );
             }
@@ -356,12 +357,12 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             #[cfg(not(kani))]
             // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
             unsafe {
-                if !DEGRADE_LOGGED {
-                    DEGRADE_LOGGED = true;
+                if !*DEGRADE_LOGGED.get() {
+                    *DEGRADE_LOGGED.get_mut() = true;
                     crate::arch::uart::println("[POLICY] DEGRADE — DAL-C/D durduruldu");
                     crate::ipc::blackbox::log(
                         crate::ipc::blackbox::BlackboxEvent::PolicyDegrade,
-                        TASKS[task_id].id,
+                        TASKS.get_mut()[task_id].id,
                         &[],
                     );
                 }
@@ -376,7 +377,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyFailover,
                     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-                    unsafe { TASKS[task_id].id },
+                    unsafe { TASKS.get_mut()[task_id].id },
                     &[],
                 );
             }
@@ -391,7 +392,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             crate::ipc::blackbox::log(
                 crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
                 // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-                unsafe { TASKS[task_id].id },
+                unsafe { TASKS.get_mut()[task_id].id },
                 &[],
             );
             shutdown_system();
@@ -407,14 +408,14 @@ fn apply_action(task_id: usize, mode: FailureMode) {
 fn restart_task(id: usize) {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
-        if id >= TASK_COUNT { return; }
+        if id >= *TASK_COUNT.get() { return; }
 
         // Tüm callee-saved register'ları sıfırla
-        TASKS[id].context = TaskContext::zero();
+        TASKS.get_mut()[id].context = TaskContext::zero();
 
         // Giriş noktası + temiz stack
-        TASKS[id].context.ra = TASKS[id].entry;
-        TASKS[id].context.sp = TASKS[id].stack_top;
+        TASKS.get_mut()[id].context.ra = TASKS.get_mut()[id].entry;
+        TASKS.get_mut()[id].context.sp = TASKS.get_mut()[id].stack_top;
     }
 }
 
@@ -424,12 +425,12 @@ fn degrade_system() {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         let mut i: usize = 0;
-        while i < TASK_COUNT {
-            if TASKS[i].dal >= 2
-                && TASKS[i].state != TaskState::Dead
-                && TASKS[i].state != TaskState::Isolated
+        while i < *TASK_COUNT.get() {
+            if TASKS.get_mut()[i].dal >= 2
+                && TASKS.get_mut()[i].state != TaskState::Dead
+                && TASKS.get_mut()[i].state != TaskState::Isolated
             {
-                TASKS[i].state = TaskState::Suspended;
+                TASKS.get_mut()[i].state = TaskState::Suspended;
             }
             i += 1;
         }
@@ -441,9 +442,9 @@ fn degrade_system() {
 fn isolate_task(id: usize) {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
-        if id < TASK_COUNT {
-            TASKS[id].state = TaskState::Isolated;
-            crate::kernel::capability::broker::invalidate_task(TASKS[id].id);
+        if id < *TASK_COUNT.get() {
+            TASKS.get_mut()[id].state = TaskState::Isolated;
+            crate::kernel::capability::broker::invalidate_task(TASKS.get_mut()[id].id);
         }
     }
 }
@@ -467,10 +468,10 @@ fn shutdown_system() -> ! {
 pub fn query_task_info(task_id: usize) -> usize {
     // SAFETY: Single-hart, no concurrent mutation during syscall.
     unsafe {
-        if task_id >= TASK_COUNT { return 0; }
-        let state = TASKS[task_id].state as usize;
-        let prio  = TASKS[task_id].priority as usize;
-        let dal   = TASKS[task_id].dal as usize;
+        if task_id >= *TASK_COUNT.get() { return 0; }
+        let state = TASKS.get()[task_id].state as usize;
+        let prio  = TASKS.get()[task_id].priority as usize;
+        let dal   = TASKS.get()[task_id].dal as usize;
         (state << 8) | (prio << 4) | dal
     }
 }

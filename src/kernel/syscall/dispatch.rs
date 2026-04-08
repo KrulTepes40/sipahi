@@ -7,6 +7,8 @@
 #[cfg(not(kani))]
 use crate::arch::uart;
 
+use crate::common::sync::SingleHartCell;
+
 pub use crate::common::config::{
     SYS_CAP_INVOKE, SYS_IPC_SEND, SYS_IPC_RECV,
     SYS_YIELD, SYS_TASK_INFO, SYSCALL_COUNT,
@@ -71,17 +73,17 @@ fn rdcycle() -> u64 {
 #[inline(always)]
 fn rdcycle() -> u64 { 0 }
 
-static mut WCET_MAX: [u64; SYSCALL_COUNT] = [0; SYSCALL_COUNT];
-static mut WCET_LAST: [u64; SYSCALL_COUNT] = [0; SYSCALL_COUNT];
+static WCET_MAX: SingleHartCell<[u64; SYSCALL_COUNT]> = SingleHartCell::new([0; SYSCALL_COUNT]);
+static WCET_LAST: SingleHartCell<[u64; SYSCALL_COUNT]> = SingleHartCell::new([0; SYSCALL_COUNT]);
 
 #[inline(always)]
 fn wcet_update(id: usize, cycles: u64) {
     if id < SYSCALL_COUNT {
         // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
         unsafe {
-            WCET_LAST[id] = cycles;
-            if cycles > WCET_MAX[id] {
-                WCET_MAX[id] = cycles;
+            (*WCET_LAST.get_mut())[id] = cycles;
+            if cycles > (*WCET_MAX.get())[id] {
+                (*WCET_MAX.get_mut())[id] = cycles;
             }
         }
     }
@@ -97,7 +99,7 @@ pub fn print_wcet_stats() {
         uart::puts(names[i]);
         uart::puts(": last=");
         // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
-        let (last, max) = unsafe { (WCET_LAST[i], WCET_MAX[i]) };
+        let (last, max) = unsafe { ((*WCET_LAST.get())[i], (*WCET_MAX.get())[i]) };
         print_u64(last);
         uart::puts(" max=");
         print_u64(max);
