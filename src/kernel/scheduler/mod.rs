@@ -22,24 +22,26 @@ use crate::kernel::policy::{FailureMode, PolicyEvent};
 // TaskContext: callee-saved registers
 // ═══════════════════════════════════════════════════════
 
-/// Callee-saved register'lar — context.S ile eşleşmeli
-/// 14 register × 8 byte = 112 byte
+/// Callee-saved register'lar + mepc/mstatus — context.S ile eşleşmeli
+/// 14 callee-saved + mepc + mstatus = 16 alan × 8 byte = 128 byte
 #[repr(C)]
 pub struct TaskContext {
-    pub ra:  usize,  // Return address
-    pub sp:  usize,  // Stack pointer
-    pub s0:  usize,  // Saved registers
-    pub s1:  usize,
-    pub s2:  usize,
-    pub s3:  usize,
-    pub s4:  usize,
-    pub s5:  usize,
-    pub s6:  usize,
-    pub s7:  usize,
-    pub s8:  usize,
-    pub s9:  usize,
-    pub s10: usize,
-    pub s11: usize,
+    pub ra:      usize,  // Return address
+    pub sp:      usize,  // Stack pointer
+    pub s0:      usize,  // Saved registers
+    pub s1:      usize,
+    pub s2:      usize,
+    pub s3:      usize,
+    pub s4:      usize,
+    pub s5:      usize,
+    pub s6:      usize,
+    pub s7:      usize,
+    pub s8:      usize,
+    pub s9:      usize,
+    pub s10:     usize,
+    pub s11:     usize,
+    pub mepc:    usize,  // U-mode: task program counter
+    pub mstatus: usize,  // U-mode: mstatus (MPP bits)
 }
 
 impl TaskContext {
@@ -49,6 +51,7 @@ impl TaskContext {
             s0: 0, s1: 0, s2: 0, s3: 0,
             s4: 0, s5: 0, s6: 0, s7: 0,
             s8: 0, s9: 0, s10: 0, s11: 0,
+            mepc: 0, mstatus: 0,
         }
     }
 }
@@ -119,6 +122,7 @@ static CURRENT_TASK: SingleHartCell<usize> = SingleHartCell::new(0);
 // context.S'deki switch_context fonksiyonu
 extern "C" {
     fn switch_context(old: *mut TaskContext, new: *const TaskContext);
+    fn task_trampoline() -> !;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -143,10 +147,17 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
         t.id               = count as u8;
         t.state            = TaskState::Ready;
         t.context          = TaskContext::zero();
-        t.context.ra       = cfg.entry as usize;
+        #[cfg(not(kani))]
+        { t.context.ra     = task_trampoline as *const () as usize; }
+        #[cfg(kani)]
+        { t.context.ra     = cfg.entry as usize; }
         t.context.sp       = stack_top_aligned;
         t.entry            = cfg.entry as usize;
         t.stack_top        = stack_top_aligned;
+        // U-mode: mret sonrası MPP=U, MPIE=1 (interrupt aktif)
+        t.context.mepc     = cfg.entry as usize;
+        t.context.mstatus  = crate::arch::csr::MSTATUS_MPP_U
+                           | crate::arch::csr::MSTATUS_MPIE;
         t.priority         = cfg.priority;
         t.dal              = cfg.dal;
         t.budget_cycles    = cfg.budget_cycles;
@@ -322,15 +333,19 @@ pub(crate) fn start_first_task() -> ! {
         TASKS.get_mut()[0].state = TaskState::Running;
         *CURRENT_TASK.get_mut()  = 0;
 
-        let ctx   = &TASKS.get_mut()[0].context;
-        let entry = ctx.ra;
-        let sp    = ctx.sp;
+        let ctx     = &TASKS.get_mut()[0].context;
+        let entry   = ctx.mepc;     // task entry point
+        let sp_val  = ctx.sp;
+        let mstatus = ctx.mstatus;  // MPP=U, MPIE=1
 
         core::arch::asm!(
+            "csrw mepc, {entry}",
+            "csrw mstatus, {mstatus}",
             "mv sp, {sp}",
-            "jr {entry}",
-            sp    = in(reg) sp,
-            entry = in(reg) entry,
+            "mret",
+            entry   = in(reg) entry,
+            mstatus = in(reg) mstatus,
+            sp      = in(reg) sp_val,
             options(noreturn)
         );
     }
@@ -432,9 +447,15 @@ fn restart_task(id: usize) {
         // Tüm callee-saved register'ları sıfırla
         TASKS.get_mut()[id].context = TaskContext::zero();
 
-        // Giriş noktası + temiz stack
-        TASKS.get_mut()[id].context.ra = TASKS.get_mut()[id].entry;
-        TASKS.get_mut()[id].context.sp = TASKS.get_mut()[id].stack_top;
+        // Giriş noktası + temiz stack + U-mode CSR
+        #[cfg(not(kani))]
+        { TASKS.get_mut()[id].context.ra    = task_trampoline as *const () as usize; }
+        #[cfg(kani)]
+        { TASKS.get_mut()[id].context.ra    = TASKS.get_mut()[id].entry; }
+        TASKS.get_mut()[id].context.sp      = TASKS.get_mut()[id].stack_top;
+        TASKS.get_mut()[id].context.mepc    = TASKS.get_mut()[id].entry;
+        TASKS.get_mut()[id].context.mstatus = crate::arch::csr::MSTATUS_MPP_U
+                                            | crate::arch::csr::MSTATUS_MPIE;
     }
 }
 

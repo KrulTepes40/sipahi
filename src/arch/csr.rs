@@ -92,8 +92,30 @@ pub fn disable_machine_interrupts() {
 
 #[cfg(not(kani))]
 #[inline(always)]
+pub fn write_mstatus(val: usize) {
+    // SAFETY: CSR write in M-mode — always accessible.
+    unsafe { asm!("csrw mstatus, {}", in(reg) val) };
+}
+
+#[cfg(not(kani))]
+#[inline(always)]
 pub fn enable_timer_interrupt() {
     let mtie: usize = 1 << 7;
     // SAFETY: CSR read/write in M-mode — always accessible.
     unsafe { asm!("csrs mie, {}", in(reg) mtie) };
 }
+
+// ═══════════════════════════════════════════════════════
+// mstatus field constants — U-mode geçişi için
+// ═══════════════════════════════════════════════════════
+
+/// mstatus.MPP field (bits 12:11) — privilege mode after mret
+pub const MSTATUS_MPP_MASK: usize = 0b11 << 11;
+pub const MSTATUS_MPP_M: usize    = 0b11 << 11;  // M-mode
+pub const MSTATUS_MPP_U: usize    = 0b00 << 11;  // U-mode
+
+/// mstatus.MPIE (bit 7) — mret sonrası interrupt enable
+pub const MSTATUS_MPIE: usize = 1 << 7;
+
+/// mstatus.MIE (bit 3) — machine interrupt enable
+pub const MSTATUS_MIE: usize = 1 << 3;

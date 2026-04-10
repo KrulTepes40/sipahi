@@ -215,7 +215,7 @@ mod verification {
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn task_context_size_matches_asm() {
-        assert!(core::mem::size_of::<crate::kernel::scheduler::TaskContext>() == 112);
+        assert!(core::mem::size_of::<crate::kernel::scheduler::TaskContext>() == 128);
     }
 
     // ═══════════════════════════════════════════════════════

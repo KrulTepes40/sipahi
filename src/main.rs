@@ -42,7 +42,6 @@ fn alloc_error(_layout: core::alloc::Layout) -> ! {
 
 #[cfg(not(kani))]
 pub fn task_a() -> ! {
-    arch::csr::enable_machine_interrupts();
     let mut counter: u32 = 0;
     loop {
         counter = counter.wrapping_add(1);
@@ -51,14 +50,13 @@ pub fn task_a() -> ! {
             print_u32(counter);
             arch::uart::println("");
         }
-        // SAFETY: WFI instruction — halts hart until interrupt, no state corruption.
-        unsafe { core::arch::asm!("wfi") };
+        // SAFETY: NOP — U-mode'da WFI illegal instruction trap verir (QEMU TW=1).
+        unsafe { core::arch::asm!("nop") };
     }
 }
 
 #[cfg(not(kani))]
 pub fn task_b() -> ! {
-    arch::csr::enable_machine_interrupts();
     let mut counter: u32 = 0;
     loop {
         counter = counter.wrapping_add(1);
@@ -67,8 +65,8 @@ pub fn task_b() -> ! {
             print_u32(counter);
             arch::uart::println("");
         }
-        // SAFETY: WFI instruction — halts hart until interrupt, no state corruption.
-        unsafe { core::arch::asm!("wfi") };
+        // SAFETY: NOP — U-mode'da WFI illegal instruction trap verir (QEMU TW=1).
+        unsafe { core::arch::asm!("nop") };
     }
 }
 
