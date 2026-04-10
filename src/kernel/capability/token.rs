@@ -1,5 +1,4 @@
 //! 32-byte capability token: id, resource, action, nonce, expiry, MAC.
-#![allow(dead_code)] // ACTION_* constants used by Kani proofs + validate_full.
 // Sipahi — Capability Token (Sprint 9)
 // 32B sabit boyut, #[repr(C)], stack-only, heap yok
 //
@@ -18,8 +17,11 @@ use crate::common::types::{TaskId, ResourceId};
 
 /// Capability action bitleri
 pub const ACTION_READ:    u8 = 0x01;
+#[allow(dead_code)]
 pub const ACTION_WRITE:   u8 = 0x02;
+#[allow(dead_code)]
 pub const ACTION_EXECUTE: u8 = 0x04;
+#[allow(dead_code)]
 pub const ACTION_ALL:     u8 = 0x07;
 
 /// 32-byte capability token
@@ -52,7 +54,7 @@ impl Token {
 
     /// MAC hesabı için header bytes — ilk 16 byte, explicit LE encoding
     /// Güvenli: unsafe yok, endian-agnostik, DO-178C traceable
-    pub fn header_bytes(&self) -> [u8; 16] {
+    pub const fn header_bytes(&self) -> [u8; 16] {
         let mut h = [0u8; 16];
         h[0]  = self.id;
         h[1]  = self.task_id;

@@ -38,6 +38,7 @@ opt-level = "s"           # Boyut optimizasyonu (32KB .text bütçesi için)
 lto = true                # Link-time optimization
 panic = "abort"           # Stack unwinding YOK
 codegen-units = 1         # Tek derleme birimi (determinizm)
+overflow-checks = true    # Integer overflow → trap (safety-critical)
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys"))'] }

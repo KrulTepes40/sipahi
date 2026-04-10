@@ -1,5 +1,5 @@
 //! WASM sandbox: Wasmi 1.0.9 runtime with fuel metering and float rejection.
-#![allow(dead_code)] // Compute services — called via WASM host_call bridge.
+#![allow(dead_code)]
 // Sipahi — WASM Sandbox (Sprint 12)
 // Katman 3: Mixed-Criticality WASM İzolasyon
 //
@@ -466,5 +466,112 @@ mod verification {
         // Boyut kontrolü: bytes.len() > WASM_HEAP_SIZE → Err
         let too_large = size > WASM_HEAP_SIZE;
         assert!(too_large);
+    }
+
+    /// Proof 119: Integer opcode float değil
+    #[kani::proof]
+    fn integer_opcode_not_float() {
+        assert!(!is_float_opcode(0x6A)); // i32.add
+        assert!(!is_float_opcode(0x6B)); // i32.sub
+        assert!(!is_float_opcode(0x6C)); // i32.mul
+    }
+
+    /// Proof 120: Float opcode tespit edilir
+    #[kani::proof]
+    fn float_opcode_detected() {
+        assert!(is_float_opcode(0x92)); // f32.add
+        assert!(is_float_opcode(0x93)); // f32.sub
+        assert!(is_float_opcode(0x43)); // f32.const
+        assert!(is_float_opcode(0x44)); // f64.const
+    }
+
+    /// Proof 121: LEB128 tek byte doğru decode (0-127)
+    #[kani::proof]
+    fn leb128_single_byte_values() {
+        let val: u8 = kani::any();
+        kani::assume(val < 128);
+        let data = [val];
+        let result = read_u32_leb128(&data);
+        if let Some((decoded, consumed)) = result {
+            assert!(decoded == val as u32);
+            assert!(consumed == 1);
+        }
+    }
+
+    /// Proof 122: Geçersiz magic bytes → Err
+    #[kani::proof]
+    fn invalid_magic_rejected() {
+        let data = [0x00u8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let result = validate_module(&data);
+        assert!(result.is_err());
+    }
+
+    /// Proof 141: skip_instruction: boş slice → None
+    #[kani::proof]
+    fn skip_instruction_empty_none() {
+        let data: [u8; 0] = [];
+        assert!(skip_instruction(&data, 0).is_none());
+    }
+
+    /// Proof 142: skip_instruction: pos >= len → None
+    #[kani::proof]
+    fn skip_instruction_out_of_bounds() {
+        let data = [0x00u8; 4];
+        assert!(skip_instruction(&data, 4).is_none());
+        assert!(skip_instruction(&data, 100).is_none());
+    }
+
+    /// Proof 143: skip_instruction: 1-byte opcode → pos + 1
+    #[kani::proof]
+    fn skip_instruction_single_byte() {
+        let data = [0x00u8, 0x01, 0x0B];
+        let result = skip_instruction(&data, 0);
+        assert!(result == Some(1));
+    }
+
+    /// Proof 144: validate_module: kısa girdi → Err
+    #[kani::proof]
+    fn validate_module_too_short() {
+        let data = [0x00u8, 0x61, 0x73];
+        let result = validate_module(&data);
+        assert!(result.is_err());
+    }
+
+    /// Proof 145: dispatch_compute: service=0 (COPY), boş data → -1
+    #[kani::proof]
+    fn dispatch_compute_empty_data() {
+        let data: [u8; 0] = [];
+        let result = dispatch_compute(0, &data);
+        assert!(result == -1);
+    }
+
+    /// Proof 146: 0x00-0x42 arası opcode float değil
+    #[kani::proof]
+    fn opcodes_below_0x43_not_float() {
+        let op: u8 = kani::any();
+        kani::assume(op < 0x43);
+        assert!(!is_float_opcode(op));
+    }
+
+    /// Proof 167: skip_instruction f32.const → +5, f64.const → +9
+    #[kani::proof]
+    fn skip_instruction_float_const_sizes() {
+        let data = [0x43u8, 0x00, 0x00, 0x80, 0x3F, 0x0B];
+        assert!(skip_instruction(&data, 0) == Some(5));
+        let data2 = [0x44u8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F, 0x0B];
+        assert!(skip_instruction(&data2, 0) == Some(9));
+    }
+
+    /// Proof 168: validate_module geçerli minimal WASM → Ok
+    #[kani::proof]
+    fn validate_module_valid_minimal_wasm() {
+        let wasm: [u8; 36] = [
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+            0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
+            0x03, 0x02, 0x01, 0x00,
+            0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
+            0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2a, 0x0b,
+        ];
+        assert!(validate_module(&wasm).is_ok());
     }
 }

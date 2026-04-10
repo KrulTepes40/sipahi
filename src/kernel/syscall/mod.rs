@@ -1,5 +1,5 @@
 //! Syscall module: kernel dispatch + userspace ECALL wrappers.
-#![allow(dead_code)] // Userspace wrappers — called by tasks in U-mode (Sprint 7+).
+#![allow(dead_code)]
 // Sipahi — Syscall Modülü (Sprint 7)
 // 5 syscall: cap_invoke, ipc_send, ipc_recv, yield, task_info
 //

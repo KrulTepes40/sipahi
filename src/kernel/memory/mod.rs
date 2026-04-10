@@ -39,7 +39,7 @@ extern "C" {
 }
 
 /// PMP bölgelerini ayarla
-pub fn init_pmp() {
+pub(crate) fn init_pmp() {
     // SAFETY: Linker-provided symbol address — valid for duration of program.
     let text_start = unsafe { &__text_start as *const u8 as usize };
     let text_end = unsafe { &__text_end as *const u8 as usize };
@@ -48,8 +48,9 @@ pub fn init_pmp() {
     let data_start = unsafe { &__data_start as *const u8 as usize };
     let end        = unsafe { &_end as *const u8 as usize };
 
-    const UART_START: usize = 0x1000_0000;
-    const UART_END: usize = 0x1000_0100;
+    use crate::common::config;
+    let uart_start = config::UART_BASE;
+    let uart_end   = config::UART_END;
 
     // ─── PMP Adres Register'ları (linker script sırasıyla) ───
     //
@@ -61,8 +62,8 @@ pub fn init_pmp() {
     //   pmpaddr3 = rodata_end    (Entry 3: TOR R)   → .rodata
     //   pmpaddr4 = data_start    (Entry 4: OFF, alt sınır)
     //   pmpaddr5 = stack_top     (Entry 5: TOR RW)  → .data+bss+stack
-    //   pmpaddr6 = UART_START    (Entry 6: OFF, alt sınır)
-    //   pmpaddr7 = UART_END      (Entry 7: TOR RW)  → UART MMIO
+    //   pmpaddr6 = uart_start    (Entry 6: OFF, alt sınır)
+    //   pmpaddr7 = uart_end      (Entry 7: TOR RW)  → UART MMIO
 
     pmp::write_pmpaddr(0, text_start);
     pmp::write_pmpaddr(1, text_end);
@@ -70,8 +71,8 @@ pub fn init_pmp() {
     pmp::write_pmpaddr(3, rodata_end);
     pmp::write_pmpaddr(4, data_start);
     pmp::write_pmpaddr(5, end);
-    pmp::write_pmpaddr(6, UART_START);
-    pmp::write_pmpaddr(7, UART_END);
+    pmp::write_pmpaddr(6, uart_start);
+    pmp::write_pmpaddr(7, uart_end);
 
     // ─── PMP Config (pmpcfg0) ───
     // L-bit: Entry kilitleme — M-mode da bu izinlere tabi.
@@ -112,9 +113,9 @@ pub fn init_pmp() {
     uart::println("");
 
     uart::puts("[PMP]   UART     RW  0x");
-    print_hex(UART_START);
+    print_hex(uart_start);
     uart::puts(" - 0x");
-    print_hex(UART_END);
+    print_hex(uart_end);
     uart::println("");
 
     uart::puts("[PMP]   pmpcfg0 = 0x");

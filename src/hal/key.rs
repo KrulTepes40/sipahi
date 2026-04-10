@@ -1,5 +1,5 @@
 //! Ed25519 key provisioning — OTP fuse (production) / compile-time (QEMU).
-#![allow(dead_code)] // Key constants used by secure_boot and Kani proofs.
+#![allow(dead_code)]
 // Sipahi — HAL Key Provisioning (Sprint 13)
 // Doküman §SECURE_BOOT §KEY_PROVISIONING:
 //

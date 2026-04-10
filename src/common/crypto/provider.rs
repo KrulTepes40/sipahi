@@ -1,5 +1,4 @@
 //! Crypto trait definitions: HashProvider and SignatureVerifier.
-#![allow(dead_code)] // Traits — compile-time selected via features.
 // Kripto provider trait'leri
 // Rust monomorphization → runtime branching YOK
 // Seçilmeyen provider binary'de yer KAPLAMAZ
@@ -13,6 +12,7 @@ pub trait HashProvider {
 }
 
 /// İmza doğrulama provider trait
+#[allow(dead_code)]
 pub trait SignatureVerifier {
     /// İmza doğrula (WASM modül + secure boot için)
     /// true = geçerli, false = REJECT

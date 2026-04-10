@@ -10,7 +10,10 @@ use crate::common::config::UART_BASE;
 #[cfg(not(kani))]
 pub fn putc(c: u8) {
     // SAFETY: MMIO register access at hardware-defined address.
+    // BOUNDED: UART hardware always drains within ~1μs per byte.
     unsafe {
+        let lsr_addr = (UART_BASE + 5) as *const u8;
+        while core::ptr::read_volatile(lsr_addr) & 0x20 == 0 {}
         core::ptr::write_volatile(UART_BASE as *mut u8, c);
     }
 }

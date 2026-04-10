@@ -1,5 +1,5 @@
 //! Compile-time constants: memory layout, WCET budgets, syscall IDs, tick periods.
-#![allow(dead_code)] // Spec-defined constants — used by Kani, FPGA, WASM host calls.
+#![allow(dead_code)]
 // Sipahi — Compile-time sabitleri
 // Bu dosyadaki her değer derleme zamanında sabit.
 // Runtime'da değişmez. Sipahi doktrini.
@@ -38,6 +38,12 @@ pub const HOST_CALL_LIMIT: u16 = 16;
 pub const UART_BASE: usize = 0x1000_0000;
 pub const CLINT_BASE: usize = 0x200_0000;
 pub const RAM_BASE: usize = 0x8000_0000;
+
+/// UART MMIO region sonu (PMP için)
+pub const UART_END: usize = UART_BASE + 0x100;
+
+/// RAM üst sınırı — QEMU virt 512MB
+pub const RAM_END: usize = RAM_BASE + 512 * 1024 * 1024;
 
 /// CLINT register offsetleri (Sprint 3'te kullanılacak)
 pub const CLINT_MTIMECMP_OFFSET: usize = 0x4000; // hart 0 mtimecmp
@@ -132,6 +138,10 @@ pub const BUDGET_DAL_D: u32 = 100_000;
 
 /// Varsayılan period uzunluğu (tick) — 10 tick = 100ms @ 10ms/tick
 pub const DEFAULT_PERIOD_TICKS: u32 = 10;
+
+/// Watchdog limit (tick) — task bu kadar tick boyunca yield etmezse policy tetiklenir
+/// 0 = devre dışı. 100 tick = 1 saniye @ 10ms/tick
+pub const WATCHDOG_LIMIT: u32 = 100;
 
 // ═══════════════════════════════════════════════════════
 // Compute service WCET hedefleri (Sprint 13 aktivasyonu)

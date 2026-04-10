@@ -30,8 +30,11 @@ pub fn init_timer() {
 
 #[cfg(not(kani))]
 pub fn schedule_next_tick() {
-    let current = read_mtime();
-    write_mtimecmp(current + ticks_per_period());
+    // mtimecmp bazlı ilerleme — birikimli drift önleme
+    let addr = (CLINT_BASE + CLINT_MTIMECMP_OFFSET) as *const u64;
+    // SAFETY: Volatile read from MMIO register at hardware-guaranteed address.
+    let prev = unsafe { core::ptr::read_volatile(addr) };
+    write_mtimecmp(prev + ticks_per_period());
 }
 
 #[cfg(not(kani))]

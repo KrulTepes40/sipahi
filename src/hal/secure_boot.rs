@@ -1,5 +1,8 @@
 //! Ed25519 signature verification for secure boot (RFC 8032).
-#![allow(dead_code)] // Called from boot with test-keys; production uses OTP path.
+#![allow(dead_code)]
+
+#[cfg(all(feature = "fast-sign", feature = "cnsa-sign"))]
+compile_error!("fast-sign and cnsa-sign are mutually exclusive");
 // Sipahi — Secure Boot Ed25519 İmza Doğrulama (Sprint 13)
 // Doküman §SECURE_BOOT:
 //

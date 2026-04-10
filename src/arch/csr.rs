@@ -1,5 +1,5 @@
 //! RISC-V CSR (Control and Status Register) read/write helpers.
-#![allow(dead_code)] // Complete CSR API — subset used per build config.
+#![allow(dead_code)]
 // Sipahi — CSR (Control and Status Register) İşlemleri
 // Sprint 2-3: mtvec, mcause, mepc, mstatus, mie okuma/yazma
 //

@@ -15,11 +15,12 @@ struct CacheEntry {
     token_id: u8,
     resource: ResourceId,
     action:   u8,
+    expires:  u32,
 }
 
 impl CacheEntry {
     const fn empty() -> Self {
-        CacheEntry { valid: false, token_id: 0, resource: 0, action: 0 }
+        CacheEntry { valid: false, token_id: 0, resource: 0, action: 0, expires: 0 }
     }
 }
 
@@ -41,16 +42,22 @@ impl TokenCache {
     }
 
     /// Sabit zamanlı lookup — 4 slot her zaman taranır, erken çıkış YOK
-    /// Dal-free: bitwise AND ile hit accumulate
+    /// Dal-free: bitwise AND ile hit accumulate + TTL kontrolü
     pub fn lookup(&self, token_id: u8, resource: ResourceId, action: u8) -> bool {
         let mut found: u8 = 0;
         let mut i = 0;
         while i < CACHE_SLOTS {
             let e = &self.entries[i];
+            let not_expired: bool = if e.expires > 0 {
+                crate::ipc::blackbox::get_tick() <= e.expires as u64
+            } else {
+                true // expires=0 → sonsuz geçerlilik
+            };
             let hit = (e.valid as u8)
                 & ((e.token_id == token_id) as u8)
                 & ((e.resource == resource) as u8)
-                & ((e.action    == action)   as u8);
+                & ((e.action    == action)   as u8)
+                & (not_expired as u8);
             found |= hit;
             i += 1;
         }
@@ -58,9 +65,9 @@ impl TokenCache {
     }
 
     /// Round-robin insert — en eski entry üzerine yazar
-    pub fn insert(&mut self, token_id: u8, resource: ResourceId, action: u8) {
+    pub fn insert(&mut self, token_id: u8, resource: ResourceId, action: u8, expires: u32) {
         let slot = (self.next_slot as usize) % CACHE_SLOTS;
-        self.entries[slot] = CacheEntry { valid: true, token_id, resource, action };
+        self.entries[slot] = CacheEntry { valid: true, token_id, resource, action, expires };
         self.next_slot = self.next_slot.wrapping_add(1);
     }
 

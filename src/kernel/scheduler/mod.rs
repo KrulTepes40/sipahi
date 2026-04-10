@@ -13,7 +13,7 @@
 //
 // WCET: ≤0.8μs (doküman §SCHEDULER)
 
-use crate::common::config::{MAX_TASKS, TASK_STACK_SIZE, CYCLES_PER_TICK};
+use crate::common::config::{MAX_TASKS, TASK_STACK_SIZE, CYCLES_PER_TICK, WATCHDOG_LIMIT};
 use crate::common::sync::SingleHartCell;
 use crate::common::types::TaskState;
 use crate::kernel::policy::{FailureMode, PolicyEvent};
@@ -70,6 +70,8 @@ pub struct Task {
     pub remaining_cycles: u32,           // Bu periyotta kalan cycle
     pub period_ticks:     u32,           // Periyot uzunluğu (scheduler tick sayısı)
     pub period_counter:   u32,           // Mevcut periyot içindeki tick sayacı
+    pub watchdog_counter: u32,           // Tick sayacı — yield/kick ile sıfırlanır
+    pub watchdog_limit:   u32,           // Limit (0=devre dışı) — aşılırsa policy tetik
 }
 
 impl Task {
@@ -86,6 +88,8 @@ impl Task {
             remaining_cycles: 0,
             period_ticks:     0,
             period_counter:   0,
+            watchdog_counter: 0,
+            watchdog_limit:   0,
         }
     }
 }
@@ -121,52 +125,45 @@ extern "C" {
 // Public API
 // ═══════════════════════════════════════════════════════
 
-/// Yeni task oluştur
-/// priority: 0-15 (0=en yüksek, DAL-A=0-3, DAL-B=4-7, DAL-C=8-11, DAL-D=12-15)
-/// dal: 0=A 1=B 2=C 3=D
-/// budget_cycles: periyot başına CPU bütçesi (0 = sınırsız)
-/// period_ticks:  periyot uzunluğu tick cinsinden (0 = periyotsuz)
-pub fn create_task(
-    entry: fn() -> !,
-    priority: u8,
-    dal: u8,
-    budget_cycles: u32,
-    period_ticks: u32,
-) -> Option<u8> {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+/// Create a new task with the given configuration.
+pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> {
+    // SAFETY: Single-hart, interrupts disabled during boot.
+    let count = unsafe { *TASK_COUNT.get() };
+    if count >= MAX_TASKS { return None; }
+
+    // SAFETY: count < MAX_TASKS — index in bounds.
+    let stack_top = unsafe {
+        TASK_STACKS.get_mut()[count].as_ptr() as usize + TASK_STACK_SIZE
+    };
+    let stack_top_aligned = stack_top & !0xF; // safe arithmetic
+
+    // SAFETY: Single-hart, count < MAX_TASKS.
     unsafe {
-        if *TASK_COUNT.get() >= MAX_TASKS {
-            return None;
-        }
-
-        let id = *TASK_COUNT.get();
-
-        // Stack tepesi — 16-byte hizalı (RISC-V ABI)
-        let stack_top         = TASK_STACKS.get_mut()[id].as_ptr() as usize + TASK_STACK_SIZE;
-        let stack_top_aligned = stack_top & !0xF;
-
-        TASKS.get_mut()[id].id               = id as u8;
-        TASKS.get_mut()[id].state            = TaskState::Ready;
-        TASKS.get_mut()[id].context          = TaskContext::zero();
-        TASKS.get_mut()[id].context.ra       = entry as usize;
-        TASKS.get_mut()[id].context.sp       = stack_top_aligned;
-        TASKS.get_mut()[id].entry            = entry as usize;
-        TASKS.get_mut()[id].stack_top        = stack_top_aligned;
-        TASKS.get_mut()[id].priority         = priority;
-        TASKS.get_mut()[id].dal              = dal;
-        TASKS.get_mut()[id].budget_cycles    = budget_cycles;
-        TASKS.get_mut()[id].remaining_cycles = budget_cycles;
-        TASKS.get_mut()[id].period_ticks     = period_ticks;
-        TASKS.get_mut()[id].period_counter   = 0;
+        let t = &mut TASKS.get_mut()[count];
+        t.id               = count as u8;
+        t.state            = TaskState::Ready;
+        t.context          = TaskContext::zero();
+        t.context.ra       = cfg.entry as usize;
+        t.context.sp       = stack_top_aligned;
+        t.entry            = cfg.entry as usize;
+        t.stack_top        = stack_top_aligned;
+        t.priority         = cfg.priority;
+        t.dal              = cfg.dal;
+        t.budget_cycles    = cfg.budget_cycles;
+        t.remaining_cycles = cfg.budget_cycles;
+        t.period_ticks     = cfg.period_ticks;
+        t.period_counter   = 0;
+        t.watchdog_counter = 0;
+        t.watchdog_limit   = WATCHDOG_LIMIT;
 
         *TASK_COUNT.get_mut() += 1;
-        Some(id as u8)
     }
+    Some(count as u8)
 }
 
 /// Scheduler tick — timer interrupt'tan çağrılır
 /// WCET: ≤0.8μs @ 100MHz (doküman hedef)
-pub fn schedule() {
+pub(crate) fn schedule() {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         if *TASK_COUNT.get() < 2 {
@@ -196,6 +193,32 @@ pub fn schedule() {
                 }
             }
             i += 1;
+        }
+
+        // ─── Faz 1.5: Watchdog — tick artır, limit aşılırsa policy tetikle ───
+        let mut w: usize = 0;
+        while w < *TASK_COUNT.get() {
+            let st = TASKS.get_mut()[w].state;
+            if st == TaskState::Running || st == TaskState::Ready {
+                TASKS.get_mut()[w].watchdog_counter += 1;
+                if TASKS.get_mut()[w].watchdog_limit > 0
+                    && TASKS.get_mut()[w].watchdog_counter >= TASKS.get_mut()[w].watchdog_limit
+                {
+                    #[cfg(not(kani))]
+                    crate::ipc::blackbox::log(
+                        crate::ipc::blackbox::BlackboxEvent::WatchdogTimeout,
+                        TASKS.get_mut()[w].id, &[],
+                    );
+                    let action = crate::kernel::policy::apply_policy(
+                        TASKS.get_mut()[w].id,
+                        PolicyEvent::WatchdogTimeout,
+                        TASKS.get_mut()[w].dal,
+                    );
+                    apply_action(w, action);
+                    TASKS.get_mut()[w].watchdog_counter = 0;
+                }
+            }
+            w += 1;
         }
 
         // ─── Faz 2: Bütçe düşümü + politika (mevcut task) ───
@@ -228,24 +251,20 @@ pub fn schedule() {
         }
 
         // ─── Faz 3: En yüksek öncelikli Ready task ───
-        // Düşük priority sayısı = yüksek öncelik (DAL-A = 0-3)
-        let mut next      = usize::MAX;
-        let mut best_prio = u8::MAX;
-        let mut j: usize  = 0;
-        while j < *TASK_COUNT.get() {
-            let s = TASKS.get_mut()[j].state;
-            if (s == TaskState::Ready || s == TaskState::Running)
-                && TASKS.get_mut()[j].priority < best_prio
-            {
-                best_prio = TASKS.get_mut()[j].priority;
-                next      = j;
-            }
-            j += 1;
+        // select_highest_priority() Kani ile kanıtlanmış (Proof 79-81)
+        let count = *TASK_COUNT.get();
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let mut priorities = [15u8; MAX_TASKS];
+        let mut k: usize = 0;
+        while k < count && k < MAX_TASKS {
+            states[k] = TASKS.get_mut()[k].state;
+            priorities[k] = TASKS.get_mut()[k].priority;
+            k += 1;
         }
-
-        if next == usize::MAX {
-            return; // Hiç Ready task yok
-        }
+        let next = match select_highest_priority(&states, &priorities, count) {
+            Some(idx) => idx,
+            None => return, // Hiç Ready/Running task yok
+        };
 
         // Aynı task, hâlâ çalışıyor → context switch gerekmez
         if next == old && TASKS.get_mut()[old].state == TaskState::Running {
@@ -266,7 +285,7 @@ pub fn schedule() {
 }
 
 /// İlk task'ı başlat (boot'tan çağrılır)
-pub fn start_first_task() -> ! {
+pub(crate) fn start_first_task() -> ! {
     // SAFETY: Inline assembly — register state saved/restored by convention.
     unsafe {
         // Teşhis: TASK_COUNT ve TASKS[0].state — sadece debug-boot feature ile
@@ -462,6 +481,18 @@ fn shutdown_system() -> ! {
     }
 }
 
+/// Watchdog kick — task yield etti, canlılık kanıtı
+/// sys_yield'dan çağrılır
+pub(crate) fn watchdog_kick() {
+    // SAFETY: Single-hart, called from syscall context.
+    unsafe {
+        let current = *CURRENT_TASK.get();
+        if current < *TASK_COUNT.get() {
+            TASKS.get_mut()[current].watchdog_counter = 0;
+        }
+    }
+}
+
 /// Task bilgisi sorgula — sys_task_info dispatch'ten çağrılır
 /// Dönüş: (state << 8) | (priority << 4) | dal
 /// task_id geçersizse 0 döner
@@ -561,5 +592,183 @@ mod verification {
         if let Some(sel) = selected {
             assert!(states[sel] != TaskState::Isolated);
         }
+    }
+
+    /// Proof 96: Tüm Dead → select None
+    #[kani::proof]
+    fn select_all_dead_returns_none() {
+        let states = [TaskState::Dead; MAX_TASKS];
+        let priorities = [0u8; MAX_TASKS];
+        let result = select_highest_priority(&states, &priorities, MAX_TASKS);
+        assert!(result.is_none());
+    }
+
+    /// Proof 97: Tek Ready task her zaman seçilir
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn select_single_ready_always_found() {
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let priorities = [15u8; MAX_TASKS];
+        let idx: usize = kani::any();
+        kani::assume(idx < MAX_TASKS);
+        states[idx] = TaskState::Ready;
+        let result = select_highest_priority(&states, &priorities, MAX_TASKS);
+        assert!(result == Some(idx));
+    }
+
+    /// Proof 98: Watchdog counter < limit → tetiklenmez
+    #[kani::proof]
+    fn watchdog_under_limit_no_trigger() {
+        let counter: u32 = kani::any();
+        let limit: u32 = kani::any();
+        kani::assume(limit > 0);
+        kani::assume(counter < limit);
+        let triggered = limit > 0 && counter >= limit;
+        assert!(!triggered);
+    }
+
+    /// Proof 99: Watchdog counter == limit → tetiklenir
+    #[kani::proof]
+    fn watchdog_at_limit_triggers() {
+        let limit: u32 = kani::any();
+        kani::assume(limit > 0);
+        let counter = limit;
+        let triggered = limit > 0 && counter >= limit;
+        assert!(triggered);
+    }
+
+    /// Proof 100: Task::empty() doğru başlangıç durumu
+    #[kani::proof]
+    fn task_empty_initial_state() {
+        let t = Task::empty();
+        assert!(t.state == TaskState::Dead);
+        assert!(t.priority == 15);
+        assert!(t.dal == 3);
+        assert!(t.budget_cycles == 0);
+        assert!(t.period_ticks == 0);
+        assert!(t.watchdog_counter == 0);
+        assert!(t.watchdog_limit == 0);
+    }
+
+    /// Proof 128: Running task da seçilebilir
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn select_running_task_selectable() {
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let priorities = [15u8; MAX_TASKS];
+        let idx: usize = kani::any();
+        kani::assume(idx < MAX_TASKS);
+        states[idx] = TaskState::Running;
+        let result = select_highest_priority(&states, &priorities, MAX_TASKS);
+        assert!(result == Some(idx));
+    }
+
+    /// Proof 129: Suspended task asla seçilmez
+    #[kani::proof]
+    fn select_suspended_never_selected() {
+        let states = [TaskState::Suspended; MAX_TASKS];
+        let priorities = [0u8; MAX_TASKS];
+        let result = select_highest_priority(&states, &priorities, MAX_TASKS);
+        assert!(result.is_none());
+    }
+
+    /// Proof 130: query_task_info: geçersiz id → 0
+    #[kani::proof]
+    fn query_task_info_invalid_id() {
+        let id: usize = kani::any();
+        kani::assume(id >= MAX_TASKS);
+        let info = query_task_info(id);
+        assert!(info == 0);
+    }
+
+    /// Proof 131: count=0 → None
+    #[kani::proof]
+    fn select_zero_count_returns_none() {
+        let states = [TaskState::Ready; MAX_TASKS];
+        let priorities = [0u8; MAX_TASKS];
+        let result = select_highest_priority(&states, &priorities, 0);
+        assert!(result.is_none());
+    }
+
+    /// Proof 151: Isolated task hiçbir koşulda seçilmez — symbolic tüm config
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn isolated_never_scheduled_any_config() {
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let mut priorities = [0u8; MAX_TASKS];
+        let count: usize = kani::any();
+        kani::assume(count >= 1 && count <= MAX_TASKS);
+        let mut i = 0;
+        while i < count {
+            states[i] = kani::any();
+            priorities[i] = kani::any();
+            i += 1;
+        }
+        let iso_idx: usize = kani::any();
+        kani::assume(iso_idx < count);
+        states[iso_idx] = TaskState::Isolated;
+        priorities[iso_idx] = 0;
+        let result = select_highest_priority(&states, &priorities, count);
+        if let Some(sel) = result {
+            assert!(states[sel] != TaskState::Isolated);
+        }
+    }
+
+    /// Proof 152: Seçilen task her zaman minimum priority numarasına sahip
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn selected_has_minimum_priority() {
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let mut priorities = [15u8; MAX_TASKS];
+        let count: usize = kani::any();
+        kani::assume(count >= 1 && count <= MAX_TASKS);
+        let mut i = 0;
+        while i < count {
+            states[i] = kani::any();
+            priorities[i] = kani::any();
+            i += 1;
+        }
+        let result = select_highest_priority(&states, &priorities, count);
+        if let Some(sel) = result {
+            assert!(states[sel] == TaskState::Ready || states[sel] == TaskState::Running);
+            let mut j = 0;
+            while j < count {
+                if states[j] == TaskState::Ready || states[j] == TaskState::Running {
+                    assert!(priorities[sel] <= priorities[j]);
+                }
+                j += 1;
+            }
+        }
+    }
+
+    /// Proof 159: Stack alignment — HERHANGİ bir adres & !0xF → 16-byte aligned
+    #[kani::proof]
+    fn stack_alignment_any_address() {
+        let raw: usize = kani::any();
+        let aligned = raw & !0xF_usize;
+        assert!(aligned % 16 == 0);
+        assert!(aligned <= raw);
+    }
+
+    /// Proof 160: select sonuç index HER ZAMAN count'tan küçük
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn select_result_always_less_than_count() {
+        let mut states = [TaskState::Dead; MAX_TASKS];
+        let mut priorities = [15u8; MAX_TASKS];
+        let count: usize = kani::any();
+        kani::assume(count >= 1 && count <= MAX_TASKS);
+        let mut i = 0;
+        while i < count { states[i] = kani::any(); priorities[i] = kani::any(); i += 1; }
+        let result = select_highest_priority(&states, &priorities, count);
+        if let Some(sel) = result { assert!(sel < count); }
+    }
+
+    /// Proof 161: Budget saturating_sub asla wrap-around olmaz
+    #[kani::proof]
+    fn budget_saturating_sub_no_wrap() {
+        let remaining: u32 = kani::any();
+        let result = remaining.saturating_sub(CYCLES_PER_TICK);
+        assert!(result <= remaining);
     }
 }

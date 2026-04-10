@@ -1,5 +1,5 @@
 //! IOPMP (I/O Physical Memory Protection) stub — software emulation for v1.0.
-#![allow(dead_code)] // Stub — activated when iopmp feature + real hardware.
+#![allow(dead_code)]
 // Sipahi — IOPMP Stub (Sprint 6)
 //
 // IOPMP = I/O Physical Memory Protection
@@ -115,5 +115,32 @@ impl IopmpController {
     /// IOPMP etkin mi?
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+}
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// Proof 169: IOPMP bölge ekle → okuma izinli, yazma red, dışarı red
+    #[kani::proof]
+    fn iopmp_region_enforces_boundary() {
+        let mut ctrl = IopmpController::new();
+        let _ = ctrl.enable();
+        let region = IopmpRegion::new(0x1000, 0x100, true, false);
+        let _ = ctrl.add_region(0, region);
+        assert!(ctrl.check_access(0x1000, 4, false));   // okuma izinli
+        assert!(ctrl.check_access(0x1050, 8, false));    // bölge içi okuma
+        assert!(!ctrl.check_access(0x1000, 4, true));    // yazma red
+        assert!(!ctrl.check_access(0x2000, 4, false));   // bölge dışı red
+    }
+
+    /// Proof 170: IOPMP overflow koruması
+    #[kani::proof]
+    fn iopmp_overflow_protection() {
+        let mut ctrl = IopmpController::new();
+        let _ = ctrl.enable();
+        assert!(!ctrl.check_access(usize::MAX, 4, false));
+        assert!(!ctrl.check_access(usize::MAX - 1, 4, false));
     }
 }

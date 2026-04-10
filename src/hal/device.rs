@@ -1,5 +1,5 @@
 //! HAL device trait — static-dispatch hardware abstraction (no vtable).
-#![allow(dead_code)] // HAL API — v2.0 SPI/I2C/GPIO will use this trait.
+#![allow(dead_code)]
 // Sipahi — Device Access Trait (Sprint 6)
 //
 // Tüm donanım aygıtları bu trait'i implemente eder.

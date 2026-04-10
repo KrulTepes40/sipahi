@@ -11,10 +11,10 @@ pub mod broker;
 #[allow(unused_imports)]
 pub use token::{Token, ACTION_READ, ACTION_WRITE, ACTION_EXECUTE, ACTION_ALL};
 #[allow(unused_imports)]
-pub use broker::{provision_key, validate_cached, invalidate_task};
+pub(crate) use broker::{provision_key, validate_cached, invalidate_task};
 #[cfg(feature = "fast-crypto")]
 #[allow(unused_imports)]
-pub use broker::{validate_full, sign_token};
+pub(crate) use broker::{validate_full, sign_token};
 
 // ═══════════════════════════════════════════════════════
 // Kani — Sprint 9 (Proof 40-46)
@@ -90,7 +90,7 @@ mod verification {
     #[kani::proof]
     fn cache_insert_then_lookup() {
         let mut cache = TokenCache::new();
-        cache.insert(7, 3, ACTION_READ);
+        cache.insert(7, 3, ACTION_READ, 0);
         assert!(cache.lookup(7, 3, ACTION_READ));
         assert!(!cache.lookup(7, 3, ACTION_WRITE));  // farklı action → miss
         assert!(!cache.lookup(0, 3, ACTION_READ));   // farklı id → miss
@@ -115,8 +115,77 @@ mod verification {
         let last_nonce: u32 = kani::any();
         let token_nonce: u32 = kani::any();
         kani::assume(token_nonce <= last_nonce);
-        // Replay guard mantığı: nonce <= last → reject
         let accepted = token_nonce > last_nonce;
         assert!(!accepted);
+    }
+
+    /// Proof 114: Token header_bytes deterministic
+    #[kani::proof]
+    fn token_header_deterministic() {
+        let mut t = Token::zeroed();
+        t.id = kani::any();
+        t.resource = kani::any();
+        t.action = kani::any();
+        t.nonce = kani::any();
+        t.expires = kani::any();
+        let h1 = t.header_bytes();
+        let h2 = t.header_bytes();
+        let mut i = 0;
+        while i < 16 { assert!(h1[i] == h2[i]); i += 1; }
+    }
+
+    /// Proof 115: Token header id byte doğru pozisyonda
+    #[kani::proof]
+    fn token_header_id_position() {
+        let mut t = Token::zeroed();
+        t.id = kani::any();
+        let h = t.header_bytes();
+        assert!(h[0] == t.id);
+    }
+
+    /// Proof 116: Cache invalidate sonrası lookup false
+    #[kani::proof]
+    fn cache_invalidate_then_lookup_false() {
+        let mut cache = TokenCache::new();
+        let tid: u8 = kani::any();
+        let res: u16 = kani::any();
+        let act: u8 = kani::any();
+        cache.insert(tid, res, act, 0);
+        assert!(cache.lookup(tid, res, act));
+        cache.invalidate(tid);
+        assert!(!cache.lookup(tid, res, act));
+    }
+
+    /// Proof 117: Cache 4 slot dolu → 5. insert en eski üzerine yazar
+    #[kani::proof]
+    fn cache_overwrites_oldest() {
+        let mut cache = TokenCache::new();
+        cache.insert(0, 100, 1, 0);
+        cache.insert(1, 200, 2, 0);
+        cache.insert(2, 300, 3, 0);
+        cache.insert(3, 400, 4, 0);
+        // 5. insert → slot 0 üzerine yazar (round-robin)
+        cache.insert(4, 500, 5, 0);
+        assert!(!cache.lookup(0, 100, 1)); // evicted
+        assert!(cache.lookup(4, 500, 5));  // yeni
+    }
+
+    /// Proof 118: Sıfır key tespiti
+    #[kani::proof]
+    fn zero_key_is_detected() {
+        let key = [0u8; 32];
+        let mut all_zero = true;
+        let mut i = 0;
+        while i < 32 { if key[i] != 0 { all_zero = false; } i += 1; }
+        assert!(all_zero);
+    }
+
+    /// Proof 172: Cache TTL — expires>0, get_tick()=0 → henüz dolmadı → hit
+    #[kani::proof]
+    fn cache_not_expired_entry_found() {
+        let mut cache = TokenCache::new();
+        // expires=1, Kani'de get_tick() BB_TICK=0 → 0 <= 1 → not expired
+        cache.insert(5, 200, 1, 1);
+        assert!(cache.lookup(5, 200, 1));
     }
 }

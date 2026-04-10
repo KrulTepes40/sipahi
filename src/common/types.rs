@@ -1,5 +1,5 @@
 //! Core type definitions: Q32.32 fixed-point, TaskState, DAL levels.
-#![allow(dead_code)] // API types — used by Kani proofs and future U-mode tasks.
+#![allow(dead_code)]
 // Sipahi — Ortak tipler
 // Q32.32 fixed-point, task durumu, DAL seviyeleri
 
@@ -16,6 +16,7 @@ pub type ResourceId = u16;
 
 /// Task durumu
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum TaskState {
     Ready,
     Running,
@@ -25,6 +26,25 @@ pub enum TaskState {
     /// Suspended'dan farkı: periyot dolunca Ready'ye DÖNMEZ.
     Isolated,
 }
+
+// ═══════════════════════════════════════════════════════
+// Newtype wrappers — tip güvenliği için (v1.5'te API'lere entegre edilecek)
+// ═══════════════════════════════════════════════════════
+
+/// Type-safe channel identifier (0-7)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ChannelId(pub u8);
+
+/// Type-safe priority level (0=highest, 15=lowest)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct Priority(pub u8);
+
+/// Type-safe DAL level wrapper (0=A, 1=B, 2=C, 3=D)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct DalId(pub u8);
 
 /// DO-178C DAL seviyeleri
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,4 +65,13 @@ impl DalLevel {
             DalLevel::D => 100, // 1.0×
         }
     }
+}
+
+/// Task creation configuration — named fields prevent parameter mix-ups.
+pub struct TaskConfig {
+    pub entry: fn() -> !,
+    pub priority: u8,
+    pub dal: u8,
+    pub budget_cycles: u32,
+    pub period_ticks: u32,
 }

@@ -177,7 +177,7 @@ pub fn get_channel(id: usize) -> Option<&'static SpscChannel> {
 /// CRC32 (IEEE 802.3) — bit-by-bit, no lookup table
 /// Deterministic: WCET = O(n × 8), n = veri uzunluğu
 /// 60 byte payload → 60 × 8 = 480 iterasyon (bounded)
-pub fn crc32(data: &[u8]) -> u32 {
+pub const fn crc32(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
     let mut i = 0;
     while i < data.len() {
@@ -278,5 +278,83 @@ mod verification {
         assert!(get_channel(7).is_some());
         assert!(get_channel(8).is_none());
         assert!(get_channel(usize::MAX).is_none());
+    }
+
+    /// Proof 101: Yeni kanal boş başlar
+    #[kani::proof]
+    fn new_channel_is_empty() {
+        let ch = SpscChannel::new();
+        assert!(ch.is_empty());
+        assert!(!ch.is_full());
+        assert!(ch.len() == 0);
+    }
+
+    /// Proof 102: Yeni kanal recv → None
+    #[kani::proof]
+    fn new_channel_recv_none() {
+        let ch = SpscChannel::new();
+        assert!(ch.recv().is_none());
+    }
+
+    /// Proof 103: CRC32 boş girdi → 0x00000000
+    #[kani::proof]
+    fn crc32_empty_returns_zero() {
+        let data: [u8; 0] = [];
+        let result = crc32(&data);
+        assert!(result == 0x0000_0000);
+    }
+
+    /// Proof 104: IpcMessage zeroed → set_crc → verify_crc true
+    #[kani::proof]
+    fn ipc_message_zeroed_crc_roundtrip() {
+        let mut msg = IpcMessage::zeroed();
+        msg.data[0] = kani::any();
+        msg.data[1] = kani::any();
+        msg.set_crc();
+        assert!(msg.verify_crc());
+    }
+
+    /// Proof 132: Geçersiz channel ID → None
+    #[kani::proof]
+    fn get_channel_invalid_id_none() {
+        let id: usize = kani::any();
+        kani::assume(id >= MAX_IPC_CHANNELS);
+        assert!(get_channel(id).is_none());
+    }
+
+    /// Proof 133: IPC_CHANNEL_SLOTS sınır kontrolü
+    #[kani::proof]
+    fn ipc_channel_slots_bounded() {
+        assert!(IPC_CHANNEL_SLOTS > 0);
+        assert!(IPC_CHANNEL_SLOTS <= 256);
+    }
+
+    /// Proof 134: IpcMessage boyutu 64 byte
+    #[kani::proof]
+    fn ipc_message_size_64() {
+        assert!(core::mem::size_of::<IpcMessage>() == 64);
+    }
+
+    /// Proof 155: CRC roundtrip — concrete data ile set→verify true
+    #[kani::proof]
+    fn ipc_crc_concrete_data_roundtrip() {
+        let mut msg = IpcMessage::zeroed();
+        msg.data[0] = 0xDE;
+        msg.data[1] = 0xAD;
+        msg.data[2] = 0xBE;
+        msg.data[3] = 0xEF;
+        msg.set_crc();
+        assert!(msg.verify_crc());
+    }
+
+    /// Proof 156: CRC tamper — concrete byte değişikliği tespit edilir
+    #[kani::proof]
+    fn ipc_crc_concrete_tamper_detected() {
+        let mut msg = IpcMessage::zeroed();
+        msg.data[0] = 0x42;
+        msg.data[1] = 0x43;
+        msg.set_crc();
+        msg.data[0] = 0x43; // tamper
+        assert!(!msg.verify_crc());
     }
 }

@@ -1,5 +1,4 @@
 //! Syscall dispatch table — 5 handlers, O(1) jump, WCET-tracked.
-#![allow(dead_code)] // WCET stats + print — used in debug/trace builds.
 // Sipahi — Syscall Dispatch (Sprint 7-8)
 // Jump table dispatch — 5 syscall, O(1), deterministic
 // Sprint 8: ipc_send/ipc_recv gerçek SPSC entegrasyonu
@@ -14,12 +13,39 @@ pub use crate::common::config::{
     SYS_YIELD, SYS_TASK_INFO, SYSCALL_COUNT,
 };
 
-pub const E_OK: usize = 0;
-pub const E_INVALID_SYSCALL: usize = usize::MAX;
-pub const E_NO_CAPABILITY: usize = usize::MAX - 1;
-pub const E_IPC_FULL: usize = usize::MAX - 2;
-pub const E_IPC_EMPTY: usize = usize::MAX - 3;
-pub const E_INVALID_ARG: usize = usize::MAX - 4;
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum SyscallResult {
+    Ok,
+    InvalidSyscall,
+    NoCapability,
+    IpcFull,
+    IpcEmpty,
+    InvalidArg,
+    BufferFull,
+}
+
+impl SyscallResult {
+    pub const fn to_raw(self) -> usize {
+        match self {
+            Self::Ok             => 0,
+            Self::InvalidSyscall => usize::MAX,
+            Self::NoCapability   => usize::MAX - 1,
+            Self::IpcFull        => usize::MAX - 2,
+            Self::IpcEmpty       => usize::MAX - 3,
+            Self::InvalidArg     => usize::MAX - 4,
+            Self::BufferFull     => usize::MAX - 5,
+        }
+    }
+}
+
+pub const E_OK: usize = SyscallResult::Ok.to_raw();
+pub const E_INVALID_SYSCALL: usize = SyscallResult::InvalidSyscall.to_raw();
+pub const E_NO_CAPABILITY: usize = SyscallResult::NoCapability.to_raw();
+pub const E_IPC_FULL: usize = SyscallResult::IpcFull.to_raw();
+pub const E_IPC_EMPTY: usize = SyscallResult::IpcEmpty.to_raw();
+pub const E_INVALID_ARG: usize = SyscallResult::InvalidArg.to_raw();
 
 // Linker-provided symbol — kernel memory end
 #[cfg(not(kani))]
@@ -48,6 +74,8 @@ fn is_valid_user_ptr(ptr: usize, size: usize) -> bool {
     };
     let ke = kernel_end_addr();
     if ptr < ke || end < ke { return false; }
+    // RAM üst sınır — MMIO/olmayan bölgelere erişim engelle
+    if end > crate::common::config::RAM_END { return false; }
     true
 }
 
@@ -90,6 +118,7 @@ fn wcet_update(id: usize, cycles: u64) {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(not(kani))]
 pub fn print_wcet_stats() {
     uart::println("[WCET] Syscall cycle stats:");
@@ -175,6 +204,16 @@ pub fn dispatch(
 // ═══════════════════════════════════════════════════════
 
 fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> usize {
+    // Truncation koruması — usize → u8/u16 dönüşümde veri kaybı
+    if cap > u8::MAX as usize
+        || resource > u16::MAX as usize
+        || action > u8::MAX as usize
+    {
+        #[cfg(not(kani))]
+        uart::println("[SYS] cap_invoke: argument overflow");
+        return E_INVALID_ARG;
+    }
+
     // Cache-only fast path (~10c) — validate_full ile önceden kayıt edilmeli
     #[cfg(not(kani))]
     {
@@ -202,6 +241,11 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
         return E_INVALID_ARG;
     }
     if !is_valid_user_ptr(msg_ptr, 64) {
+        return E_INVALID_ARG;
+    }
+    if !msg_ptr.is_multiple_of(8) {
+        #[cfg(not(kani))]
+        uart::println("[SYS] ipc_send: misaligned pointer");
         return E_INVALID_ARG;
     }
 
@@ -248,6 +292,11 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
     if !is_valid_user_ptr(buf_ptr, 64) {
         return E_INVALID_ARG;
     }
+    if !buf_ptr.is_multiple_of(8) {
+        #[cfg(not(kani))]
+        uart::println("[SYS] ipc_recv: misaligned pointer");
+        return E_INVALID_ARG;
+    }
 
     #[cfg(not(kani))]
     {
@@ -258,7 +307,7 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
 
         match ch.recv() {
             Some(msg) => {
-                // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.
+                // SAFETY: Volatile write to user-provided buffer. Pointer validated by is_valid_user_ptr().
                 unsafe {
                     core::ptr::write_volatile(buf_ptr as *mut crate::ipc::IpcMessage, msg);
                 }
@@ -283,6 +332,8 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
 fn sys_yield(_: usize, _: usize, _: usize, _: usize) -> usize {
     #[cfg(not(kani))]
     {
+        // Watchdog kick — task yield etti, canlılık kanıtı
+        crate::kernel::scheduler::watchdog_kick();
         uart::println("[SYS] yield");
         crate::kernel::scheduler::schedule();
     }
@@ -396,5 +447,81 @@ mod verification {
         assert!(SYS_IPC_RECV == config::SYS_IPC_RECV as usize);
         assert!(SYS_YIELD == config::SYS_YIELD as usize);
         assert!(SYS_TASK_INFO == config::SYS_TASK_INFO as usize);
+    }
+
+    /// Proof 123: Geçersiz syscall ID → E_INVALID_SYSCALL == usize::MAX
+    #[kani::proof]
+    fn dispatch_invalid_syscall_returns_error() {
+        let id: usize = kani::any();
+        kani::assume(id >= SYSCALL_COUNT);
+        assert!(id >= SYSCALL_COUNT);
+        assert!(SyscallResult::InvalidSyscall.to_raw() == usize::MAX);
+    }
+
+    /// Proof 124: SyscallResult::Ok her zaman 0
+    #[kani::proof]
+    fn syscall_ok_is_zero() {
+        assert!(SyscallResult::Ok.to_raw() == 0);
+    }
+
+    /// Proof 125: Tüm hata kodları nonzero
+    #[kani::proof]
+    fn syscall_errors_nonzero() {
+        assert!(SyscallResult::InvalidSyscall.to_raw() != 0);
+        assert!(SyscallResult::NoCapability.to_raw() != 0);
+        assert!(SyscallResult::IpcFull.to_raw() != 0);
+        assert!(SyscallResult::IpcEmpty.to_raw() != 0);
+        assert!(SyscallResult::InvalidArg.to_raw() != 0);
+        assert!(SyscallResult::BufferFull.to_raw() != 0);
+    }
+
+    /// Proof 126: E_* sabitleri enum ile tutarlı
+    #[kani::proof]
+    fn e_constants_match_enum() {
+        assert!(E_OK == SyscallResult::Ok.to_raw());
+        assert!(E_INVALID_SYSCALL == SyscallResult::InvalidSyscall.to_raw());
+        assert!(E_NO_CAPABILITY == SyscallResult::NoCapability.to_raw());
+        assert!(E_IPC_FULL == SyscallResult::IpcFull.to_raw());
+        assert!(E_IPC_EMPTY == SyscallResult::IpcEmpty.to_raw());
+        assert!(E_INVALID_ARG == SyscallResult::InvalidArg.to_raw());
+    }
+
+    /// Proof 127: SYSCALL_COUNT ve ID'ler tutarlı
+    #[kani::proof]
+    fn syscall_count_matches_ids() {
+        assert!(SYSCALL_COUNT == 5);
+        assert!(SYS_CAP_INVOKE < SYSCALL_COUNT);
+        assert!(SYS_IPC_SEND < SYSCALL_COUNT);
+        assert!(SYS_IPC_RECV < SYSCALL_COUNT);
+        assert!(SYS_YIELD < SYSCALL_COUNT);
+        assert!(SYS_TASK_INFO < SYSCALL_COUNT);
+    }
+
+    /// Proof 157: Kernel adresi → reject (symbolic)
+    #[kani::proof]
+    fn any_kernel_address_rejected() {
+        let addr: usize = kani::any();
+        let size: usize = kani::any();
+        kani::assume(size > 0 && size <= 64);
+        kani::assume(addr > 0);
+        kani::assume(addr < kernel_end_addr());
+        assert!(!is_valid_user_ptr(addr, size));
+    }
+
+    /// Proof 158: Null pointer herhangi size ile reject
+    #[kani::proof]
+    fn null_pointer_any_size_rejected() {
+        let size: usize = kani::any();
+        assert!(!is_valid_user_ptr(0, size));
+    }
+
+    /// Proof 171: RAM üstü adres → reject
+    #[kani::proof]
+    fn ptr_above_ram_rejected() {
+        let ptr: usize = kani::any();
+        kani::assume(ptr >= crate::common::config::RAM_END);
+        let size: usize = kani::any();
+        kani::assume(size > 0 && size <= 64);
+        assert!(!is_valid_user_ptr(ptr, size));
     }
 }

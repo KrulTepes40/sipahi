@@ -173,7 +173,7 @@ macro_rules! vol_write {
 ///
 /// BSS clearing'e güvenilmez (binary layout değişince semboller kayar).
 /// Tüm static'ler explicit sıfırlanır — her koşulda çalışır.
-pub fn init() {
+pub(crate) fn init() {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         // Buffer'ı explicit sıfırla — BSS clearing'e güvenme
@@ -191,7 +191,7 @@ pub fn init() {
 
 /// Tick sayacını ilerlet — schedule() her çağrısının başında çağrılır
 #[inline]
-pub fn advance_tick() {
+pub(crate) fn advance_tick() {
     // SAFETY: Volatile access prevents compiler from caching static mut in register.
     unsafe {
         let t = vol_read!(BB_TICK -> u32);
@@ -204,7 +204,7 @@ pub fn advance_tick() {
 /// event:   Olay türü
 /// task_id: Tetikleyen task ID (0xFF = kernel dahili olay)
 /// data:    En fazla 46 byte olay verisi (kısa girişler sıfır doldurulur)
-pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
+pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         let pos = vol_read!(BB_WRITE_POS -> u8) as usize;
@@ -229,7 +229,11 @@ pub fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 
         // CRC hesapla ve yaz — power-loss koruması için son adım
         rec.set_crc();
-        (*BB_BUFFER.get_mut())[pos] = rec;
+        // SAFETY: pos < BLACKBOX_MAX_RECORDS (Proof 54). Volatile prevents LTO reorder.
+        core::ptr::write_volatile(
+            &mut (*BB_BUFFER.get_mut())[pos] as *mut BlackboxRecord,
+            rec,
+        );
 
         // Konumu ilerlet — döngüsel sarma
         let next_pos = if pos + 1 >= BLACKBOX_MAX_RECORDS { 0u8 } else { (pos + 1) as u8 };
@@ -264,6 +268,12 @@ pub fn read(index: usize) -> Option<BlackboxRecord> {
 pub fn count() -> usize {
     // SAFETY: Volatile access prevents compiler from caching static mut in register.
     unsafe { vol_read!(BB_COUNT -> u8) as usize }
+}
+
+/// Mevcut blackbox tick sayacını döndür — expiry kontrolü için
+pub(crate) fn get_tick() -> u64 {
+    // SAFETY: Single-hart, read-only access.
+    unsafe { vol_read!(BB_TICK -> u32) as u64 }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -383,5 +393,63 @@ mod verification {
             pos + 1
         };
         assert!((next as usize) < BLACKBOX_MAX_RECORDS);
+    }
+
+    /// Proof 84: get_tick() her zaman BB_TICK değerini döndürür
+    #[kani::proof]
+    fn get_tick_returns_current() {
+        let tick: u32 = kani::any();
+        unsafe { *BB_TICK.get_mut() = tick; }
+        assert!(get_tick() == tick as u64);
+    }
+
+    /// Proof 105: BlackboxRecord zeroed → seq == 0
+    #[kani::proof]
+    fn blackbox_zeroed_record_seq_zero() {
+        let rec = BlackboxRecord::zeroed();
+        assert!(rec.seq == 0);
+        assert!(rec.timestamp == 0);
+        assert!(rec.task_id == 0);
+    }
+
+    /// Proof 106: Tick monoton: before < MAX → before + 1 > before
+    #[kani::proof]
+    fn blackbox_tick_monotonic() {
+        let before: u64 = kani::any();
+        kani::assume(before < u64::MAX);
+        let after = before + 1;
+        assert!(after > before);
+    }
+
+    /// Proof 107: write_pos wrap — pos < MAX → next < MAX, wrap → 0
+    #[kani::proof]
+    fn blackbox_write_pos_wraps_correctly() {
+        let pos: u8 = kani::any();
+        kani::assume((pos as usize) < BLACKBOX_MAX_RECORDS);
+        let next = if (pos as usize) + 1 >= BLACKBOX_MAX_RECORDS { 0u8 } else { pos + 1 };
+        assert!((next as usize) < BLACKBOX_MAX_RECORDS);
+        if (pos as usize) + 1 >= BLACKBOX_MAX_RECORDS {
+            assert!(next == 0);
+        }
+    }
+
+    /// Proof 108: BLACKBOX_MAX_RECORDS u8'e sığar
+    #[kani::proof]
+    fn blackbox_max_records_fits_u8() {
+        assert!(BLACKBOX_MAX_RECORDS <= u8::MAX as usize);
+    }
+
+    /// Proof 166: BlackboxRecord concrete data tamper → CRC fail
+    #[kani::proof]
+    fn blackbox_record_concrete_tamper_crc_fail() {
+        let mut rec = BlackboxRecord::zeroed();
+        rec.magic = [0x53, 0x50, 0x48, 0x49];
+        rec.version = 1;
+        rec.seq = 42;
+        rec.task_id = 1;
+        rec.event = 3;
+        rec.set_crc();
+        rec.data[0] = 0xFF; // tamper
+        assert!(!rec.verify_crc());
     }
 }

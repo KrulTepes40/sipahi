@@ -1,10 +1,11 @@
 //! Kernel error types — every failure is explicit, no silent drops.
-#![allow(dead_code)] // All variants needed — used by HAL, policy, sandbox.
+#![allow(dead_code)]
 // Sipahi — Hata Tipleri
 // Safety-critical: her hata açık, sessiz başarısızlık YOK
 
 /// Sipahi kernel hata tipleri
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum SipahiError {
     /// Capability token doğrulaması başarısız
     CapabilityDenied,
@@ -34,4 +35,25 @@ pub enum SipahiError {
     ReplayDetected,
     /// Geçersiz kullanıcı pointer'ı (kernel belleğine erişim girişimi)
     InvalidPointer,
+}
+
+impl SipahiError {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::CapabilityDenied => "capability denied",
+            Self::BufferFull       => "buffer full",
+            Self::InvalidSyscall   => "invalid syscall",
+            Self::BudgetExhausted  => "budget exhausted",
+            Self::IntegrityError   => "integrity error",
+            Self::FuelExhausted    => "fuel exhausted",
+            Self::ModuleRejected   => "module rejected",
+            Self::PmpViolation     => "PMP violation",
+            Self::DeadlineMiss     => "deadline miss",
+            Self::WatchdogTimeout  => "watchdog timeout",
+            Self::DeviceNotReady   => "device not ready",
+            Self::InvalidParameter => "invalid parameter",
+            Self::ReplayDetected   => "replay detected",
+            Self::InvalidPointer   => "invalid pointer",
+        }
+    }
 }

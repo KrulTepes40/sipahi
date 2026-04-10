@@ -1,7 +1,7 @@
 //! Subsystem health check and statistics trait.
-#![allow(dead_code)] // v1.5 implementations — trait + struct defined now.
 
 /// Runtime istatistikler
+#[allow(dead_code)]
 pub struct DiagStats {
     pub name: &'static str,
     pub ok: bool,
@@ -10,6 +10,7 @@ pub struct DiagStats {
 }
 
 /// Her subsystem bu trait'i implemente edebilir
+#[allow(dead_code)]
 pub trait Diagnosable {
     fn health_check(&self) -> bool;
     fn stats(&self) -> DiagStats;
