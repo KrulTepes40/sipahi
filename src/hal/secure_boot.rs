@@ -3,6 +3,9 @@
 
 #[cfg(all(feature = "fast-sign", feature = "cnsa-sign"))]
 compile_error!("fast-sign and cnsa-sign are mutually exclusive");
+
+#[cfg(not(any(feature = "fast-sign", feature = "cnsa-sign")))]
+compile_error!("Either fast-sign or cnsa-sign feature must be enabled");
 // Sipahi — Secure Boot Ed25519 İmza Doğrulama (Sprint 13)
 // Doküman §SECURE_BOOT:
 //
@@ -93,7 +96,9 @@ pub fn secure_boot_check(
     }
     #[cfg(not(feature = "fast-sign"))]
     {
-        // cnsa-sign: LMS (v2.0, henüz implemente değil) → varsayılan red
+        // cnsa-sign: LMS henüz implemente değil — açık hata mesajı
+        #[cfg(not(kani))]
+        crate::arch::uart::println("[SEC] FATAL: cnsa-sign active but LMS not implemented");
         let _ = (message, public_key, signature);
         false
     }

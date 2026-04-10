@@ -195,7 +195,13 @@ pub(crate) fn advance_tick() {
     // SAFETY: Volatile access prevents compiler from caching static mut in register.
     unsafe {
         let t = vol_read!(BB_TICK -> u32);
-        vol_write!(BB_TICK, t.wrapping_add(1));
+        let next = t.wrapping_add(1);
+        // Wrap tespiti: next < t → u32 taştı → epoch artır
+        if next < t {
+            let epoch = vol_read!(BB_BOOT_EPOCH -> u16);
+            vol_write!(BB_BOOT_EPOCH, epoch.wrapping_add(1));
+        }
+        vol_write!(BB_TICK, next);
     }
 }
 
@@ -249,7 +255,7 @@ pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 
 /// Kayıt oku — 0 = en eski, count()-1 = en yeni
 /// Dönüş: Some(record) — CRC geçerli; None — index aşımı veya bozuk kayıt
-pub fn read(index: usize) -> Option<BlackboxRecord> {
+pub(crate) fn read(index: usize) -> Option<BlackboxRecord> {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         let c = vol_read!(BB_COUNT -> u8) as usize;
@@ -271,9 +277,14 @@ pub fn count() -> usize {
 }
 
 /// Mevcut blackbox tick sayacını döndür — expiry kontrolü için
+/// Bileşik u64: (epoch << 32) | tick — u32 wrap-safe, ~900K yıl monoton
 pub(crate) fn get_tick() -> u64 {
     // SAFETY: Single-hart, read-only access.
-    unsafe { vol_read!(BB_TICK -> u32) as u64 }
+    unsafe {
+        let epoch = vol_read!(BB_BOOT_EPOCH -> u16) as u64;
+        let tick  = vol_read!(BB_TICK -> u32) as u64;
+        (epoch << 32) | tick
+    }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -395,12 +406,17 @@ mod verification {
         assert!((next as usize) < BLACKBOX_MAX_RECORDS);
     }
 
-    /// Proof 84: get_tick() her zaman BB_TICK değerini döndürür
+    /// Proof 84: get_tick() epoch+tick bileşik u64 döndürür
     #[kani::proof]
     fn get_tick_returns_current() {
         let tick: u32 = kani::any();
-        unsafe { *BB_TICK.get_mut() = tick; }
-        assert!(get_tick() == tick as u64);
+        let epoch: u16 = kani::any();
+        unsafe {
+            *BB_TICK.get_mut() = tick;
+            *BB_BOOT_EPOCH.get_mut() = epoch;
+        }
+        let expected = ((epoch as u64) << 32) | (tick as u64);
+        assert!(get_tick() == expected);
     }
 
     /// Proof 105: BlackboxRecord zeroed → seq == 0
