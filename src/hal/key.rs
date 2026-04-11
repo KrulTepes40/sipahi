@@ -26,6 +26,10 @@ pub const OTP_KEY_SIZE: usize = 32;
 /// Ed25519 imza boyutu (byte) — R (32B) + S (32B)
 pub const SIGNATURE_SIZE: usize = 64;
 
+// Compile-time guarantees — Ed25519 spec
+const _: () = assert!(OTP_KEY_SIZE == 32);
+const _: () = assert!(SIGNATURE_SIZE == 2 * OTP_KEY_SIZE);
+
 /// QEMU geliştirme ortamı test public key — RFC 8032 Test Vector #1
 ///
 /// Production'da OTP fuse'dan okunur; bu sabit SADECE QEMU/test ortamı içindir.
@@ -79,21 +83,7 @@ mod kani_proofs {
     use super::*;
 
     // ─────────────────────────────────────────────────────
-    // Kani Proof 64: OTP key boyutu tam 32 byte (Ed25519 spec)
-    // ─────────────────────────────────────────────────────
-    #[kani::proof]
-    fn otp_key_size_is_32() {
-        // Ed25519 public key: sabit 32 byte (Curve25519 nokta koordinatı)
-        assert!(OTP_KEY_SIZE == 32);
 
-        // Test anahtarının fiziksel boyutu sabitle eşleşiyor
-        assert!(core::mem::size_of_val(&QEMU_TEST_PUBKEY) == 32);
-        assert!(core::mem::size_of_val(&QEMU_TEST_PUBKEY) == OTP_KEY_SIZE);
-
-        // İmza boyutu = 2 × key boyutu (R + S, her biri 32 byte)
-        assert!(SIGNATURE_SIZE == 64);
-        assert!(SIGNATURE_SIZE == 2 * OTP_KEY_SIZE);
-    }
 
     // ─────────────────────────────────────────────────────
     // Kani Proof 65: get_root_public_key her byte'ına erişilebilir

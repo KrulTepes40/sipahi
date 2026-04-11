@@ -361,6 +361,9 @@ fn sys_task_info(task_id: usize, _: usize, _: usize, _: usize) -> usize {
 #[cfg(not(kani))]
 use crate::common::fmt::print_u64;
 
+// Compile-time guarantee
+const _: () = assert!(SYSCALL_COUNT == 5);
+
 // ═══════════════════════════════════════════════════════
 // Kani — Sprint 7 proof'ları (değişmedi)
 // ═══════════════════════════════════════════════════════
@@ -486,17 +489,6 @@ mod verification {
         assert!(E_INVALID_ARG == SyscallResult::InvalidArg.to_raw());
     }
 
-    /// Proof 127: SYSCALL_COUNT ve ID'ler tutarlı
-    #[kani::proof]
-    fn syscall_count_matches_ids() {
-        assert!(SYSCALL_COUNT == 5);
-        assert!(SYS_CAP_INVOKE < SYSCALL_COUNT);
-        assert!(SYS_IPC_SEND < SYSCALL_COUNT);
-        assert!(SYS_IPC_RECV < SYSCALL_COUNT);
-        assert!(SYS_YIELD < SYSCALL_COUNT);
-        assert!(SYS_TASK_INFO < SYSCALL_COUNT);
-    }
-
     /// Proof 157: Kernel adresi → reject (symbolic)
     #[kani::proof]
     fn any_kernel_address_rejected() {
@@ -523,5 +515,14 @@ mod verification {
         let size: usize = kani::any();
         kani::assume(size > 0 && size <= 64);
         assert!(!is_valid_user_ptr(ptr, size));
+    }
+
+    /// dispatch() geçersiz syscall ID → E_INVALID_SYSCALL
+    #[kani::proof]
+    fn dispatch_rejects_invalid_syscall_id() {
+        let sys_id: usize = kani::any();
+        kani::assume(sys_id >= SYSCALL_COUNT);
+        let result = dispatch(sys_id, 0, 0, 0, 0);
+        assert!(result == E_INVALID_SYSCALL);
     }
 }

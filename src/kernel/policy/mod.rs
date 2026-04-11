@@ -287,4 +287,46 @@ mod verification {
         assert!(decide_action(5, rc, dal) == FailureMode::Shutdown);
         assert!(decide_action(8, rc, dal) == FailureMode::Shutdown);
     }
+
+    /// Budget Degrade → rc >= MAX_RESTART_BUDGET olmalı
+    #[kani::proof]
+    fn budget_degrade_requires_exhausted_restarts() {
+        let rc: u8 = kani::any();
+        let dal: u8 = kani::any();
+        kani::assume(dal <= 3);
+        let action = decide_action(0, rc, dal); // event=0 → BudgetExhausted
+        if matches!(action, FailureMode::Degrade) {
+            assert!(rc >= MAX_RESTART_BUDGET);
+        }
+    }
+
+    /// Watchdog Degrade → rc >= MAX_RESTART_WATCHDOG olmalı
+    #[kani::proof]
+    fn watchdog_degrade_requires_exhausted_restarts() {
+        let rc: u8 = kani::any();
+        let dal: u8 = kani::any();
+        kani::assume(dal <= 3);
+        let action = decide_action(6, rc, dal);
+        if matches!(action, FailureMode::Degrade) {
+            assert!(rc >= MAX_RESTART_WATCHDOG);
+        }
+    }
+
+    /// Livelock freedom: 10 ardışık budget çöküşte terminal state'e ulaşılır
+    #[kani::proof]
+    #[kani::unwind(12)]
+    fn policy_never_livelocks_on_repeated_failure() {
+        let dal: u8 = kani::any();
+        kani::assume(dal <= 3);
+        let mut reached_terminal = false;
+        let mut rc: u8 = 0;
+        while rc < 10 {
+            let action = decide_action(0, rc, dal); // BudgetExhausted
+            if matches!(action, FailureMode::Degrade | FailureMode::Isolate | FailureMode::Shutdown) {
+                reached_terminal = true;
+            }
+            rc = rc.saturating_add(1);
+        }
+        assert!(reached_terminal);
+    }
 }

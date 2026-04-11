@@ -583,4 +583,22 @@ mod verification {
         ];
         assert!(validate_module(&wasm).is_ok());
     }
+
+    /// skip_instruction: zehirli byte ile buffer sınırını asla aşmaz
+    #[kani::proof]
+    fn wasm_skip_instruction_never_exceeds_bounds() {
+        let module_len: usize = kani::any();
+        kani::assume(module_len >= 1 && module_len <= 16);
+        let mut data = [0u8; 16];
+        let offset: usize = kani::any();
+        kani::assume(offset < module_len);
+        data[offset] = kani::any(); // zehirli opcode
+        if offset + 1 < 16 {
+            data[offset + 1] = kani::any(); // zehirli LEB128
+        }
+        let result = skip_instruction(&data[..module_len], offset);
+        if let Some(next) = result {
+            assert!(next <= module_len);
+        }
+    }
 }

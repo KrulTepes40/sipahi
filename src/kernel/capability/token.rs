@@ -75,3 +75,6 @@ impl Token {
         h
     }
 }
+
+// Compile-time layout guarantee
+const _: () = assert!(core::mem::size_of::<Token>() == 32);

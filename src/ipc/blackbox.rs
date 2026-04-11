@@ -287,6 +287,9 @@ pub(crate) fn get_tick() -> u64 {
     }
 }
 
+// Compile-time guarantee
+const _: () = assert!(BLACKBOX_MAX_RECORDS <= 255);
+
 // ═══════════════════════════════════════════════════════
 // Kani — Sprint 11 (Proof 52-57)
 // ═══════════════════════════════════════════════════════
@@ -449,12 +452,6 @@ mod verification {
         }
     }
 
-    /// Proof 108: BLACKBOX_MAX_RECORDS u8'e sığar
-    #[kani::proof]
-    fn blackbox_max_records_fits_u8() {
-        assert!(BLACKBOX_MAX_RECORDS <= u8::MAX as usize);
-    }
-
     /// Proof 166: BlackboxRecord concrete data tamper → CRC fail
     #[kani::proof]
     fn blackbox_record_concrete_tamper_crc_fail() {
@@ -467,5 +464,14 @@ mod verification {
         rec.set_crc();
         rec.data[0] = 0xFF; // tamper
         assert!(!rec.verify_crc());
+    }
+
+    /// Proof: write_pos >= MAX → güvenli 0'a dönüş
+    #[kani::proof]
+    fn blackbox_write_pos_out_of_bounds_safe() {
+        let pos: u8 = kani::any();
+        kani::assume((pos as usize) >= BLACKBOX_MAX_RECORDS);
+        let next = if (pos as usize) >= BLACKBOX_MAX_RECORDS { 0u8 } else { pos + 1 };
+        assert!((next as usize) < BLACKBOX_MAX_RECORDS);
     }
 }

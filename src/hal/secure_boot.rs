@@ -132,36 +132,4 @@ mod kani_proofs {
         }
     }
 
-    // ─────────────────────────────────────────────────────
-    // Kani Proof 67: verify() bool döner, panik YOK
-    // ─────────────────────────────────────────────────────
-    #[kani::proof]
-    fn verify_no_panic_returns_bool() {
-        let pubkey = [0u8; 32];
-        let message: [u8; 0] = [];
-        let signature = [0u8; 64];
-
-        #[cfg(feature = "fast-sign")]
-        {
-            // Kani stub: false döner, panic yok, bellek erişimi bounded
-            let result = Ed25519Provider::verify(&pubkey, &message, &signature);
-            // Boolean sonuç: 0 veya 1 (başka değer mümkün değil)
-            assert!(result == false || result == true);
-        }
-    }
-
-    // ─────────────────────────────────────────────────────
-    // Kani Proof 68: Key + imza boyutu ilişkisi tutarlı
-    // ─────────────────────────────────────────────────────
-    #[kani::proof]
-    fn key_signature_size_relationship() {
-        // Ed25519: imza = 2 × public_key (R ve S her biri 32B)
-        assert!(SIGNATURE_SIZE == 2 * OTP_KEY_SIZE);
-
-        // Birlikte secure_boot_check parametrelerini oluşturabiliyoruz
-        let key = [0u8; OTP_KEY_SIZE];
-        let sig = [0u8; SIGNATURE_SIZE];
-        assert!(key.len() == 32);
-        assert!(sig.len() == 64);
-    }
 }

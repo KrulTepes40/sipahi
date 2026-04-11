@@ -93,3 +93,29 @@ pub fn epoch_reset() {
 pub fn current_offset() -> usize {
     ARENA_OFFSET.load(Ordering::Relaxed)
 }
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// Bump allocator: iki ardışık blok asla örtüşmez
+    #[kani::proof]
+    fn bump_allocator_offsets_never_overlap() {
+        let offset1: usize = kani::any();
+        let size1: usize = kani::any();
+        let size2: usize = kani::any();
+
+        kani::assume(size1 >= 1 && size1 <= 256);
+        kani::assume(size2 >= 1 && size2 <= 256);
+
+        let aligned1 = (offset1 + 7) & !7;
+        let end1 = aligned1 + size1;
+
+        let aligned2 = (end1 + 7) & !7;
+        let end2 = aligned2 + size2;
+
+        kani::assume(end2 <= WASM_HEAP_SIZE);
+
+        assert!(aligned2 >= end1);
+    }
+}

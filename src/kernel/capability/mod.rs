@@ -25,12 +25,6 @@ mod verification {
     use super::token::{Token, ACTION_READ, ACTION_WRITE, ACTION_EXECUTE, ACTION_ALL};
     use super::cache::TokenCache;
 
-    /// Proof 40: Token struct boyutu 32 byte (layout doğrulaması)
-    #[kani::proof]
-    fn token_size_32_bytes() {
-        assert!(core::mem::size_of::<Token>() == 32);
-    }
-
     /// Proof 41: header_bytes deterministik — aynı token, aynı çıkış
     #[kani::proof]
     fn token_header_bytes_deterministic() {
@@ -187,5 +181,19 @@ mod verification {
         // expires=1, Kani'de get_tick() BB_TICK=0 → 0 <= 1 → not expired
         cache.insert(5, 200, 1, 1);
         assert!(cache.lookup(5, 200, 1));
+    }
+
+    /// Invalidated token → herhangi resource/action ile asla bulunamaz
+    #[kani::proof]
+    fn invalidated_token_never_found_in_cache() {
+        let mut cache = TokenCache::new();
+        let tid: u8 = kani::any();
+        let resource: u16 = kani::any();
+        let action: u8 = kani::any();
+        cache.insert(tid, resource, action, 0);
+        cache.invalidate(tid);
+        let search_resource: u16 = kani::any();
+        let search_action: u8 = kani::any();
+        assert!(!cache.lookup(tid, search_resource, search_action));
     }
 }

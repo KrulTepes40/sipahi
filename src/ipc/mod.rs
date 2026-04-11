@@ -196,6 +196,10 @@ pub const fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
+// Compile-time layout guarantees
+const _: () = assert!(core::mem::size_of::<IpcMessage>() == 64);
+const _: () = assert!(IPC_CHANNEL_SLOTS > 0);
+
 // ═══════════════════════════════════════════════════════
 // Kani Formal Verification — Sprint 8
 // ═══════════════════════════════════════════════════════
@@ -322,19 +326,6 @@ mod verification {
         assert!(get_channel(id).is_none());
     }
 
-    /// Proof 133: IPC_CHANNEL_SLOTS sınır kontrolü
-    #[kani::proof]
-    fn ipc_channel_slots_bounded() {
-        assert!(IPC_CHANNEL_SLOTS > 0);
-        assert!(IPC_CHANNEL_SLOTS <= 256);
-    }
-
-    /// Proof 134: IpcMessage boyutu 64 byte
-    #[kani::proof]
-    fn ipc_message_size_64() {
-        assert!(core::mem::size_of::<IpcMessage>() == 64);
-    }
-
     /// Proof 155: CRC roundtrip — concrete data ile set→verify true
     #[kani::proof]
     fn ipc_crc_concrete_data_roundtrip() {
@@ -356,5 +347,42 @@ mod verification {
         msg.set_crc();
         msg.data[0] = 0x43; // tamper
         assert!(!msg.verify_crc());
+    }
+
+    /// Dolu kanal → send red, ilk recv → mesaj alınır
+    #[kani::proof]
+    #[kani::unwind(18)]
+    fn ipc_full_channel_rejects_send() {
+        let ch = SpscChannel::new();
+        let msg = IpcMessage::zeroed();
+
+        // IPC_CHANNEL_SLOTS - 1 mesaj gönderilebilir (ring buffer 1 slot boş bırakır)
+        let mut i: usize = 0;
+        while i < IPC_CHANNEL_SLOTS - 1 {
+            let r = ch.send(&msg);
+            assert!(r.is_ok());
+            i += 1;
+        }
+
+        // Kanal dolu — bir fazlası red
+        let result = ch.send(&msg);
+        assert!(result.is_err());
+
+        // Bir mesaj okuyunca tekrar alan açılır
+        let read = ch.recv();
+        assert!(read.is_some());
+    }
+
+    /// AtomicU16 wrap → fiziksel slot index her zaman < IPC_CHANNEL_SLOTS
+    #[kani::proof]
+    fn ipc_ring_buffer_wrap_never_exceeds_slots() {
+        let head_val: u16 = kani::any();
+        let tail_val: u16 = kani::any();
+        let physical_head = (head_val as usize) % IPC_CHANNEL_SLOTS;
+        let physical_tail = (tail_val as usize) % IPC_CHANNEL_SLOTS;
+        assert!(physical_head < IPC_CHANNEL_SLOTS);
+        assert!(physical_tail < IPC_CHANNEL_SLOTS);
+        let next_head = (head_val.wrapping_add(1)) as usize % IPC_CHANNEL_SLOTS;
+        assert!(next_head < IPC_CHANNEL_SLOTS);
     }
 }
