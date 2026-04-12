@@ -66,8 +66,8 @@ sipahi/
 ├── README.md                    # Project overview
 ├── ARCHITECTURE.md              # Layer structure + security model
 ├── LICENSE                      # Apache-2.0
-└── docs/
-    └── sipahi_v10_0.txt         # Architecture document
+
+    
 ```
 
 ## Stats
@@ -75,9 +75,9 @@ sipahi/
 | Metric | Value |
 |---|---|
 | Source lines (Rust + ASM) | ~7,350 |
-| `.rs` files | 41 |
+| `.rs` files | 39 |
 | `.S` files | 3 |
 | Kani proofs | 173 |
 | Compile-time asserts | 7 |
 | `static mut` count | 0 |
-| `unsafe` blocks documented | all |
+| `unsafe` blocks | 92 (all documented with `// SAFETY:`) |
