@@ -99,7 +99,7 @@ impl SpscChannel {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
 
-        let next_head = (head + 1) % (IPC_CHANNEL_SLOTS as u16);
+        let next_head = head.wrapping_add(1) % (IPC_CHANNEL_SLOTS as u16);
 
         if next_head == tail {
             return Err(crate::common::error::SipahiError::BufferFull);
@@ -134,7 +134,7 @@ impl SpscChannel {
     pub fn is_full(&self) -> bool {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
-        (head + 1) % (IPC_CHANNEL_SLOTS as u16) == tail
+        head.wrapping_add(1) % (IPC_CHANNEL_SLOTS as u16) == tail
     }
 
     /// Kanal boş mu?

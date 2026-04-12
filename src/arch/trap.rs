@@ -115,10 +115,15 @@ pub extern "C" fn trap_handler(
                 r
             }
             2 => {
-                // Illegal instruction
+                // Illegal instruction — task izole edilmeli
                 uart::puts("[TRAP] Illegal instruction at 0x");
                 print_hex(_mepc);
-                uart::println("");
+                uart::println(" → policy");
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
+                    0xFF, &[],
+                );
+                crate::kernel::scheduler::handle_illegal_instruction();
                 0
             }
             _ => {

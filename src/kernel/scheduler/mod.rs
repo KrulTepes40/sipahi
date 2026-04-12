@@ -553,6 +553,23 @@ fn try_recover_from_degrade() {
     }
 }
 
+/// Illegal instruction veya fault — trap handler'dan çağrılır
+pub(crate) fn handle_illegal_instruction() {
+    // SAFETY: Single-hart, called from trap context.
+    unsafe {
+        let current = *CURRENT_TASK.get();
+        if current < *TASK_COUNT.get() {
+            let dal = TASKS.get()[current].dal;
+            let action = crate::kernel::policy::apply_policy(
+                current as u8,
+                crate::kernel::policy::PolicyEvent::WasmTrap,
+                dal,
+            );
+            apply_action(current, action);
+        }
+    }
+}
+
 /// İzole — task durdur + token revoke
 /// Isolated: Suspended'dan farklı, periyot reset ile READY'ye dönmez.
 fn isolate_task(id: usize) {
