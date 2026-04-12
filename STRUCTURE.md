@@ -1,171 +1,83 @@
-# SİPAHİ v1.0 — KLASÖR YAPISI
+# Sipahi v1.5 — File Structure
 
 ```
 sipahi/
-├── .cargo/
-│   └── config.toml          # RISC-V target ayarları
+├── .cargo/config.toml           # riscv64imac-unknown-none-elf target + QEMU runner
+├── .github/workflows/ci.yml     # GitHub Actions: clippy + build
 ├── src/
-│   ├── main.rs              # #![no_std] #![no_main] entry point
-│   ├── arch/                # KATMAN 0: Donanım (1,200 satır bütçe)
-│   │   ├── mod.rs
-│   │   ├── boot.S           # _start, stack ayarla, Rust'a atla (~30 satır)
-│   │   ├── trap.S           # register save/restore (~40 satır)
-│   │   ├── context.S        # task context switch (~60 satır)
-│   │   ├── csr.rs           # CSR okuma/yazma (mtvec, mcause, mepc, pmp*)
-│   │   └── uart.rs          # UART driver (debug çıktı)
-│   ├── hal/                 # KATMAN 0: HAL soyutlama
-│   │   ├── mod.rs
-│   │   ├── pmp.rs           # PMP bölgeleri + integrity check (~100 satır)
-│   │   ├── clint.rs         # Timer (mtime, mtimecmp)
-│   │   ├── device.rs        # HalDevice trait
-│   │   ├── boot.rs          # Boot sequence (~300 satır)
-│   │   ├── secure_boot.rs   # Ed25519 doğrulama, imza kontrol (~350 satır)
-│   │   └── key.rs           # OTP/HSM key provisioning (~250 satır)
-│   ├── kernel/              # KATMAN 1: Çelik Çekirdek (4,900 satır bütçe)
-│   │   ├── mod.rs
+│   ├── main.rs                  # Entry point, task_a/task_b, panic handler (~110 lines)
+│   ├── boot.rs                  # Boot sequence: PMP, HAL, task creation, timer (~55 lines)
+│   ├── verify.rs                # Kani formal verification harnesses (~600 lines)
+│   ├── tests/
+│   │   └── mod.rs               # POST + integration tests (~470 lines)
+│   ├── arch/                    # Layer 0: RISC-V hardware
+│   │   ├── boot.S               # _start → BSS clear → stack → rust_main
+│   │   ├── trap.S               # Trap frame save/restore (34 registers)
+│   │   ├── trap.rs              # M-mode trap handler (timer, ecall, faults, MPP check)
+│   │   ├── context.S            # switch_context (16 regs) + task_trampoline (mret)
+│   │   ├── csr.rs               # CSR read/write + mstatus MPP/MPIE constants
+│   │   ├── pmp.rs               # PMP register access + pack_pmpcfg
+│   │   ├── clint.rs             # CLINT timer (drift-free mtimecmp scheduling)
+│   │   ├── uart.rs              # NS16550A UART (transmit-ready check)
+│   │   └── mod.rs
+│   ├── hal/                     # Layer 1: Hardware abstraction
+│   │   ├── device.rs            # DeviceAccess trait (static dispatch)
+│   │   ├── iopmp.rs             # IOPMP stub (software emulation)
+│   │   ├── key.rs               # Ed25519 key provisioning (test-keys feature)
+│   │   ├── secure_boot.rs       # Ed25519 signature verification (RFC 8032)
+│   │   └── mod.rs
+│   ├── kernel/                  # Layer 2: Core kernel
 │   │   ├── scheduler/
-│   │   │   ├── mod.rs
-│   │   │   ├── task.rs      # Task struct, TaskState enum
-│   │   │   ├── priority.rs  # Fixed-priority preemptive
-│   │   │   └── budget.rs    # Budget enforcement, DAL safety factor
+│   │   │   └── mod.rs           # Priority scheduler, budget, watchdog, U-mode trampoline
 │   │   ├── capability/
-│   │   │   ├── mod.rs
-│   │   │   ├── token.rs     # Token struct (32B), lifecycle
-│   │   │   ├── broker.rs    # Capability doğrulama, BLAKE3 keyed hash
-│   │   │   └── cache.rs     # Token cache (4 slot, constant-time)
+│   │   │   ├── token.rs         # 32B capability token
+│   │   │   ├── cache.rs         # 4-slot constant-time cache with TTL
+│   │   │   ├── broker.rs        # BLAKE3 MAC, per-task nonce, token expiry
+│   │   │   └── mod.rs
 │   │   ├── syscall/
-│   │   │   ├── mod.rs
-│   │   │   └── dispatch.rs  # 5 syscall: cap_invoke, ipc_send/recv, yield, task_info
+│   │   │   ├── dispatch.rs      # 5-handler table, WCET tracking, pointer validation
+│   │   │   └── mod.rs           # Userspace ecall wrappers
+│   │   ├── policy/
+│   │   │   └── mod.rs           # 6-mode failure engine with lockstep verification
 │   │   ├── memory/
-│   │   │   ├── mod.rs
-│   │   │   └── regions.rs   # R0-R7 statik bellek bölgeleri
-│   │   └── policy/
-│   │       ├── mod.rs
-│   │       └── failure.rs   # 6 failure modu, escalation
-│   ├── ipc/                 # KATMAN 2: Sinir Sistemi (1,100 satır bütçe)
-│   │   ├── mod.rs
-│   │   ├── channel.rs       # SPSC ring buffer + IPC CONTRACT
-│   │   ├── message.rs       # 64B mesaj formatı, CRC32
-│   │   └── blackbox.rs      # Flight recorder, circular buffer
-│   ├── sandbox/             # KATMAN 3: WASM İzolasyon (1,800 satır bütçe)
-│   │   ├── mod.rs
-│   │   ├── runtime.rs       # Wasmi host interface + fuel bridge
-│   │   ├── loader.rs        # Module loader + Ed25519 + yükleme politikası
-│   │   └── compute.rs       # 4 compute service (COPY, CRC, MAC, MATH)
-│   └── common/              # Genel: Config + Types + Error + Crypto (300 satır)
-│       ├── mod.rs
-│       ├── types.rs         # Q32.32 fixed-point, ortak tipler
-│       ├── error.rs         # SipahiError enum
-│       ├── config.rs        # MAX_TASKS, TICK_PERIOD, WCET hedefleri, syscall/compute ID
-│       └── crypto/          # Modüler kriptografi (compile-time trait seçimi)
-│           ├── mod.rs
-│           └── provider.rs  # HashProvider + SignatureVerifier trait
-├── tests/
-│   ├── unit/                # Birim testler (host makinede çalışır)
+│   │   │   └── mod.rs           # PMP region setup + shadow integrity check
 │   │   └── mod.rs
-│   ├── integration/         # Entegrasyon testleri (QEMU'da)
-│   │   └── mod.rs
-│   └── fi/                  # Fault injection testleri (FI-1 ~ FI-7)
+│   ├── ipc/                     # Layer 2: Communication
+│   │   ├── mod.rs               # SPSC lock-free ring buffer (&self API, CRC32)
+│   │   └── blackbox.rs          # 128-record flight recorder (u64 monotonic tick)
+│   ├── sandbox/                 # Layer 3: WASM isolation
+│   │   ├── mod.rs               # Wasmi runtime, float scanner v2, compute services
+│   │   └── allocator.rs         # Bump allocator (4MB arena, epoch reset)
+│   └── common/                  # Cross-cutting
+│       ├── config.rs            # Compile-time constants
+│       ├── types.rs             # TaskState, TaskConfig, Q32, newtypes
+│       ├── error.rs             # SipahiError enum + as_str()
+│       ├── sync.rs              # SingleHartCell<T> (zero static mut)
+│       ├── fmt.rs               # print_u32, print_u64, print_hex
+│       ├── diagnostic.rs        # DiagStats + Diagnosable trait (v2.0)
+│       ├── crypto/
+│       │   ├── provider.rs      # HashProvider + SignatureVerifier traits
+│       │   ├── blake3_impl.rs   # BLAKE3 keyed hash (no_std)
+│       │   └── mod.rs           # Feature-gated provider selection
 │       └── mod.rs
-├── docs/
-│   └── sipahi_v10_0.txt     # Mimari doküman
-├── sipahi.ld                # Linker script
-├── Cargo.toml               # Bağımlılıklar ve feature flag'ler
-├── rust-toolchain.toml      # Nightly pinleme (determinizm)
-├── .gitignore               # Git ignore kuralları
-├── Makefile                 # build, run, test, wcet kısayolları
-├── LICENSE                  # Apache 2.0
-└── README.md                # (v1.0 sonunda yazılacak)
+├── sipahi.ld                    # Linker script (8MB RAM, memory map in header)
+├── Makefile                     # build, run, debug, check, kani, clean
+├── Cargo.toml                   # Dependencies + features + overflow-checks
+├── README.md                    # Project overview
+├── ARCHITECTURE.md              # Layer structure + security model
+├── LICENSE                      # Apache-2.0
+└── docs/
+    └── sipahi_v10_0.txt         # Architecture document
 ```
 
-## BÜTÇE EŞLEŞMESİ
+## Stats
 
-| Klasör      | Katman | Bütçe    | Sprint  |
-|-------------|--------|----------|---------|
-| src/arch/   | K0     | ~400     | 1-2     |
-| src/hal/    | K0     | ~800     | 1,3,5,13|
-| src/kernel/ | K1     | ~4,900   | 3-7,9-10|
-| src/ipc/    | K2     | ~1,100   | 8,11    |
-| src/sandbox/| K3     | ~1,800   | 12      |
-| src/common/ | Genel  | ~300     | 0-1     |
-| Rezerve     | —      | ~700     | —       |
-| **TOPLAM**  |        | **10,000**|        |
-
-## SPRINT → DOSYA HARİTASI
-
-| Sprint | Dosyalar | Çıktı |
-|--------|----------|-------|
-| 0      | Cargo.toml, .cargo/config.toml, sipahi.ld, LICENSE | Derleme ortamı hazır |
-| 1      | boot.S, main.rs, uart.rs, common/* | QEMU'da "Sipahi" yazısı |
-| 2      | trap.S, csr.rs | Interrupt yakalanıyor |
-| 3      | clint.rs, scheduler/task.rs | Timer tick çalışıyor |
-| 4      | context.S, scheduler/priority.rs | 2 task arası geçiş |
-| 5      | hal/pmp.rs, memory/regions.rs | Bellek izolasyonu aktif |
-| 6      | hal/device.rs | HalDevice trait + IOPMP stub |
-| 7      | syscall/dispatch.rs | ecall → 5 syscall çalışıyor |
-| 8      | ipc/channel.rs, ipc/message.rs | Task'lar arası mesaj |
-| 9      | capability/token.rs, broker.rs, cache.rs | Token doğrulama aktif |
-| 10     | scheduler/budget.rs, policy/failure.rs | Budget aşımı → SUSPENDED |
-| 11     | ipc/blackbox.rs | Olay kaydı çalışıyor |
-| 12     | sandbox/runtime.rs, loader.rs, compute.rs | WASM task çalışıyor |
-| 13     | hal/boot.rs, secure_boot.rs, key.rs | İmzalı kernel boot |
-| 14     | tests/integration/*, tests/fi/* | 12 release gate PASS |
-
-## SPRINT BAĞIMLILIK GRAFİĞİ
-
-```
-Sprint 0  (proje setup)
-   │
-   ▼
-Sprint 1  (boot + UART) ──────── "Sipahi lives."
-   │
-   ▼
-Sprint 2  (trap handler)
-   │
-   ▼
-Sprint 3  (timer + task struct)
-   │
-   ▼
-Sprint 4  (context switch) ───── İlk multi-task
-   │
-   ▼
-Sprint 5  (PMP + memory) ─────── Bellek izolasyonu
-   │
-   ▼
-Sprint 6  (device trait) ──────── HAL soyutlama
-   │
-   ▼
-Sprint 7  (syscall dispatch) ─── User→Kernel geçişi
-   │
-   ▼
-Sprint 8  (SPSC IPC) ─────────── Task iletişimi ← KRİTİK SPRINT
-   │
-   ▼
-Sprint 9  (capability broker) ── Güvenlik katmanı
-   │
-   ▼
-Sprint 10 (budget + failure) ─── Determinizm katmanı
-   │
-   ▼
-Sprint 11 (blackbox) ─────────── Olay kaydı
-   │
-   ▼
-Sprint 12 (WASM sandbox) ─────── İzolasyon katmanı
-   │
-   ▼
-Sprint 13 (secure boot) ──────── Güven zinciri
-   │
-   ▼
-Sprint 14 (entegrasyon) ───────── v1.0 RELEASE GATE
-```
-
-Her sprint bir öncekine bağımlıdır — sıra atlanamaz.
-Sprint 8 (IPC) en kritik sprint: "IPC correctness = system correctness."
-
-## DOSYA BOYUT KURALI
-
-Her dosya MAX 400 satır. 400'ü aşarsa parçala.
-Neden: code review, test, Kani analizi dosya bazında çalışır.
-Büyük dosya = kaçan bug.
-
-hal/boot.rs ESKİ 900 satır → YENİ 3 dosya × ~300 satır.
+| Metric | Value |
+|---|---|
+| Source lines (Rust + ASM) | ~7,350 |
+| `.rs` files | 41 |
+| `.S` files | 3 |
+| Kani proofs | 173 |
+| Compile-time asserts | 7 |
+| `static mut` count | 0 |
+| `unsafe` blocks documented | all |
