@@ -41,6 +41,21 @@ pub fn get_tick_count() -> u64 {
     unsafe { *TICK_COUNT.get() }
 }
 
+/// mstatus.MPP kontrol — U-mode görev M-mode'a yükselemez
+#[cfg(not(kani))]
+#[inline(always)]
+fn verify_mpp_is_user_mode() {
+    let mstatus = crate::arch::csr::read_mstatus();
+    let mpp = (mstatus >> 11) & 0x3;
+    if mpp != 0 {
+        uart::println("[TRAP] PRIVILEGE ESCALATION DETECTED — SHUTDOWN");
+        crate::ipc::blackbox::log(
+            crate::ipc::blackbox::BlackboxEvent::PolicyShutdown, 0xFF, &[],
+        );
+        loop { unsafe { core::arch::asm!("wfi"); } }
+    }
+}
+
 #[cfg(not(kani))]
 #[no_mangle]
 pub extern "C" fn trap_handler(
@@ -90,9 +105,14 @@ pub extern "C" fn trap_handler(
             ECALL_U | ECALL_M => {
                 // ecall → syscall dispatch
                 // mepc+4 trap.S'de yapıldı, burada yapılmaz
-                crate::kernel::syscall::dispatch(
+                let r = crate::kernel::syscall::dispatch(
                     syscall_id, arg0, arg1, arg2, arg3,
-                )
+                );
+                // MPP kontrolü sadece U-mode ecall'da — M-mode ecall'da MPP=3 doğru
+                if mcause == ECALL_U {
+                    verify_mpp_is_user_mode();
+                }
+                r
             }
             2 => {
                 // Illegal instruction

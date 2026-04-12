@@ -24,6 +24,9 @@
 
 use crate::arch::pmp;
 use crate::arch::uart;
+use crate::common::sync::SingleHartCell;
+
+static PMP_SHADOW: SingleHartCell<u64> = SingleHartCell::new(0);
 
 // Linker script'ten gelen semboller
 extern "C" {
@@ -89,7 +92,11 @@ pub(crate) fn init_pmp() {
         pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,   // Entry 7: UART RW (locked)
     ];
 
-    pmp::write_pmpcfg0(pmp::pack_pmpcfg(configs));
+    let packed = pmp::pack_pmpcfg(configs);
+    pmp::write_pmpcfg0(packed);
+
+    // Shadow kaydet — her tick'te doğrulama için
+    unsafe { *PMP_SHADOW.get_mut() = packed; }
 
     // ─── Doğrulama çıktısı ───
     uart::println("[PMP] Memory protection configured:");
@@ -126,3 +133,11 @@ pub(crate) fn init_pmp() {
 }
 
 use crate::common::fmt::print_hex;
+
+/// PMP bütünlük doğrulama — shadow ile karşılaştır
+#[cfg(not(kani))]
+pub(crate) fn verify_pmp_integrity() -> bool {
+    let current = pmp::read_pmpcfg0();
+    let shadow = unsafe { *PMP_SHADOW.get() };
+    current == shadow
+}

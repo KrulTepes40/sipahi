@@ -417,8 +417,41 @@ pub fn test_blackbox() {
     arch::uart::println("");
 }
 
+/// Power-On Self Test — kernel bileşen doğrulaması
+pub fn post() {
+    arch::uart::println("[POST] Kernel self-test...");
+
+    // 1. CRC32 bilinen vektör
+    let crc_data = [0x31u8, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39];
+    let crc_result = ipc::crc32(&crc_data);
+    if crc_result != 0xCBF4_3926 {
+        arch::uart::println("[POST] FAIL: CRC32 engine corrupted — HALT");
+        // SAFETY: WFI loop — halt on self-test failure.
+        loop { unsafe { core::arch::asm!("wfi"); } }
+    }
+    arch::uart::println("[POST] CRC32 engine ✓");
+
+    // 2. PMP integrity
+    if !kernel::memory::verify_pmp_integrity() {
+        arch::uart::println("[POST] FAIL: PMP registers corrupted — HALT");
+        loop { unsafe { core::arch::asm!("wfi"); } }
+    }
+    arch::uart::println("[POST] PMP integrity ✓");
+
+    // 3. Policy engine — PMP fail her zaman Shutdown
+    let action = kernel::policy::decide_action(5, 0, 0);
+    if action != kernel::policy::FailureMode::Shutdown {
+        arch::uart::println("[POST] FAIL: Policy engine corrupted — HALT");
+        loop { unsafe { core::arch::asm!("wfi"); } }
+    }
+    arch::uart::println("[POST] Policy engine ✓");
+
+    arch::uart::println("[POST] ★ All self-tests PASSED ★");
+}
+
 /// Tüm entegrasyon testlerini çalıştır
 pub fn run_all() {
+    post();
     test_policy_engine();
     test_capability_broker();
     test_ipc();

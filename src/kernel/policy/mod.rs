@@ -146,7 +146,14 @@ pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureM
         0
     };
 
-    let action = decide_action(event as u8, count, dal);
+    let action1 = decide_action(event as u8, count, dal);
+    let action2 = decide_action(event as u8, count, dal);
+    // Lockstep: iki çağrı aynı sonucu vermeli — farklıysa bellek bozulması
+    let action = if action1 != action2 {
+        FailureMode::Shutdown
+    } else {
+        action1
+    };
 
     // RESTART → sayacı artır (doygun — eskalasyon için MAX tutulur)
     if action == FailureMode::Restart && id < MAX_TASKS {

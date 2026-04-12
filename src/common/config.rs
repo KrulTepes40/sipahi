@@ -139,6 +139,13 @@ pub const BUDGET_DAL_D: u32 = 100_000;
 /// Varsayılan period uzunluğu (tick) — 10 tick = 100ms @ 10ms/tick
 pub const DEFAULT_PERIOD_TICKS: u32 = 10;
 
+/// IPC send rate limit — tick başına maksimum send sayısı
+pub const MAX_SENDS_PER_TICK: u32 = 16;
+
+/// Windowed watchdog alt sınır — kick bu değerden önce gelirse kontrol akışı bozulmuş
+/// 0 = window kontrolü devre dışı
+pub const WATCHDOG_WINDOW_MIN: u32 = 3;
+
 /// Watchdog limit (tick) — task bu kadar tick boyunca yield etmezse policy tetiklenir
 /// 0 = devre dışı. 100 tick = 1 saniye @ 10ms/tick
 pub const WATCHDOG_LIMIT: u32 = 100;

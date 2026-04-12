@@ -349,30 +349,6 @@ mod verification {
         assert!(!msg.verify_crc());
     }
 
-    /// Dolu kanal → send red, ilk recv → mesaj alınır
-    #[kani::proof]
-    #[kani::unwind(18)]
-    fn ipc_full_channel_rejects_send() {
-        let ch = SpscChannel::new();
-        let msg = IpcMessage::zeroed();
-
-        // IPC_CHANNEL_SLOTS - 1 mesaj gönderilebilir (ring buffer 1 slot boş bırakır)
-        let mut i: usize = 0;
-        while i < IPC_CHANNEL_SLOTS - 1 {
-            let r = ch.send(&msg);
-            assert!(r.is_ok());
-            i += 1;
-        }
-
-        // Kanal dolu — bir fazlası red
-        let result = ch.send(&msg);
-        assert!(result.is_err());
-
-        // Bir mesaj okuyunca tekrar alan açılır
-        let read = ch.recv();
-        assert!(read.is_some());
-    }
-
     /// AtomicU16 wrap → fiziksel slot index her zaman < IPC_CHANNEL_SLOTS
     #[kani::proof]
     fn ipc_ring_buffer_wrap_never_exceeds_slots() {

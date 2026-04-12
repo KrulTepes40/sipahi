@@ -13,7 +13,7 @@
 //
 // WCET: ≤0.8μs (doküman §SCHEDULER)
 
-use crate::common::config::{MAX_TASKS, TASK_STACK_SIZE, CYCLES_PER_TICK, WATCHDOG_LIMIT};
+use crate::common::config::{MAX_TASKS, TASK_STACK_SIZE, CYCLES_PER_TICK, WATCHDOG_LIMIT, WATCHDOG_WINDOW_MIN, MAX_SENDS_PER_TICK};
 use crate::common::sync::SingleHartCell;
 use crate::common::types::TaskState;
 use crate::kernel::policy::{FailureMode, PolicyEvent};
@@ -75,6 +75,10 @@ pub struct Task {
     pub period_counter:   u32,           // Mevcut periyot içindeki tick sayacı
     pub watchdog_counter: u32,           // Tick sayacı — yield/kick ile sıfırlanır
     pub watchdog_limit:   u32,           // Limit (0=devre dışı) — aşılırsa policy tetik
+    pub syscall_count:    u32,           // Anomali tespiti — dispatch'te artırılır
+    pub ipc_send_count:   u32,           // Rate limiter — tick'te sıfırlanır
+    pub watchdog_window_min: u32,        // Windowed: kick bu tick'ten önce gelirse hata
+    pub original_budget:     u32,        // Degrade öncesi orijinal bütçe (kurtarma için)
 }
 
 impl Task {
@@ -93,6 +97,10 @@ impl Task {
             period_counter:   0,
             watchdog_counter: 0,
             watchdog_limit:   0,
+            syscall_count:    0,
+            ipc_send_count:   0,
+            watchdog_window_min: 0,
+            original_budget:     0,
         }
     }
 }
@@ -115,6 +123,9 @@ static TASK_COUNT: SingleHartCell<usize> = SingleHartCell::new(0);
 
 /// DEGRADE mesajı bir kez yazdırılsın — spam önleme
 static DEGRADE_LOGGED: SingleHartCell<bool> = SingleHartCell::new(false);
+
+/// Sistem degrade modunda mı?
+static DEGRADED: SingleHartCell<bool> = SingleHartCell::new(false);
 
 /// Şu anki çalışan task index'i
 static CURRENT_TASK: SingleHartCell<usize> = SingleHartCell::new(0);
@@ -164,8 +175,10 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
         t.remaining_cycles = cfg.budget_cycles;
         t.period_ticks     = cfg.period_ticks;
         t.period_counter   = 0;
-        t.watchdog_counter = 0;
-        t.watchdog_limit   = WATCHDOG_LIMIT;
+        t.watchdog_counter     = 0;
+        t.watchdog_limit       = WATCHDOG_LIMIT;
+        t.watchdog_window_min  = WATCHDOG_WINDOW_MIN;
+        t.original_budget      = cfg.budget_cycles;
 
         *TASK_COUNT.get_mut() += 1;
     }
@@ -187,6 +200,16 @@ pub(crate) fn schedule() {
 
         let old = *CURRENT_TASK.get();
 
+        // ─── PMP bütünlük doğrulama ───
+        #[cfg(not(kani))]
+        if !crate::kernel::memory::verify_pmp_integrity() {
+            crate::arch::uart::println("[PMP] INTEGRITY FAIL — SHUTDOWN");
+            crate::ipc::blackbox::log(
+                crate::ipc::blackbox::BlackboxEvent::PmpFail, 0xFF, &[],
+            );
+            shutdown_system();
+        }
+
         // ─── Faz 1: Periyot ilerletme (tüm task'lar) ───
         // Periyot dolarsa: bütçe sıfırla, SUSPENDED → READY
         let mut i: usize = 0;
@@ -206,11 +229,16 @@ pub(crate) fn schedule() {
             i += 1;
         }
 
-        // ─── Faz 1.5: Watchdog — tick artır, limit aşılırsa policy tetikle ───
+        // Degrade kurtarma kontrolü
+        #[cfg(not(kani))]
+        try_recover_from_degrade();
+
+        // ─── Faz 1.5: Watchdog + IPC rate reset ───
         let mut w: usize = 0;
         while w < *TASK_COUNT.get() {
             let st = TASKS.get_mut()[w].state;
             if st == TaskState::Running || st == TaskState::Ready {
+                TASKS.get_mut()[w].ipc_send_count = 0;
                 TASKS.get_mut()[w].watchdog_counter += 1;
                 if TASKS.get_mut()[w].watchdog_limit > 0
                     && TASKS.get_mut()[w].watchdog_counter >= TASKS.get_mut()[w].watchdog_limit
@@ -464,6 +492,7 @@ fn restart_task(id: usize) {
 fn degrade_system() {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
+        *DEGRADED.get_mut() = true;
         let mut i: usize = 0;
         while i < *TASK_COUNT.get() {
             if TASKS.get_mut()[i].dal >= 2
@@ -471,9 +500,56 @@ fn degrade_system() {
                 && TASKS.get_mut()[i].state != TaskState::Isolated
             {
                 TASKS.get_mut()[i].state = TaskState::Suspended;
+                // Bütçe yarılama — kurtarma sonrası dikkatli mod
+                TASKS.get_mut()[i].budget_cycles =
+                    TASKS.get_mut()[i].budget_cycles / 2;
             }
             i += 1;
         }
+    }
+}
+
+/// Degrade kurtarma — DAL-A/B sağlıklıysa DAL-C/D'yi orijinal bütçeyle yeniden başlat
+fn try_recover_from_degrade() {
+    // SAFETY: Single-hart.
+    unsafe {
+        if !*DEGRADED.get() { return; }
+        // DAL-A/B sağlıklı mı?
+        let mut all_healthy = true;
+        let mut i: usize = 0;
+        while i < *TASK_COUNT.get() {
+            if TASKS.get_mut()[i].dal < 2
+                && TASKS.get_mut()[i].state == TaskState::Isolated
+            {
+                all_healthy = false;
+            }
+            i += 1;
+        }
+        if !all_healthy { return; }
+        // DAL-C/D kurtarma
+        let mut j: usize = 0;
+        while j < *TASK_COUNT.get() {
+            if TASKS.get_mut()[j].dal >= 2
+                && TASKS.get_mut()[j].state == TaskState::Suspended
+            {
+                TASKS.get_mut()[j].budget_cycles =
+                    TASKS.get_mut()[j].original_budget;
+                TASKS.get_mut()[j].remaining_cycles =
+                    TASKS.get_mut()[j].budget_cycles;
+                TASKS.get_mut()[j].state = TaskState::Ready;
+                #[cfg(not(kani))]
+                crate::arch::uart::println(
+                    "[POLICY] RECOVER — DAL-C/D restarted (original budget)"
+                );
+            }
+            j += 1;
+        }
+        *DEGRADED.get_mut() = false;
+        *DEGRADE_LOGGED.get_mut() = false;
+        #[cfg(not(kani))]
+        crate::ipc::blackbox::log(
+            crate::ipc::blackbox::BlackboxEvent::KernelBoot, 0xFE, &[],
+        );
     }
 }
 
@@ -503,13 +579,65 @@ fn shutdown_system() -> ! {
 }
 
 /// Watchdog kick — task yield etti, canlılık kanıtı
-/// sys_yield'dan çağrılır
 pub(crate) fn watchdog_kick() {
     // SAFETY: Single-hart, called from syscall context.
     unsafe {
         let current = *CURRENT_TASK.get();
         if current < *TASK_COUNT.get() {
+            let counter = TASKS.get_mut()[current].watchdog_counter;
+            let window  = TASKS.get_mut()[current].watchdog_window_min;
+            // Windowed: kick çok erken → kontrol akışı bozuk
+            if window > 0 && counter < window {
+                #[cfg(not(kani))]
+                {
+                    crate::arch::uart::println("[WATCHDOG] WINDOW VIOLATION — kick too early");
+                    crate::ipc::blackbox::log(
+                        crate::ipc::blackbox::BlackboxEvent::WatchdogTimeout,
+                        TASKS.get_mut()[current].id, &[],
+                    );
+                }
+                let action = crate::kernel::policy::apply_policy(
+                    TASKS.get_mut()[current].id,
+                    crate::kernel::policy::PolicyEvent::WatchdogTimeout,
+                    TASKS.get_mut()[current].dal,
+                );
+                apply_action(current, action);
+            }
             TASKS.get_mut()[current].watchdog_counter = 0;
+        }
+    }
+}
+
+/// Syscall sayacı artır — anomali tespiti
+pub(crate) fn increment_syscall_count() {
+    unsafe {
+        let current = *CURRENT_TASK.get();
+        if current < *TASK_COUNT.get() {
+            TASKS.get_mut()[current].syscall_count =
+                TASKS.get_mut()[current].syscall_count.wrapping_add(1);
+        }
+    }
+}
+
+/// IPC send rate kontrolü — tick başına MAX_SENDS_PER_TICK
+pub(crate) fn check_ipc_rate() -> bool {
+    unsafe {
+        let current = *CURRENT_TASK.get();
+        if current < *TASK_COUNT.get() {
+            TASKS.get_mut()[current].ipc_send_count < MAX_SENDS_PER_TICK
+        } else {
+            false
+        }
+    }
+}
+
+/// IPC send sayacı artır
+pub(crate) fn increment_ipc_send() {
+    unsafe {
+        let current = *CURRENT_TASK.get();
+        if current < *TASK_COUNT.get() {
+            TASKS.get_mut()[current].ipc_send_count =
+                TASKS.get_mut()[current].ipc_send_count.wrapping_add(1);
         }
     }
 }

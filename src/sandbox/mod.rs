@@ -145,11 +145,11 @@ fn skip_instruction(code: &[u8], pos: usize) -> Option<usize> {
             if p < code.len() { Some(p + 1) } else { None }
         }
         // f32.const → 4 byte IEEE754
-        0x43 => Some(pos + 5),
+        0x43 => if pos + 5 <= code.len() { Some(pos + 5) } else { None },
         // f64.const → 8 byte IEEE754
-        0x44 => Some(pos + 9),
+        0x44 => if pos + 9 <= code.len() { Some(pos + 9) } else { None },
         // block/loop/if → blocktype (1 byte)
-        0x02..=0x04 => Some(pos + 2),
+        0x02..=0x04 => if pos + 2 <= code.len() { Some(pos + 2) } else { None },
         // br, br_if, call, local.get/set/tee, global.get/set, memory.size/grow → LEB128 index
         0x0C | 0x0D | 0x10 | 0x20..=0x24 | 0x3F | 0x40 => {
             let mut p = pos + 1;
@@ -586,6 +586,7 @@ mod verification {
 
     /// skip_instruction: zehirli byte ile buffer sınırını asla aşmaz
     #[kani::proof]
+    #[kani::unwind(20)]
     fn wasm_skip_instruction_never_exceeds_bounds() {
         let module_len: usize = kani::any();
         kani::assume(module_len >= 1 && module_len <= 16);

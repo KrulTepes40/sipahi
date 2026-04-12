@@ -98,24 +98,37 @@ pub fn current_offset() -> usize {
 mod verification {
     use super::*;
 
-    /// Bump allocator: iki ardışık blok asla örtüşmez
+    /// Bump allocator: iki ardışık blok asla örtüşmez (gerçek OOM mantığı)
     #[kani::proof]
     fn bump_allocator_offsets_never_overlap() {
         let offset1: usize = kani::any();
         let size1: usize = kani::any();
         let size2: usize = kani::any();
+        let align: usize = 8;
 
         kani::assume(size1 >= 1 && size1 <= 256);
         kani::assume(size2 >= 1 && size2 <= 256);
+        kani::assume(offset1 < WASM_HEAP_SIZE);
 
-        let aligned1 = (offset1 + 7) & !7;
-        let end1 = aligned1 + size1;
+        // Alloc 1: gerçek allocator mantığı
+        let aligned1 = (offset1 + align - 1) & !(align - 1);
+        if aligned1 >= WASM_HEAP_SIZE { return; }
+        let end1 = match aligned1.checked_add(size1) {
+            Some(v) => v,
+            None => return,
+        };
+        if end1 > WASM_HEAP_SIZE { return; }
 
-        let aligned2 = (end1 + 7) & !7;
-        let end2 = aligned2 + size2;
+        // Alloc 2
+        let aligned2 = (end1 + align - 1) & !(align - 1);
+        if aligned2 >= WASM_HEAP_SIZE { return; }
+        let end2 = match aligned2.checked_add(size2) {
+            Some(v) => v,
+            None => return,
+        };
+        if end2 > WASM_HEAP_SIZE { return; }
 
-        kani::assume(end2 <= WASM_HEAP_SIZE);
-
+        // İkisi de başarılıysa örtüşmemeli
         assert!(aligned2 >= end1);
     }
 }

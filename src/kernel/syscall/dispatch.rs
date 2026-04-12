@@ -46,6 +46,8 @@ pub const E_NO_CAPABILITY: usize = SyscallResult::NoCapability.to_raw();
 pub const E_IPC_FULL: usize = SyscallResult::IpcFull.to_raw();
 pub const E_IPC_EMPTY: usize = SyscallResult::IpcEmpty.to_raw();
 pub const E_INVALID_ARG: usize = SyscallResult::InvalidArg.to_raw();
+const E_RATE_LIMITED: usize = 7;
+const E_INTERNAL: usize = 8;
 
 // Linker-provided symbol — kernel memory end
 #[cfg(not(kani))]
@@ -190,11 +192,20 @@ pub fn dispatch(
         return E_INVALID_SYSCALL;
     }
 
+    #[cfg(not(kani))]
+    crate::kernel::scheduler::increment_syscall_count();
+
     let start = rdcycle();
     let handler = SYSCALL_TABLE[syscall_id];
     let result = handler(arg0, arg1, arg2, arg3);
     let end = rdcycle();
     wcet_update(syscall_id, end.wrapping_sub(start));
+
+    // Kernel pointer sızıntı koruması — kernel adresi U-mode'a dönmemeli
+    #[cfg(not(kani))]
+    if result >= crate::common::config::RAM_BASE && result < kernel_end_addr() {
+        return E_INTERNAL;
+    }
 
     result
 }
@@ -251,6 +262,12 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
 
     #[cfg(not(kani))]
     {
+        if !crate::kernel::scheduler::check_ipc_rate() {
+            uart::println("[SYS] ipc_send: rate limited");
+            return E_RATE_LIMITED;
+        }
+        crate::kernel::scheduler::increment_ipc_send();
+
         let ch = match crate::ipc::get_channel(channel_id) {
             Some(c) => c,
             None => return E_INVALID_ARG,
