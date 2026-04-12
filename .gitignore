@@ -19,3 +19,4 @@ Thumbs.db
 *.log
 core.*
 sipahi-src.tar.gz
+.claude/
