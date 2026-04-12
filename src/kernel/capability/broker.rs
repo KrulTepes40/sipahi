@@ -145,7 +145,9 @@ fn ct_eq_16(a: &[u8; 16], b: &[u8; 16]) -> bool {
         diff |= a[i] ^ b[i];
         i += 1;
     }
-    diff == 0
+    // LLVM'in döngüyü memcmp'ye optimize etmesini engelle
+    // black_box: değeri opaque yapar, derleyici analiz edemez
+    core::hint::black_box(diff) == 0
 }
 
 #[cfg(kani)]
