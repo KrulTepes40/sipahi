@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(///wsl.localhost/Ubuntu/home/gzhno/**)",
-      "Bash(cargo check:*)"
-    ]
-  }
-}
