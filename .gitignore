@@ -21,3 +21,5 @@ core.*
 sipahi-src.tar.gz
 .claude/
 .claude/
+Tla+/states/
+Tla+/*_TTrace_*.tla
