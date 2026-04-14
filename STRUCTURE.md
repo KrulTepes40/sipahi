@@ -66,18 +66,30 @@ sipahi/
 ├── README.md                    # Project overview
 ├── ARCHITECTURE.md              # Layer structure + security model
 ├── LICENSE                      # Apache-2.0
-
-    
+├── Tla+/                        # TLA+ formal specs (7 specs, 14 files)
+│   ├── SipahiPolicy.tla + .cfg
+│   ├── SipahiWatchdog.tla + .cfg
+│   ├── SipahiDegradeRecover.tla + .cfg
+│   ├── SipahiBudgetFairness.tla + .cfg
+│   ├── SipahiCapability.tla + .cfg
+│   ├── SipahiIPC.tla + .cfg
+│   └── SipahiScheduler.tla + .cfg
+└── docs/
+    ├── sipahi_v10_0.txt         # Architecture document
+    ├── sipahi_features_tr.md    # Technical features (Turkish)
+    └── sipahi_features_en.md    # Technical features (English)
 ```
 
 ## Stats
 
 | Metric | Value |
 |---|---|
-| Source lines (Rust + ASM) | ~7,350 |
+| Source lines (Rust + ASM) | ~7,380 |
 | `.rs` files | 39 |
 | `.S` files | 3 |
 | Kani proofs | 173 |
 | Compile-time asserts | 7 |
 | `static mut` count | 0 |
-| `unsafe` blocks | 92 (all documented with `// SAFETY:`) |
+| `unsafe` blocks | 93 (all documented with `// SAFETY:`) |
+| TLA+ specs | 7 (3 verified, 4 WIP) |
+| TLA+ lines | ~1,030 |

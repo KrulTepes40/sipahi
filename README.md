@@ -82,6 +82,7 @@ make kani           # Formal verification (requires Kani)
 | Panic-free kernel | enforced (`overflow-checks = true`, no `unwrap`) |
 | `static mut` | 0 (all via `SingleHartCell<T>`) |
 | U-mode task isolation | active (MPP=U, mret transition) |
+| TLA+ specs | 3/7 verified (IPC, Watchdog, Capability) |
 
 ---
 

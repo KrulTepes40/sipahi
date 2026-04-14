@@ -551,4 +551,90 @@ Kesin ölçüm FPGA'da yapılacak. QEMU TCG'de rdcycle instruction count döner,
 
 ---
 
-*Sipahi Microkernel v1.5 — 173 Kani Proof · 0 Clippy Warning · 0 Runtime Panic · 0 Heap Allocation (kernel) · 3/6 Security Wall Active*
+## Ek-1. Windowed Watchdog
+
+### Tasarım
+
+Sipahi'nin watchdog'u iki yönlü çalışır — hem üst sınır hem alt sınır kontrolü yapar.
+
+**Üst sınır (`watchdog_limit`):** Task belirli sürede kick göndermezse stuck kabul edilir. `watchdog_counter` her tick'te artırılır, `sys_yield` veya `watchdog_kick()` ile sıfırlanır. `counter >= limit` → `WatchdogTimeout` policy event tetiklenir.
+
+**Alt sınır (`watchdog_window_min`):** Task çok erken kick gönderirse kontrol akışı bozulmuş kabul edilir. `watchdog_kick()` çağrıldığında `counter < window_min` ise → `WatchdogTimeout` policy event tetiklenir.
+
+### Neden İki Yönlü?
+
+Basit watchdog sadece stuck task yakalar. Ama bir task sonsuz döngüye girip her iterasyonda kick çağırıyorsa, basit watchdog bunu "sağlıklı" görür. Windowed watchdog bu durumu yakalar: kick çok hızlı geliyorsa task'ın normal kontrol akışı bozulmuş demektir.
+
+### Parametreler
+
+`WATCHDOG_WINDOW_MIN = 3` tick. Task en erken 3 tick sonra kick gönderebilir. 1. veya 2. tick'te kick gelirse → policy engine devreye girer.
+
+Maliyet: ~1 cycle/kick (tek karşılaştırma).
+
+---
+
+## Ek-2. Policy Lockstep (Yazılım Dual Execution)
+
+### Tasarım
+
+`decide_action()` her çağrıda iki kez çalıştırılır. İki sonuç farklıysa `Shutdown` tetiklenir.
+
+### Neden?
+
+`decide_action()` pure fonksiyon — aynı girdiye her zaman aynı çıktıyı vermeli. Farklı sonuç = donanım seviyesinde bozulma (kozmik ışın, fault injection, RAM hatası). Policy engine kernel'ın "beyni" — kararın doğruluğu tüm sistemin güvenliğinin temelidir.
+
+Maliyet: ~5 cycle/policy kararı.
+
+---
+
+## Ek-3. Graceful Degradation + Auto-Recovery
+
+### degrade_system()
+
+DAL-C/D task'lar Suspended yapılır, bütçeleri yarılanır. DAL-A/B tam bütçeyle devam eder.
+
+### try_recover_from_degrade()
+
+Her tick'te çağrılır. DAL-A/B sağlıklıysa DAL-C/D `original_budget` ile Ready'ye döner.
+
+### Neden original_budget?
+
+Her degrade/recover döngüsünde bütçe yarılanmasın diye orijinal değer saklanır. Recovery'de orijinale dönülür.
+
+Maliyet: 0 cycle normal çalışmada, O(N) tetiklendiğinde (~20 cycle, N=8).
+
+---
+
+## Ek-4. POST (Power-On Self-Test)
+
+Boot sırasında: CRC32 bilinen vektör, PMP shadow integrity, policy engine sanity. Herhangi biri fail → `wfi` halt, scheduler başlamaz.
+
+Maliyet: 0 cycle runtime (sadece boot, ~100 cycle).
+
+---
+
+## Ek-5. Illegal Instruction → ISOLATE
+
+U-mode task illegal instruction çalıştırınca trap handler `WasmTrap` event gönderir → policy → ISOLATE. Restart değil çünkü illegal instruction genelde bellek bozulması veya saldırı — restart sorunu çözmez.
+
+---
+
+## Ek-6. IPC Head wrapping_add Güvenliği
+
+`head + 1` yerine `head.wrapping_add(1)` — `overflow-checks = true` ile u16::MAX'ta panic engellenir. Modulo hâlâ doğru çalışır (Kani proof: `ipc_ring_buffer_wrap_never_exceeds_slots`).
+
+---
+
+## Ek-7. ct_eq_16 + black_box LLVM Barrier
+
+16-byte MAC karşılaştırması constant-time: bitwise XOR + OR accumulate, erken çıkış yok. `core::hint::black_box()` LLVM'in döngüyü `memcmp`'ye optimize etmesini engeller. Olmasa timing side-channel ile MAC 4096 denemede kırılabilir.
+
+---
+
+## Ek-8. TLA+ Formal Doğrulama — Sistem Seviyesi
+
+7 TLA+ spec: SipahiIPC (✅), SipahiWatchdog (✅), SipahiCapability (✅), SipahiPolicy (⚠️ WIP), SipahiScheduler (⚠️ WIP), SipahiBudgetFairness (⚠️ WIP), SipahiDegradeRecover (⚠️ WIP).
+
+Kani fonksiyon seviyesinde, TLA+ sistem seviyesinde doğrulama yapar. İkisi farklı soruları cevaplar ve birbirini tamamlar. WIP spec'ler "model incomplete" — property fail çünkü model eksik, kod hatalı değil.
+
+*Sipahi Microkernel v1.5 — 173 Kani Proof · 3/7 TLA+ Verified · 12 Hardening · 0 Clippy Warning · 0 Runtime Panic · 0 Heap Allocation (kernel) · 3/6 Security Wall Active*

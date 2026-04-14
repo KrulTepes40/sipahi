@@ -72,15 +72,11 @@ SECTIONS {
     _end = .;
 
     /* ═══════════════════════════════════════════════════════════ */
-    /* Sprint'lerde eklenecek bölgeler:                           */
-    /*                                                             */
-    /* Sprint 8:  IPC pool (8KB)                                  */
-    /*   __ipc_pool_start / __ipc_pool_end                        */
-    /*                                                             */
-    /* Sprint 11: Blackbox (8KB)                                  */
-    /*   __blackbox_start / __blackbox_end                        */
-    /*                                                             */
-    /* Sprint 12: WASM heap (64KB)                                */
-    /*   __wasm_heap_start / __wasm_heap_end                      */
+    /* Mevcut BSS içi statik tahsisler:                            */
+    /*   IPC: 8 × SpscChannel (statik, BSS'te)                    */
+    /*   Blackbox: 128 × 64B = 8KB (SingleHartCell, BSS'te)       */
+    /*   WASM Arena: 4MB bump allocator (SingleHartCell, BSS'te)   */
+    /*   Task Stacks: 8 × 8KB = 64KB (SingleHartCell, BSS'te)     */
+    /* Tümü .bss section'da, ayrı linker bölgesi gerekmez.        */
     /* ═══════════════════════════════════════════════════════════ */
 }

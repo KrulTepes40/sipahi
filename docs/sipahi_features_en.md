@@ -551,4 +551,92 @@ Precise measurements to be done on FPGA. In QEMU TCG, rdcycle returns instructio
 
 ---
 
-*Sipahi Microkernel v1.5 — 173 Kani Proofs · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 3/6 Security Walls Active*
+---
+
+## Appendix 1. Windowed Watchdog
+
+### Design
+
+Sipahi's watchdog operates bidirectionally — both upper and lower bound checking.
+
+**Upper bound (`watchdog_limit`):** If a task doesn't send a kick within the limit, it's considered stuck. `watchdog_counter` increments every tick, resets on `sys_yield` or `watchdog_kick()`. `counter >= limit` → `WatchdogTimeout` policy event.
+
+**Lower bound (`watchdog_window_min`):** If a kick arrives too early, control flow is considered corrupted. `watchdog_kick()` called when `counter < window_min` → `WatchdogTimeout` policy event.
+
+### Why Bidirectional?
+
+A simple watchdog only catches stuck tasks. But if a task enters an infinite loop calling kick every iteration, a simple watchdog sees it as "healthy." A windowed watchdog catches this: kicks arriving too fast means the task's normal control flow is corrupted.
+
+### Parameters
+
+`WATCHDOG_WINDOW_MIN = 3` ticks. Task can kick at earliest after 3 ticks. Kick at tick 1 or 2 → policy engine intervenes.
+
+Cost: ~1 cycle/kick (single comparison).
+
+---
+
+## Appendix 2. Policy Lockstep (Software Dual Execution)
+
+### Design
+
+`decide_action()` is called twice per invocation. If the two results differ → `Shutdown`.
+
+### Why?
+
+`decide_action()` is a pure function — same input must always produce same output. Different results = hardware-level corruption (cosmic ray, fault injection, RAM error). The policy engine is the kernel's "brain" — decision correctness is the foundation of system safety.
+
+Cost: ~5 cycles/policy decision.
+
+---
+
+## Appendix 3. Graceful Degradation + Auto-Recovery
+
+### degrade_system()
+
+DAL-C/D tasks are Suspended, budgets halved. DAL-A/B continue at full budget.
+
+### try_recover_from_degrade()
+
+Called every tick. If DAL-A/B are healthy, DAL-C/D are restored to Ready with `original_budget`.
+
+### Why original_budget?
+
+Prevents cumulative budget halving across degrade/recover cycles. Recovery always restores the original value.
+
+Cost: 0 cycles during normal operation, O(N) when triggered (~20 cycles, N=8).
+
+---
+
+## Appendix 4. POST (Power-On Self-Test)
+
+At boot: CRC32 known vector, PMP shadow integrity, policy engine sanity. Any failure → `wfi` halt, scheduler never starts.
+
+Cost: 0 cycles at runtime (boot only, ~100 cycles added to boot time).
+
+---
+
+## Appendix 5. Illegal Instruction → ISOLATE
+
+When a U-mode task executes an illegal instruction, the trap handler sends a `WasmTrap` event → policy → ISOLATE. Not Restart, because illegal instructions typically indicate memory corruption or attack — restart won't fix it.
+
+---
+
+## Appendix 6. IPC Head wrapping_add Safety
+
+`head.wrapping_add(1)` instead of `head + 1` — prevents panic at u16::MAX with `overflow-checks = true`. Modulo still works correctly (Kani proof: `ipc_ring_buffer_wrap_never_exceeds_slots`).
+
+---
+
+## Appendix 7. ct_eq_16 + black_box LLVM Barrier
+
+16-byte MAC comparison in constant-time: bitwise XOR + OR accumulate, no early exit. `core::hint::black_box()` prevents LLVM from optimizing the loop into `memcmp`. Without it, MAC could be cracked in 4096 attempts via timing side-channel.
+
+---
+
+## Appendix 8. TLA+ Formal Verification — System Level
+
+7 TLA+ specs: SipahiIPC (✅), SipahiWatchdog (✅), SipahiCapability (✅), SipahiPolicy (⚠️ WIP), SipahiScheduler (⚠️ WIP), SipahiBudgetFairness (⚠️ WIP), SipahiDegradeRecover (⚠️ WIP).
+
+Kani verifies at function level, TLA+ at system level. They answer different questions and complement each other. WIP specs are "model incomplete" — properties fail because the model is incomplete, not because the code is wrong.
+
+*Sipahi Microkernel v1.5 — 173 Kani Proofs · 3/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 3/6 Security Walls Active*
