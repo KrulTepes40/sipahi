@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Technical Feature Document
 
 **Version:** v1.5 · **Architecture:** RISC-V RV64IMAC · **Language:** Rust no_std  
-**Total:** ~7,200 lines · 42 source files · 173 Kani proofs  
+**Total:** ~7,380 lines · 42 source files · 173 Kani proofs  
 **Philosophy:** Maximum speed while preserving determinism. Zero heap, zero panic, zero float.
 
 ---
@@ -261,7 +261,7 @@ CRC32 detects partially written records. Power cut → record incomplete → CRC
 
 ### 9.4 Event Types
 
-KernelBoot, PolicyRestart, PolicyDegrade, PolicyIsolate, PolicyFailover, PolicyShutdown, PmpFault, WatchdogTimeout, BlackboxFull. A gold mine for post-mortem analysis.
+14 event types: KernelBoot (0), TaskStart (1), TaskSuspend (2), TaskRestart (3), BudgetExhausted (4), PolicyIsolate (5), PolicyDegrade (6), PolicyFailover (7), PolicyShutdown (8), CapViolation (9), IopmpViolation (10), DeadlineMiss (11), WatchdogTimeout (12), PmpFail (13). Golden mine for post-mortem analysis.
 
 ---
 
@@ -342,15 +342,16 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 | Module | Proofs | Coverage |
 |--------|--------|----------|
 | verify.rs (global) | 53 | DAL, PMP, memory, cross-module invariants |
-| sandbox | 20 | LEB128, float scanning, bounds safety, allocator |
+| sandbox (mod+allocator) | 19+1 | LEB128, float scanning, bounds safety, allocator overlap |
 | dispatch | 18 | Syscall table, pointer rejection, dispatch fuzzing |
 | scheduler | 17 | Selection correctness, Isolated/Dead never selected, watchdog, priority |
-| ipc | 15 | CRC roundtrip, channel bounds, SPSC no-overwrite, ring buffer wrap |
+| ipc | 15 | CRC roundtrip, channel bounds, ring buffer wrap |
 | policy | 14 | Escalation chains, PMP→Shutdown, livelock freedom |
-| capability | 16 | Token encoding, cache hit/miss/invalidation, nonce replay |
+| capability (mod+broker) | 14+2 | Token encoding, cache, invalidation, nonce, ct_eq_16 |
 | blackbox | 14 | Record layout, CRC, wrap, tick monotonicity |
 | crypto | 2 | BLAKE3 determinism |
-| hal | 4 | IOPMP, secure boot, key |
+| hal (iopmp+key+boot) | 2+1+1 | IOPMP boundary, key size, secure boot |
+| **Total** | **173** | |
 
 ### 15.2 High-Value Proofs
 
@@ -492,7 +493,7 @@ All fields are statically allocated — no heap. `Task::empty()` provides zeroed
 | 5 | M-mode PMP | ✅ Complete | Kernel in M-mode, tasks in U-mode, separation is real |
 | 6 | Physical | ❌ None | JTAG/OTP/tamper — FPGA+production level |
 
-3/6 walls completed at the software level. Remaining: 2 hardware, 1 production level.
+4/6 walls completed at software level. Remaining: 1 hardware (IOPMP), 1 manufacturing (physical).
 
 ---
 
@@ -639,4 +640,4 @@ When a U-mode task executes an illegal instruction, the trap handler sends a `Wa
 
 Kani verifies at function level, TLA+ at system level. They answer different questions and complement each other. WIP specs are "model incomplete" — properties fail because the model is incomplete, not because the code is wrong.
 
-*Sipahi Microkernel v1.5 — 173 Kani Proofs · 3/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 3/6 Security Walls Active*
+*Sipahi Microkernel v1.5 — 173 Kani Proofs · 3/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 4/6 Security Walls Active*
