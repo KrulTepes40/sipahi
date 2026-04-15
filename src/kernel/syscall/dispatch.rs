@@ -360,12 +360,12 @@ fn sys_yield(_: usize, _: usize, _: usize, _: usize) -> usize {
 /// task_info — gerçek task bilgisi sorgula
 /// arg0 = task_id
 /// Dönüş: (state << 8) | (priority << 4) | dal, geçersiz id → 0
-fn sys_task_info(task_id: usize, _: usize, _: usize, _: usize) -> usize {
+fn sys_task_info(_task_id: usize, _: usize, _: usize, _: usize) -> usize {
     #[cfg(not(kani))]
     {
-        let info = crate::kernel::scheduler::query_task_info(task_id);
+        let info = crate::kernel::scheduler::query_task_info(_task_id);
         uart::puts("[SYS] task_info(id=");
-        print_u64(task_id as u64);
+        print_u64(_task_id as u64);
         uart::puts(") -> ");
         print_u64(info as u64);
         uart::println("");

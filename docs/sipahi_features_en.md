@@ -68,6 +68,12 @@ At boot, PMP register values are saved to the `PMP_SHADOW` static. Every schedul
 
 **Why shadow register?** PMP registers can be corrupted through hardware fault injection (glitching, laser). Shadow comparison detects this attack at the software level.
 
+### 3.3 Per-Task PMP (NAPOT)
+
+Task stacks are protected via PMP entry 8. NAPOT mode is used — 8KB = 2^13 is a power-of-2, requiring only one entry. On every context switch, entry 8 is reprogrammed to the new task's stack region. Config: R+W, X=0 (W^X), L=0 (unlocked — changes on switch).
+
+NAPOT task stack protection has been tested on QEMU virt machine. QEMU PMP granularity parameter (G) is platform-dependent. CVA6 target expects G=0 (4-byte granularity). On different hardware, G may affect the NAPOT minimum region size — to be verified during FPGA validation.
+
 ---
 
 ## 4. Scheduler
@@ -158,7 +164,7 @@ Inside `sys_cap_invoke`: `cap > u8::MAX`, `resource > u16::MAX`, `action > u8::M
 
 Token integrity is protected by BLAKE3 keyed hash. A 32-byte key is written once at boot via `provision_key()`. `validate_full()` computes a 16-byte MAC from the token header and compares it with the token's MAC using constant-time comparison.
 
-**Why BLAKE3, not HMAC-SHA256?** BLAKE3 is Rust-native, `no_std` compatible, ~350 cycles (3-5x faster than SHA-256). Deterministic, timing side-channel protected.
+**Why BLAKE3, not HMAC-SHA256?** BLAKE3 is Rust-native, `no_std` compatible, ~350 cycles (3-5x faster than SHA-256). Deterministic, timing side-channel protected. BLAKE3 uses the portable backend (SIMD optimization disabled, `default-features = false`). This ensures platform-independent deterministic execution.
 
 ### 6.3 4-Slot Constant-Time Cache
 

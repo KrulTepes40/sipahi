@@ -68,6 +68,12 @@ Boot'ta PMP register değerleri `PMP_SHADOW` static'ine kaydedilir. Her schedule
 
 **Neden shadow register?** Donanım fault injection (glitching, laser) ile PMP register'ları bozulabilir. Shadow karşılaştırması bu saldırıyı yazılım seviyesinde tespit eder.
 
+### 3.3 Per-Task PMP (NAPOT)
+
+Task stack'leri PMP entry 8 ile korunur. NAPOT modu kullanılır — 8KB = 2^13 power-of-2, tek entry yeterli. Her context switch'te entry 8 yeni task'ın stack bölgesine programlanır. Config: R+W, X=0 (W^X), L=0 (kilitlenmez — switch'te değişir).
+
+NAPOT task stack koruması QEMU virt machine'de test edilmiştir. QEMU PMP granularity parametresi (G) platform bağımlıdır. CVA6 hedefinde G=0 (4-byte granularity) beklenir. Farklı donanımda G değeri NAPOT minimum bölge boyutunu etkileyebilir — FPGA doğrulaması sırasında kontrol edilmelidir.
+
 ---
 
 ## 4. Scheduler
@@ -158,7 +164,7 @@ Syscall handler dönüş değeri kernel adres aralığındaysa (`RAM_BASE..kerne
 
 Token bütünlüğü BLAKE3 keyed hash ile korunur. 32-byte key boot'ta `provision_key()` ile bir kez yazılır. `validate_full()` token header'ından 16-byte MAC hesaplar, token'daki MAC ile constant-time karşılaştırır.
 
-**Neden BLAKE3, neden HMAC-SHA256 değil?** BLAKE3 Rust-native, `no_std` uyumlu, ~350 cycle (SHA-256'dan 3-5x hızlı). Deterministik, timing side-channel korumalı.
+**Neden BLAKE3, neden HMAC-SHA256 değil?** BLAKE3 Rust-native, `no_std` uyumlu, ~350 cycle (SHA-256'dan 3-5x hızlı). Deterministik, timing side-channel korumalı. BLAKE3 portable backend kullanılır (SIMD optimizasyon devre dışı, `default-features = false`). Bu, platform bağımsız deterministic execution sağlar.
 
 ### 6.3 4-Slot Constant-Time Cache
 

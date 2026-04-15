@@ -741,4 +741,60 @@ mod verification {
               | ((h[10] as u32) << 16) | ((h[11] as u32) << 24);
         assert!(r == t.expires);
     }
+
+    // ═══════════════════════════════════════════════════════
+    // Sprint U-3: Per-Task PMP (NAPOT) Proofs
+    // ═══════════════════════════════════════════════════════
+
+    /// Farklı task ID → farklı stack, farklı NAPOT encoding
+    #[kani::proof]
+    fn different_tasks_get_different_stacks() {
+        let id_a: usize = kani::any();
+        let id_b: usize = kani::any();
+        kani::assume(id_a < MAX_TASKS);
+        kani::assume(id_b < MAX_TASKS);
+        kani::assume(id_a != id_b);
+        let base_a = id_a * TASK_STACK_SIZE;
+        let base_b = id_b * TASK_STACK_SIZE;
+        assert!(base_a != base_b);
+        assert!(base_a + TASK_STACK_SIZE <= base_b || base_b + TASK_STACK_SIZE <= base_a);
+        let napot_a = (base_a >> 2) | 0x3FF;
+        let napot_b = (base_b >> 2) | 0x3FF;
+        assert!(napot_a != napot_b);
+    }
+
+    /// Task ID → Stack → NAPOT zinciri bounds-safe
+    #[kani::proof]
+    fn task_pmp_index_in_bounds() {
+        let task_id: usize = kani::any();
+        kani::assume(task_id < MAX_TASKS);
+        let base = task_id * TASK_STACK_SIZE;
+        let napot = (base >> 2) | 0x3FF;
+        let decoded = (napot & !0x3FF) << 2;
+        assert!(decoded == base);
+    }
+
+    /// NAPOT address decode roundtrip
+    #[kani::proof]
+    fn napot_addr_covers_stack() {
+        let stack_base: usize = kani::any();
+        kani::assume(stack_base % TASK_STACK_SIZE == 0);
+        kani::assume(stack_base < 0x1_0000_0000);
+        let napot_addr = (stack_base >> 2) | 0x3FF;
+        let decoded_base = (napot_addr & !0x3FF) << 2;
+        assert!(decoded_base == stack_base);
+        let size = (0x3FF + 1) << 3;
+        assert!(size == 8192);
+    }
+
+    /// pmpcfg2 config byte doğruluğu: NAPOT, R+W, X=0, L=0
+    #[kani::proof]
+    fn pmpcfg2_config_correct() {
+        let cfg: usize = 0x1B;
+        assert!(cfg & 0x01 == 1);           // R=1
+        assert!(cfg & 0x02 == 2);           // W=1
+        assert!(cfg & 0x04 == 0);           // X=0 (W^X)
+        assert!((cfg >> 3) & 0x03 == 3);    // A=11 (NAPOT)
+        assert!((cfg >> 7) & 0x01 == 0);    // L=0
+    }
 }

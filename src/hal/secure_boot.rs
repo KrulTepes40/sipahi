@@ -25,7 +25,9 @@ compile_error!("Either fast-sign or cnsa-sign feature must be enabled");
 // Kani Proof 67: verify() bool döner, panik YOK (Kani stub ile kanıtlanır)
 // Kani Proof 68: OTP_KEY_SIZE + SIGNATURE_SIZE ilişkisi tutarlı (R+S = 2×key)
 
+#[allow(unused_imports)]
 use crate::common::crypto::provider::SignatureVerifier;
+#[allow(unused_imports)]
 use crate::hal::key::{OTP_KEY_SIZE, SIGNATURE_SIZE};
 
 /// Ed25519 imza doğrulama provider'ı

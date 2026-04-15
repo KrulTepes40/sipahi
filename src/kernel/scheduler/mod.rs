@@ -79,6 +79,7 @@ pub struct Task {
     pub ipc_send_count:   u32,           // Rate limiter — tick'te sıfırlanır
     pub watchdog_window_min: u32,        // Windowed: kick bu tick'ten önce gelirse hata
     pub original_budget:     u32,        // Degrade öncesi orijinal bütçe (kurtarma için)
+    pub pmp_addr_napot:      usize,      // NAPOT-encoded PMP address (entry 8)
 }
 
 impl Task {
@@ -101,6 +102,7 @@ impl Task {
             ipc_send_count:   0,
             watchdog_window_min: 0,
             original_budget:     0,
+            pmp_addr_napot:      0,
         }
     }
 }
@@ -109,11 +111,17 @@ impl Task {
 // Statik alanlar
 // ═══════════════════════════════════════════════════════
 
-/// Task stack'leri — statik, heap yok
-static TASK_STACKS: SingleHartCell<[[u8; TASK_STACK_SIZE]; MAX_TASKS]> = SingleHartCell::new([[0u8; TASK_STACK_SIZE]; MAX_TASKS]);
+/// 8KB-aligned stack — NAPOT PMP için compile-time alignment garantisi
+#[repr(align(8192))]
+pub(crate) struct AlignedStack(pub(crate) [u8; TASK_STACK_SIZE]);
+
+/// Task stack'leri — statik, heap yok, 8KB aligned (NAPOT uyumlu)
+pub(crate) static TASK_STACKS: SingleHartCell<[AlignedStack; MAX_TASKS]> = SingleHartCell::new(
+    [const { AlignedStack([0u8; TASK_STACK_SIZE]) }; MAX_TASKS]
+);
 
 /// Task dizisi — statik
-static TASKS: SingleHartCell<[Task; MAX_TASKS]> = SingleHartCell::new([
+pub(crate) static TASKS: SingleHartCell<[Task; MAX_TASKS]> = SingleHartCell::new([
     Task::empty(), Task::empty(), Task::empty(), Task::empty(),
     Task::empty(), Task::empty(), Task::empty(), Task::empty(),
 ]);
@@ -147,9 +155,10 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
     if count >= MAX_TASKS { return None; }
 
     // SAFETY: count < MAX_TASKS — index in bounds.
-    let stack_top = unsafe {
-        TASK_STACKS.get_mut()[count].as_ptr() as usize + TASK_STACK_SIZE
+    let stack_base = unsafe {
+        &TASK_STACKS.get()[count].0 as *const _ as usize
     };
+    let stack_top = stack_base + TASK_STACK_SIZE;
     let stack_top_aligned = stack_top & !0xF; // safe arithmetic
 
     // SAFETY: Single-hart, count < MAX_TASKS.
@@ -179,6 +188,8 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
         t.watchdog_limit       = WATCHDOG_LIMIT;
         t.watchdog_window_min  = WATCHDOG_WINDOW_MIN;
         t.original_budget      = cfg.budget_cycles;
+        // NAPOT PMP: 8KB stack bölgesini entry 8'e encode et
+        t.pmp_addr_napot       = (stack_base >> 2) | 0x3FF;
 
         *TASK_COUNT.get_mut() += 1;
     }
@@ -317,6 +328,22 @@ pub(crate) fn schedule() {
         TASKS.get_mut()[next].state = TaskState::Running;
         *CURRENT_TASK.get_mut()     = next;
 
+        // PMP entry 8: yeni task'ın stack bölgesini NAPOT ile koru
+        #[cfg(not(kani))]
+        {
+            let napot_addr = TASKS.get()[next].pmp_addr_napot;
+            // 1. pmpcfg2 sıfırla — deny-by-default penceresi
+            core::arch::asm!("csrw pmpcfg2, zero");
+            // 2. NAPOT adresini yaz (zaten >> 2 encoded, çift shift yok)
+            core::arch::asm!("csrw pmpaddr8, {}", in(reg) napot_addr);
+            // 3. pmpcfg2 config: NAPOT, R+W, X=0 (W^X), L=0
+            let pmpcfg2_val: usize = 0x1B;
+            core::arch::asm!("csrw pmpcfg2, {}", in(reg) pmpcfg2_val);
+            // Shadow güncelle
+            *crate::kernel::memory::PMP_SHADOW_ADDR8.get_mut() = napot_addr;
+            *crate::kernel::memory::PMP_SHADOW_CFG2.get_mut() = pmpcfg2_val;
+        }
+
         let old_ctx = &mut TASKS.get_mut()[old].context as *mut TaskContext;
         let new_ctx = &TASKS.get_mut()[next].context    as *const TaskContext;
         switch_context(old_ctx, new_ctx);
@@ -360,6 +387,18 @@ pub(crate) fn start_first_task() -> ! {
 
         TASKS.get_mut()[0].state = TaskState::Running;
         *CURRENT_TASK.get_mut()  = 0;
+
+        // PMP entry 8: ilk task'ın stack bölgesi
+        let napot_addr = TASKS.get()[0].pmp_addr_napot;
+        core::arch::asm!("csrw pmpcfg2, zero");
+        core::arch::asm!("csrw pmpaddr8, {}", in(reg) napot_addr);
+        let pmpcfg2_val: usize = 0x1B;
+        core::arch::asm!("csrw pmpcfg2, {}", in(reg) pmpcfg2_val);
+        #[cfg(not(kani))]
+        {
+            *crate::kernel::memory::PMP_SHADOW_ADDR8.get_mut() = napot_addr;
+            *crate::kernel::memory::PMP_SHADOW_CFG2.get_mut() = pmpcfg2_val;
+        }
 
         let ctx     = &TASKS.get_mut()[0].context;
         let entry   = ctx.mepc;     // task entry point

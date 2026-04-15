@@ -80,6 +80,24 @@ pub fn read_pmpcfg0() -> u64 {
     val
 }
 
+/// pmpcfg2 oku (task PMP, entry 8-15)
+#[cfg(not(kani))]
+pub fn read_pmpcfg2() -> usize {
+    let val: usize;
+    // SAFETY: CSR read in M-mode — always accessible.
+    unsafe { asm!("csrr {}, pmpcfg2", out(reg) val); }
+    val
+}
+
+/// pmpaddr8 oku (task stack NAPOT)
+#[cfg(not(kani))]
+pub fn read_pmpaddr8() -> usize {
+    let val: usize;
+    // SAFETY: CSR read in M-mode — always accessible.
+    unsafe { asm!("csrr {}, pmpaddr8", out(reg) val); }
+    val
+}
+
 // ═══════════════════════════════════════════════════════
 // Yardımcı: Config byte oluştur
 // ═══════════════════════════════════════════════════════

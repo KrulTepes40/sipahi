@@ -449,9 +449,42 @@ pub fn post() {
     arch::uart::println("[POST] ★ All self-tests PASSED ★");
 }
 
+/// Per-task PMP NAPOT testi
+pub fn test_pmp_napot() {
+    arch::uart::println("[TEST] Per-task PMP NAPOT...");
+
+    // Task A (id=0) oluşturulmuş — pmp_addr_napot kontrol
+    let napot = unsafe { kernel::scheduler::TASKS.get()[0].pmp_addr_napot };
+    if napot == 0 {
+        arch::uart::println("[TEST] PMP NAPOT: pmp_addr_napot = 0 FAIL ✗");
+        return;
+    }
+    arch::uart::println("[TEST] PMP NAPOT: addr nonzero ✓");
+
+    // Stack base 8KB aligned?
+    let decoded_base = (napot & !0x3FF) << 2;
+    if decoded_base % 8192 != 0 {
+        arch::uart::println("[TEST] PMP NAPOT: stack not 8KB aligned FAIL ✗");
+        return;
+    }
+    arch::uart::println("[TEST] PMP NAPOT: 8KB aligned ✓");
+
+    // NAPOT decode == stack base?
+    let stack_base = unsafe {
+        &kernel::scheduler::TASK_STACKS.get()[0].0 as *const _ as usize
+    };
+    if decoded_base != stack_base {
+        arch::uart::println("[TEST] PMP NAPOT: decode mismatch FAIL ✗");
+        return;
+    }
+    arch::uart::println("[TEST] PMP NAPOT: decode matches stack base ✓");
+    arch::uart::println("[TEST] ★ PMP NAPOT OK ★");
+}
+
 /// Tüm entegrasyon testlerini çalıştır
 pub fn run_all() {
     post();
+    test_pmp_napot();
     test_policy_engine();
     test_capability_broker();
     test_ipc();

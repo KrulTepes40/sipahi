@@ -28,6 +28,10 @@ use crate::common::sync::SingleHartCell;
 
 static PMP_SHADOW: SingleHartCell<u64> = SingleHartCell::new(0);
 
+/// PMP entry 8 shadow — per-task NAPOT stack region
+pub(crate) static PMP_SHADOW_ADDR8: SingleHartCell<usize> = SingleHartCell::new(0);
+pub(crate) static PMP_SHADOW_CFG2: SingleHartCell<usize> = SingleHartCell::new(0);
+
 // Linker script'ten gelen semboller
 extern "C" {
     static __text_start: u8;
@@ -139,5 +143,11 @@ use crate::common::fmt::print_hex;
 pub(crate) fn verify_pmp_integrity() -> bool {
     let current = pmp::read_pmpcfg0();
     let shadow = unsafe { *PMP_SHADOW.get() };
-    current == shadow
+    if current != shadow { return false; }
+    // Task PMP shadow (entry 8)
+    let cfg2 = pmp::read_pmpcfg2();
+    let addr8 = pmp::read_pmpaddr8();
+    let shadow_cfg2 = unsafe { *PMP_SHADOW_CFG2.get() };
+    let shadow_addr8 = unsafe { *PMP_SHADOW_ADDR8.get() };
+    cfg2 == shadow_cfg2 && addr8 == shadow_addr8
 }

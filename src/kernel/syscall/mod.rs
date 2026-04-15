@@ -12,6 +12,7 @@
 pub mod dispatch;
 
 // Re-export — trap.rs ve test'ler kullanır
+#[allow(unused_imports)]
 pub use dispatch::dispatch;
 #[allow(unused_imports)]
 pub use dispatch::{

@@ -97,6 +97,7 @@ use common::fmt::{print_u32, print_hex};
 #[cfg(not(kani))]
 const _: () = { let _ = print_hex as fn(usize); };
 
+#[cfg(not(kani))]
 use core::panic::PanicInfo;
 
 #[cfg(not(kani))]

@@ -3,6 +3,9 @@
 
 use core::cell::UnsafeCell;
 
+#[cfg(feature = "multi-hart")]
+compile_error!("SingleHartCell multi-hart ile uyumsuz — Mutex<T> kullanın");
+
 /// Single-hart exclusive access wrapper — zero-cost.
 ///
 /// SAFETY CONTRACT:

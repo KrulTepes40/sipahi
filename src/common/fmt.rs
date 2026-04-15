@@ -4,6 +4,7 @@
 //
 // Kural: Kani derlemesinde derlenmez (uart erişimi yok)
 
+#[cfg(not(kani))]
 use crate::arch::uart;
 
 /// Ondalık u32 yazdır
