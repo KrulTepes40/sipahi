@@ -58,6 +58,16 @@ pub fn read_mhartid() -> usize {
     val
 }
 
+/// mtval oku — fault adresi (exception sırasında)
+#[cfg(not(kani))]
+#[inline(always)]
+pub fn read_mtval() -> usize {
+    let val: usize;
+    // SAFETY: CSR read in M-mode — always accessible.
+    unsafe { asm!("csrr {}, mtval", out(reg) val); }
+    val
+}
+
 // ═══════════════════════════════════════════════════════
 // CSR Yazma
 // ═══════════════════════════════════════════════════════

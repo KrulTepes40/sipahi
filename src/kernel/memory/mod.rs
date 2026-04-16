@@ -18,9 +18,10 @@
 //   U-mode → erişim REDDEDİLİR (Sprint 7'de otomatik koruma)
 //   Yani U-mode'da ayrı catch-all entry gerekmez.
 //
-// NOT: Task stack'leri şu an PMP ile korunmuyor.
-// Sprint 7'de U-mode + task-bazlı PMP eklenecek:
-//   Context switch'te PMP entry'leri aktif task'a göre değiştirilecek.
+// Sprint U-5: Task stacks ve WASM arena Entry 5 dışına taşındı.
+// Entry 5 = [data_start, __pmp_data_end) — .data + .bss + kernel_stack
+// Task stacks: .task_stacks section, per-task NAPOT Entry 8
+// WASM arena: .wasm_arena section, M-mode only (U-mode deny)
 
 use crate::arch::pmp;
 use crate::arch::uart;
@@ -46,6 +47,12 @@ extern "C" {
     static __stack_top: u8;
     /// _end: data + bss + stack sonrası — PMP RW TOR üst sınırı
     static _end: u8;
+    /// __pmp_data_end: PMP Entry 5 TOR üst sınırı (task stacks ve WASM arena dışarıda)
+    static __pmp_data_end: u8;
+    /// __task_stacks_start: task stacks bölgesinin başlangıcı
+    static __task_stacks_start: u8;
+    /// __task_stacks_end: task stacks bölgesinin sonu
+    static __task_stacks_end: u8;
 }
 
 /// PMP bölgelerini ayarla
@@ -56,7 +63,7 @@ pub(crate) fn init_pmp() {
     let rodata_start = unsafe { &__rodata_start as *const u8 as usize };
     let rodata_end = unsafe { &__rodata_end as *const u8 as usize };
     let data_start = unsafe { &__data_start as *const u8 as usize };
-    let end        = unsafe { &_end as *const u8 as usize };
+    let pmp_data_end = unsafe { &__pmp_data_end as *const u8 as usize };
 
     use crate::common::config;
     let uart_start = config::UART_BASE;
@@ -64,14 +71,17 @@ pub(crate) fn init_pmp() {
 
     // ─── PMP Adres Register'ları (linker script sırasıyla) ───
     //
-    // Bellek düzeni: .text → .rodata → .data → .bss → stack
+    // Bellek düzeni: .text → .rodata → .data → .bss → kernel_stack
+    //   → __pmp_data_end (Entry 5 TOR sınırı)
+    //   → .task_stacks (per-task NAPOT Entry 8)
+    //   → .wasm_arena (M-mode only, U-mode deny)
     //
     //   pmpaddr0 = text_start    (Entry 0: OFF, alt sınır)
     //   pmpaddr1 = text_end      (Entry 1: TOR RX)  → .text
     //   pmpaddr2 = rodata_start  (Entry 2: OFF, alt sınır)
     //   pmpaddr3 = rodata_end    (Entry 3: TOR R)   → .rodata
     //   pmpaddr4 = data_start    (Entry 4: OFF, alt sınır)
-    //   pmpaddr5 = stack_top     (Entry 5: TOR RW)  → .data+bss+stack
+    //   pmpaddr5 = pmp_data_end  (Entry 5: TOR RW)  → .data+bss+kernel_stack
     //   pmpaddr6 = uart_start    (Entry 6: OFF, alt sınır)
     //   pmpaddr7 = uart_end      (Entry 7: TOR RW)  → UART MMIO
 
@@ -80,7 +90,7 @@ pub(crate) fn init_pmp() {
     pmp::write_pmpaddr(2, rodata_start);
     pmp::write_pmpaddr(3, rodata_end);
     pmp::write_pmpaddr(4, data_start);
-    pmp::write_pmpaddr(5, end);
+    pmp::write_pmpaddr(5, pmp_data_end);
     pmp::write_pmpaddr(6, uart_start);
     pmp::write_pmpaddr(7, uart_end);
 
@@ -112,7 +122,7 @@ pub(crate) fn init_pmp() {
         addrs[2] = rodata_start >> 2;
         addrs[3] = rodata_end >> 2;
         addrs[4] = data_start >> 2;
-        addrs[5] = end >> 2;
+        addrs[5] = pmp_data_end >> 2;
         addrs[6] = uart_start >> 2;
         addrs[7] = uart_end >> 2;
     }
@@ -135,7 +145,7 @@ pub(crate) fn init_pmp() {
     uart::puts("[PMP]   .data    RW  0x");
     print_hex(data_start);
     uart::puts(" - 0x");
-    print_hex(end);
+    print_hex(pmp_data_end);
     uart::println("");
 
     uart::puts("[PMP]   UART     RW  0x");
@@ -148,7 +158,8 @@ pub(crate) fn init_pmp() {
     print_hex(pmp::read_pmpcfg0() as usize);
     uart::println("");
     uart::println("[PMP]   Catch-all: U-mode implicit DENY (RISC-V spec)");
-    uart::println("[PMP]   Task stack PMP: Sprint 7 (U-mode + context switch)");
+    uart::println("[PMP]   Task stacks: .task_stacks, per-task NAPOT Entry 8");
+    uart::println("[PMP]   WASM arena: .wasm_arena, M-mode only (U-mode deny)");
 }
 
 use crate::common::fmt::print_hex;

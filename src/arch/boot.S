@@ -12,13 +12,12 @@ _start:
     csrr    a0, mhartid
     bnez    a0, .park
 
-    # 2. BSS bölgesini sıfırla (bare metal'de otomatik sıfırlanmaz!)
-    # ~4MB (WASM arena dahil). CVA6 100MHz: ~4ms, QEMU 10MHz: ~40ms
+    # 2. BSS + task stacks + WASM arena sıfırla
+    # __bss_start → __clear_end: ~4.1MB (WASM arena dahil)
+    # CVA6 100MHz: ~4ms, QEMU 10MHz: ~40ms
     # Aviyonik boot bütçesinde kabul edilebilir.
-    # Alternatif: WASM arena'yı .noinit section'a taşıyıp
-    # BumpAllocator::epoch_reset() ile lazy-zero (v2.0)
     la      a0, __bss_start
-    la      a1, __bss_end
+    la      a1, __clear_end
 .bss_loop:
     bgeu    a0, a1, .bss_done
     sd      zero, (a0)

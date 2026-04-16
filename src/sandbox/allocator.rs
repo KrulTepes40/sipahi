@@ -19,7 +19,9 @@ use crate::common::sync::SingleHartCell;
 // Statik alan — 64KB sabit arena
 // ═══════════════════════════════════════════════════════
 
-/// WASM bellek arenası — 64KB, BSS'te sıfır başlatımlı
+/// WASM bellek arenası — 4MB, .wasm_arena section'da
+/// PMP Entry 5 dışında: U-mode DENY, M-mode erişir (Wasmi interpreter M-mode'da)
+#[link_section = ".wasm_arena"]
 static ARENA: SingleHartCell<[u8; WASM_HEAP_SIZE]> = SingleHartCell::new([0u8; WASM_HEAP_SIZE]);
 
 /// Bir sonraki serbest baytın ofseti

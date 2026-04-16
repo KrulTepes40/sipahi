@@ -56,9 +56,10 @@ RISC-V PMP supports 16 entries. Sipahi uses TOR (Top of Range) mode because regi
 |-------|--------|------------|-------------|
 | 0-1 | .text | RX + Lock | Kernel code — write forbidden (W^X) |
 | 2-3 | .rodata | R + Lock | Read-only data — write/execute forbidden |
-| 4-5 | .data+bss+stack | RW + Lock | Writable data + kernel stack |
+| 4-5 | .data+bss+kernel_stack | RW + Lock | Writable data + kernel stack (__pmp_data_end boundary) |
 | 6-7 | UART MMIO | RW + Lock | Serial port access |
-| 8-15 | Reserved | — | Task stack PMP (per-task, changed on context switch) |
+| 8 | Task stack (NAPOT) | RW | Per-task, reprogrammed on context switch |
+| 9-15 | Reserved | — | Future use |
 
 **Why L-bit (Lock)?** When L-bit is set, PMP rules are enforced at all privilege levels including M-mode. This prevents accidental overwrites of kernel code (.text) even in M-mode. In U-mode, addresses not matching any PMP entry are automatically denied (RISC-V spec §3.7.1).
 
@@ -70,7 +71,7 @@ At boot, PMP register values are saved to the `PMP_SHADOW` static. Every schedul
 
 ### 3.3 Per-Task PMP (NAPOT)
 
-Task stacks are protected via PMP entry 8. NAPOT mode is used — 8KB = 2^13 is a power-of-2, requiring only one entry. On every context switch, entry 8 is reprogrammed to the new task's stack region. Config: R+W, X=0 (W^X), L=0 (unlocked — changes on switch).
+Task stacks are placed in the `.task_stacks` linker section, outside the PMP Entry 5 boundary. This ensures U-mode tasks cannot access all RAM via Entry 5 — since there is no PMP match for the task stacks region, U-mode implicit DENY applies (RISC-V spec §3.7.1). Each task accesses its own stack solely through PMP entry 8 NAPOT. NAPOT mode is used — 8KB = 2^13 is a power-of-2, requiring only one entry. On every context switch, entry 8 is reprogrammed to the new task's stack region. Config: R+W, X=0 (W^X), L=0 (unlocked — changes on switch). The WASM arena is also placed in `.wasm_arena` section — U-mode DENY, M-mode accesses it (Wasmi interpreter runs in M-mode).
 
 NAPOT task stack protection has been tested on QEMU virt machine. QEMU PMP granularity parameter (G) is platform-dependent. CVA6 target expects G=0 (4-byte granularity). On different hardware, G may affect the NAPOT minimum region size — to be verified during FPGA validation.
 
@@ -327,7 +328,7 @@ Stub implementation — requires real IOPMP hardware (DMA controller). 8 regions
 
 ### 13.2 Rust (trap.rs)
 
-Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall dispatch. Illegal instruction → log. MPP verification after U-mode ecall.
+Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall dispatch. Illegal instruction → ISOLATE. LoadAccessFault (5) and StoreAccessFault (7) → PMP violation → ISOLATE + blackbox log. MPP verification after U-mode ecall.
 
 ### 13.3 Timer — Drift-Free
 
@@ -496,7 +497,7 @@ All fields are statically allocated — no heap. `Task::empty()` provides zeroed
 | 1 | WASM Sandbox | ✅ Complete | Fuel metering + float rejection + isolated memory |
 | 2 | Capability Token | ✅ Complete | BLAKE3 MAC + nonce + expiry + constant-time cache |
 | 3 | PMP (kernel) | ✅ Complete | 4 TOR regions, L-bit locking + shadow register |
-| 4 | PMP (per-task) | ✅ Complete | NAPOT entry 8, reprogrammed on context switch, W^X |
+| 4 | PMP (per-task) | ✅ Complete | Task stacks outside Entry 5, NAPOT entry 8, WASM arena M-mode only |
 | 5 | IOPMP | ⚠️ Stub | Requires real hardware (DMA controller) — FPGA |
 | 6 | M/U-mode separation | ✅ Complete | Kernel in M-mode, tasks in U-mode, mret transition |
 | 7 | Physical | ❌ None | JTAG/OTP/tamper — FPGA+production level |

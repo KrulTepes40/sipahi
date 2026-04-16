@@ -116,6 +116,8 @@ impl Task {
 pub(crate) struct AlignedStack(pub(crate) [u8; TASK_STACK_SIZE]);
 
 /// Task stack'leri — statik, heap yok, 8KB aligned (NAPOT uyumlu)
+/// .task_stacks section: PMP Entry 5 dışında, U-mode DENY (per-task NAPOT Entry 8)
+#[link_section = ".task_stacks"]
 pub(crate) static TASK_STACKS: SingleHartCell<[AlignedStack; MAX_TASKS]> = SingleHartCell::new(
     [const { AlignedStack([0u8; TASK_STACK_SIZE]) }; MAX_TASKS]
 );

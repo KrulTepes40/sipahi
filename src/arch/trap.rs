@@ -126,6 +126,38 @@ pub extern "C" fn trap_handler(
                 crate::kernel::scheduler::handle_illegal_instruction();
                 0
             }
+            5 => {
+                // LoadAccessFault — PMP violation (U-mode, match yok veya izin yok)
+                let fault_addr = crate::arch::csr::read_mtval();
+                uart::puts("[TRAP] LoadAccessFault at 0x");
+                print_hex(fault_addr);
+                uart::puts(" mepc=0x");
+                print_hex(_mepc);
+                uart::println(" → ISOLATE");
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PmpFail,
+                    crate::kernel::scheduler::current_task_id(),
+                    &[],
+                );
+                crate::kernel::scheduler::handle_illegal_instruction();
+                0
+            }
+            7 => {
+                // StoreAccessFault — PMP violation (stack overflow veya cross-task yazma)
+                let fault_addr = crate::arch::csr::read_mtval();
+                uart::puts("[TRAP] StoreAccessFault at 0x");
+                print_hex(fault_addr);
+                uart::puts(" mepc=0x");
+                print_hex(_mepc);
+                uart::println(" → ISOLATE");
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PmpFail,
+                    crate::kernel::scheduler::current_task_id(),
+                    &[],
+                );
+                crate::kernel::scheduler::handle_illegal_instruction();
+                0
+            }
             _ => {
                 uart::puts("[TRAP] Exception: cause=");
                 print_u64(mcause as u64);

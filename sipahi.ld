@@ -2,16 +2,21 @@
  * ====================================
  * Sipahi Memory Map (QEMU virt, RV64)
  *
- * 0x80000000  .text    (RX)   ~490KB  Kernel + Wasmi code
- * 0x800798xx  .rodata  (R)    ~84KB   Constants, Wasmi tables
- * 0x8008xxxx  .data    (RW)   ~150KB  Initialized data
- * 0x800xxxxx  .bss     (RW)   ~4.1MB  Arena(4MB) + stacks + statics
- * 0x804xxxxx  stack    (RW)   16KB    Kernel stack
- * 0x804xxxxx  _end             End of all kernel memory
+ * 0x80000000  .text         (RX)   ~490KB  Kernel + Wasmi code
+ * 0x800798xx  .rodata       (R)    ~84KB   Constants, Wasmi tables
+ * 0x8008xxxx  .data         (RW)   ~150KB  Initialized data
+ * 0x800xxxxx  .bss          (RW)   ~10KB   Statics (IPC, blackbox, config)
+ *             kernel stack  (RW)   16KB    Kernel stack
+ * __pmp_data_end ─── PMP Entry 5 TOR upper bound ───
+ *             .task_stacks  (RW)   64KB    Per-task NAPOT PMP (Entry 8)
+ *             .wasm_arena   (RW)   4MB     Wasmi bump allocator (M-mode only)
+ * __clear_end / _end
+ *
+ * PMP Entry 4-5: [data_start, __pmp_data_end) RW L-bit
+ * Task stacks: PMP match yok → U-mode DENY, per-task NAPOT Entry 8
+ * WASM arena:  PMP match yok → U-mode DENY, M-mode erişir (spec)
  *
  * RAM: 8MB allocated (0x80000000-0x80800000), QEMU 512MB available
- * PMP: 4 TOR regions (text RXL, rodata RL, data+bss RWL, UART RWL)
- * Arena: 4MB bump allocator for Wasmi (v1.5: reduce with AOT compile)
  */
 /* QEMU virt machine, RV64, RAM @ 0x80000000   */
 
@@ -46,10 +51,10 @@ SECTIONS {
     } > RAM
 
     /* BSS — sıfırlanacak veriler */
-    /* KRİTİK: boot.S'de __bss_start → __bss_end arası sıfırlanmalı!   */
+    /* KRİTİK: boot.S'de __bss_start → __clear_end arası sıfırlanmalı!  */
     /* ALIGN(8): boot.S `sd` (8-byte store) + addi a0,a0,8 ile temizler */
     /* __bss_end de ALIGN(8): son bloğun taşmasını önler                 */
-    .bss : ALIGN(8) {
+    .bss (NOLOAD) : ALIGN(8) {
         __bss_start = .;
         *(.bss .bss.*)
         *(COMMON)
@@ -67,16 +72,31 @@ SECTIONS {
     /* Stack guard — PMP ile korunacak */
     __stack_guard = __stack_bottom;
 
-    /* _end: Tüm kernel belleğinin (data+bss+stack) bittiği nokta.     */
-    /* PMP RW bölgesinin TOR üst sınırı bu sembolü kullanmalıdır.       */
-    _end = .;
+    /* ═══ PMP Entry 5 TOR üst sınırı ═══ */
+    /* Bundan öncesi: .data + .bss + kernel_stack → Entry 4-5 RW (L-bit) */
+    __pmp_data_end = .;
 
-    /* ═══════════════════════════════════════════════════════════ */
-    /* Mevcut BSS içi statik tahsisler:                            */
-    /*   IPC: 8 × SpscChannel (statik, BSS'te)                    */
-    /*   Blackbox: 128 × 64B = 8KB (SingleHartCell, BSS'te)       */
-    /*   WASM Arena: 4MB bump allocator (SingleHartCell, BSS'te)   */
-    /*   Task Stacks: 8 × 8KB = 64KB (SingleHartCell, BSS'te)     */
-    /* Tümü .bss section'da, ayrı linker bölgesi gerekmez.        */
-    /* ═══════════════════════════════════════════════════════════ */
+    /* ═══ BUNDAN SONRASI U-MODE DENY ═══ */
+    /* PMP match yok → U-mode erişemez (RISC-V spec §3.7.1) */
+    /* M-mode erişir (PMP match yoksa M-mode izinli)         */
+
+    /* Task stacks — per-task NAPOT PMP ile korunur (Entry 8) */
+    .task_stacks (NOLOAD) : ALIGN(8192) {
+        __task_stacks_start = .;
+        *(.task_stacks)
+        __task_stacks_end = .;
+    } > RAM
+
+    /* WASM arena — Wasmi interpreter M-mode'da erişir */
+    .wasm_arena (NOLOAD) : ALIGN(4096) {
+        __wasm_arena_start = .;
+        *(.wasm_arena)
+        __wasm_arena_end = .;
+    } > RAM
+
+    /* Boot clear loop: __bss_start → __clear_end
+       BSS + kernel_stack + task_stacks + wasm_arena hepsini sıfırlar */
+    . = ALIGN(8);
+    __clear_end = .;
+    _end = .;
 }
