@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Technical Feature Document
 
 **Version:** v1.5 · **Architecture:** RISC-V RV64IMAC · **Language:** Rust no_std  
-**Total:** ~7,380 lines · 42 source files · 173 Kani proofs  
+**Total:** ~7,540 lines · 42 source files · 177 Kani proofs  
 **Philosophy:** Maximum speed while preserving determinism. Zero heap, zero panic, zero float.
 
 ---
@@ -22,7 +22,7 @@ IEEE 754 floating-point arithmetic can be non-deterministic — the same computa
 
 ### 1.4 Why Microkernel?
 
-Microkernel over monolithic because the attack surface is small. The kernel contains only the scheduler, IPC, capability, policy, and trap handler. WASM sandbox, blackbox, and secure boot run outside the kernel. If a component crashes, the kernel stays alive. A small, verifiable kernel is required for DO-178C DAL-A certification — 173 Kani proofs formally verify critical invariants (scheduler selection correctness, policy escalation, IPC integrity, memory safety).
+Microkernel over monolithic because the attack surface is small. The kernel contains only the scheduler, IPC, capability, policy, and trap handler. WASM sandbox, blackbox, and secure boot run outside the kernel. If a component crashes, the kernel stays alive. A small, verifiable kernel is required for DO-178C DAL-A certification — 177 Kani proofs formally verify critical invariants (scheduler selection correctness, policy escalation, IPC integrity, memory safety).
 
 ---
 
@@ -341,13 +341,13 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 
 ---
 
-## 15. Formal Verification — 173 Kani Proofs
+## 15. Formal Verification — 177 Kani Proofs
 
 ### 15.1 Proof Distribution
 
 | Module | Proofs | Coverage |
 |--------|--------|----------|
-| verify.rs (global) | 53 | DAL, PMP, memory, cross-module invariants |
+| verify.rs (global) | 57 | DAL, PMP, memory, cross-module invariants |
 | sandbox (mod+allocator) | 19+1 | LEB128, float scanning, bounds safety, allocator overlap |
 | dispatch | 18 | Syscall table, pointer rejection, dispatch fuzzing |
 | scheduler | 17 | Selection correctness, Isolated/Dead never selected, watchdog, priority |
@@ -483,23 +483,25 @@ Each task contains a 128-byte TaskContext + metadata fields:
 | syscall_count | u32 | Anomaly detection — wrapping_add(1) on dispatch |
 | ipc_send_count | u32 | Rate limiter — reset every tick |
 | original_budget | u32 | Original budget before degrade (for recovery) |
+| pmp_addr_napot | usize | NAPOT-encoded PMP address (entry 8, per-task stack) |
 
 All fields are statically allocated — no heap. `Task::empty()` provides zeroed default values. `restart_task()` clears the context, reconfigures entry + stack + mepc + mstatus, and assigns `task_trampoline` to ra for U-mode transition.
 
 ---
 
-## 22. Security Walls (6 Layers)
+## 22. Security Walls (7 Layers)
 
 | # | Wall | Status | Description |
 |---|------|--------|-------------|
 | 1 | WASM Sandbox | ✅ Complete | Fuel metering + float rejection + isolated memory |
 | 2 | Capability Token | ✅ Complete | BLAKE3 MAC + nonce + expiry + constant-time cache |
-| 3 | PMP | ✅ Complete | M/U-mode separation + L-bit locking + shadow register |
-| 4 | IOPMP | ⚠️ Stub | Requires real hardware (DMA controller) — FPGA |
-| 5 | M-mode PMP | ✅ Complete | Kernel in M-mode, tasks in U-mode, separation is real |
-| 6 | Physical | ❌ None | JTAG/OTP/tamper — FPGA+production level |
+| 3 | PMP (kernel) | ✅ Complete | 4 TOR regions, L-bit locking + shadow register |
+| 4 | PMP (per-task) | ✅ Complete | NAPOT entry 8, reprogrammed on context switch, W^X |
+| 5 | IOPMP | ⚠️ Stub | Requires real hardware (DMA controller) — FPGA |
+| 6 | M/U-mode separation | ✅ Complete | Kernel in M-mode, tasks in U-mode, mret transition |
+| 7 | Physical | ❌ None | JTAG/OTP/tamper — FPGA+production level |
 
-4/6 walls completed at software level. Remaining: 1 hardware (IOPMP), 1 manufacturing (physical).
+5/7 walls completed at software level. Remaining: 1 hardware (IOPMP), 1 manufacturing (physical).
 
 ---
 
@@ -535,7 +537,7 @@ Heap-free format functions for debug output over UART: `print_u32` (decimal), `p
 - **Toolchain:** Rust nightly-2026-03-01, riscv64imac-unknown-none-elf target
 - **Build:** `make build` (build-std flags), `cargo clippy -- -D warnings` (target in config.toml)
 - **Run:** `make run` (QEMU 8.2.2 virt machine, -bios none, 512MB RAM)
-- **Verify:** `cargo kani` (173 proofs), const assert (7 compile-time checks)
+- **Verify:** `cargo kani` (177 proofs), const assert (7 compile-time checks)
 - **WASM:** Wasmi 1.0.9, `default-features = false`, `prefer-btree-collections`
 - **Crypto:** BLAKE3 (`fast-crypto` feature), Ed25519 (`fast-sign` feature, `ed25519-dalek`)
 
@@ -646,4 +648,4 @@ When a U-mode task executes an illegal instruction, the trap handler sends a `Wa
 
 Kani verifies at function level, TLA+ at system level. They answer different questions and complement each other. WIP specs are "model incomplete" — properties fail because the model is incomplete, not because the code is wrong.
 
-*Sipahi Microkernel v1.5 — 173 Kani Proofs · 3/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 4/6 Security Walls Active*
+*Sipahi Microkernel v1.5 — 177 Kani Proofs · 3/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 5/7 Security Walls Active*

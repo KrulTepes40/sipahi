@@ -75,19 +75,19 @@ mod verification {
     #[kani::proof]
     fn cache_empty_lookup_false() {
         let cache = TokenCache::new();
-        assert!(!cache.lookup(0, 0, 0));
-        assert!(!cache.lookup(1, 0, ACTION_READ));
-        assert!(!cache.lookup(0xFF, 0xFFFF, 0xFF));
+        assert!(!cache.lookup(0, 0, 0, 0));
+        assert!(!cache.lookup(0, 1, 0, ACTION_READ));
+        assert!(!cache.lookup(0, 0xFF, 0xFFFF, 0xFF));
     }
 
     /// Proof 45: Cache insert → sonraki lookup hit
     #[kani::proof]
     fn cache_insert_then_lookup() {
         let mut cache = TokenCache::new();
-        cache.insert(7, 3, ACTION_READ, 0);
-        assert!(cache.lookup(7, 3, ACTION_READ));
-        assert!(!cache.lookup(7, 3, ACTION_WRITE));  // farklı action → miss
-        assert!(!cache.lookup(0, 3, ACTION_READ));   // farklı id → miss
+        cache.insert(0, 7, 3, ACTION_READ, 0);
+        assert!(cache.lookup(0, 7, 3, ACTION_READ));
+        assert!(!cache.lookup(0, 7, 3, ACTION_WRITE));  // farklı action → miss
+        assert!(!cache.lookup(0, 0, 3, ACTION_READ));   // farklı token id → miss
     }
 
     /// Proof 46: ACTION flag'leri birbirini maskelemiyor, OR ile 0x07
@@ -144,24 +144,24 @@ mod verification {
         let tid: u8 = kani::any();
         let res: u16 = kani::any();
         let act: u8 = kani::any();
-        cache.insert(tid, res, act, 0);
-        assert!(cache.lookup(tid, res, act));
+        cache.insert(0, tid, res, act, 0);
+        assert!(cache.lookup(0, tid, res, act));
         cache.invalidate(tid);
-        assert!(!cache.lookup(tid, res, act));
+        assert!(!cache.lookup(0, tid, res, act));
     }
 
     /// Proof 117: Cache 4 slot dolu → 5. insert en eski üzerine yazar
     #[kani::proof]
     fn cache_overwrites_oldest() {
         let mut cache = TokenCache::new();
-        cache.insert(0, 100, 1, 0);
-        cache.insert(1, 200, 2, 0);
-        cache.insert(2, 300, 3, 0);
-        cache.insert(3, 400, 4, 0);
+        cache.insert(0, 0, 100, 1, 0);
+        cache.insert(0, 1, 200, 2, 0);
+        cache.insert(0, 2, 300, 3, 0);
+        cache.insert(0, 3, 400, 4, 0);
         // 5. insert → slot 0 üzerine yazar (round-robin)
-        cache.insert(4, 500, 5, 0);
-        assert!(!cache.lookup(0, 100, 1)); // evicted
-        assert!(cache.lookup(4, 500, 5));  // yeni
+        cache.insert(0, 4, 500, 5, 0);
+        assert!(!cache.lookup(0, 0, 100, 1)); // evicted
+        assert!(cache.lookup(0, 4, 500, 5));  // yeni
     }
 
     /// Proof 118: Sıfır key tespiti
@@ -179,8 +179,8 @@ mod verification {
     fn cache_not_expired_entry_found() {
         let mut cache = TokenCache::new();
         // expires=1, Kani'de get_tick() BB_TICK=0 → 0 <= 1 → not expired
-        cache.insert(5, 200, 1, 1);
-        assert!(cache.lookup(5, 200, 1));
+        cache.insert(0, 5, 200, 1, 1);
+        assert!(cache.lookup(0, 5, 200, 1));
     }
 
     /// Invalidated token → herhangi resource/action ile asla bulunamaz
@@ -190,10 +190,24 @@ mod verification {
         let tid: u8 = kani::any();
         let resource: u16 = kani::any();
         let action: u8 = kani::any();
-        cache.insert(tid, resource, action, 0);
+        cache.insert(0, tid, resource, action, 0);
         cache.invalidate(tid);
         let search_resource: u16 = kani::any();
         let search_action: u8 = kani::any();
-        assert!(!cache.lookup(tid, search_resource, search_action));
+        assert!(!cache.lookup(0, tid, search_resource, search_action));
+    }
+
+    /// Cross-task isolation: Task B, Task A'nın cache token'ını bulamaz
+    #[kani::proof]
+    fn different_task_cannot_use_cached_token() {
+        let mut cache = TokenCache::new();
+        let task_a: u8 = 0;
+        let task_b: u8 = 1;
+        let token_id: u8 = 5;
+        let resource: u16 = 3;
+        let action: u8 = 1;
+        cache.insert(task_a, token_id, resource, action, 0);
+        assert!(cache.lookup(task_a, token_id, resource, action));
+        assert!(!cache.lookup(task_b, token_id, resource, action));
     }
 }

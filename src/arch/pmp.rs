@@ -98,6 +98,27 @@ pub fn read_pmpaddr8() -> usize {
     val
 }
 
+/// pmpaddr register'ını oku (0-7)
+#[cfg(not(kani))]
+pub fn read_pmpaddr(index: usize) -> usize {
+    let val: usize;
+    // SAFETY: CSR read in M-mode — always accessible.
+    unsafe {
+        match index {
+            0 => asm!("csrr {}, pmpaddr0", out(reg) val),
+            1 => asm!("csrr {}, pmpaddr1", out(reg) val),
+            2 => asm!("csrr {}, pmpaddr2", out(reg) val),
+            3 => asm!("csrr {}, pmpaddr3", out(reg) val),
+            4 => asm!("csrr {}, pmpaddr4", out(reg) val),
+            5 => asm!("csrr {}, pmpaddr5", out(reg) val),
+            6 => asm!("csrr {}, pmpaddr6", out(reg) val),
+            7 => asm!("csrr {}, pmpaddr7", out(reg) val),
+            _ => { val = 0; }
+        }
+    }
+    val
+}
+
 // ═══════════════════════════════════════════════════════
 // Yardımcı: Config byte oluştur
 // ═══════════════════════════════════════════════════════

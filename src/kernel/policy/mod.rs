@@ -135,6 +135,14 @@ pub const fn decide_action(event: u8, restart_count: u8, dal: u8) -> FailureMode
 // Politika uygulama
 // ═══════════════════════════════════════════════════════
 
+/// Lockstep fence — #[inline(never)] CSE'yi engeller,
+/// black_box return değerini opaque yapar.
+#[inline(never)]
+fn decide_action_fenced(event: u8, rc: u8, dal: u8) -> FailureMode {
+    let r = decide_action(event, rc, dal);
+    core::hint::black_box(r)
+}
+
 /// Politika uygula — restart sayacı günceller, karar döner
 /// Scheduler bu kararı alır ve uygular
 pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureMode {
@@ -146,8 +154,8 @@ pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureM
         0
     };
 
-    let action1 = decide_action(event as u8, count, dal);
-    let action2 = decide_action(event as u8, count, dal);
+    let action1 = decide_action_fenced(event as u8, count, dal);
+    let action2 = decide_action_fenced(event as u8, count, dal);
     // Lockstep: iki çağrı aynı sonucu vermeli — farklıysa bellek bozulması
     let action = if action1 != action2 {
         FailureMode::Shutdown

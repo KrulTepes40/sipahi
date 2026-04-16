@@ -634,6 +634,11 @@ fn shutdown_system() -> ! {
     }
 }
 
+/// Mevcut çalışan task'ın ID'sini döndür
+pub(crate) fn current_task_id() -> u8 {
+    unsafe { *CURRENT_TASK.get() as u8 }
+}
+
 /// Watchdog kick — task yield etti, canlılık kanıtı
 pub(crate) fn watchdog_kick() {
     // SAFETY: Single-hart, called from syscall context.

@@ -22,6 +22,31 @@ pub fn init() {
     arch::uart::println("[HAL]  Device trait registered");
     arch::uart::println("[HAL]  IOPMP stub ready");
 
+    // ─── Capability MAC key provisioning ───
+    {
+        let mac_key = [0x5Au8; 32]; // QEMU test key (production: HSM'den gelir)
+        kernel::capability::broker::provision_key(&mac_key);
+        arch::uart::println("[BOOT] Capability MAC key provisioned");
+    }
+
+    // ─── Secure boot doğrulama ───
+    #[cfg(feature = "test-keys")]
+    {
+        use crate::hal::key;
+        use crate::hal::secure_boot;
+        let pubkey = key::get_root_public_key();
+        let valid = secure_boot::secure_boot_check(&[], pubkey, &key::QEMU_TEST_SIGNATURE);
+        if valid {
+            arch::uart::println("[BOOT] Secure boot check OK");
+        } else {
+            arch::uart::println("[BOOT] Secure boot FAIL — HALT");
+            // SAFETY: WFI halt on secure boot failure.
+            loop { unsafe { core::arch::asm!("wfi"); } }
+        }
+    }
+    #[cfg(not(feature = "test-keys"))]
+    arch::uart::println("[BOOT] Secure boot SKIP (no test-keys, production: OTP v2.0)");
+
     use crate::common::types::TaskConfig;
 
     let id_a = kernel::scheduler::create_task(&TaskConfig {

@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Teknik Özellik Dokümanı
 
 **Versiyon:** v1.5 · **Mimari:** RISC-V RV64IMAC · **Dil:** Rust no_std  
-**Toplam:** ~7,380 satır · 42 kaynak dosya · 173 Kani proof  
+**Toplam:** ~7,540 satır · 42 kaynak dosya · 177 Kani proof  
 **Felsefe:** Determinizm korunurken maksimum hız. Sıfır heap, sıfır panic, sıfır float.
 
 ---
@@ -22,7 +22,7 @@ IEEE 754 floating-point aritmetiği non-deterministic olabilir — farklı donan
 
 ### 1.4 Neden Microkernel?
 
-Monolitik kernel yerine microkernel çünkü saldırı yüzeyi küçük. Kernel sadece scheduler, IPC, capability, policy ve trap handler içerir. WASM sandbox, blackbox, secure boot kernel dışında çalışır. Bir bileşen çökerse kernel ayakta kalır. DO-178C DAL-A sertifikasyonu için küçük, doğrulanabilir kernel şart — 173 Kani proof ile kritik invariant'lar (scheduler seçim doğruluğu, policy escalation, IPC bütünlüğü, bellek güvenliği) formal olarak kanıtlanmış.
+Monolitik kernel yerine microkernel çünkü saldırı yüzeyi küçük. Kernel sadece scheduler, IPC, capability, policy ve trap handler içerir. WASM sandbox, blackbox, secure boot kernel dışında çalışır. Bir bileşen çökerse kernel ayakta kalır. DO-178C DAL-A sertifikasyonu için küçük, doğrulanabilir kernel şart — 177 Kani proof ile kritik invariant'lar (scheduler seçim doğruluğu, policy escalation, IPC bütünlüğü, bellek güvenliği) formal olarak kanıtlanmış.
 
 ---
 
@@ -341,13 +341,13 @@ Timer interrupt (code=7) → tick artır, scheduler çağır. ecall → syscall 
 
 ---
 
-## 15. Formal Doğrulama — 173 Kani Proof
+## 15. Formal Doğrulama — 177 Kani Proof
 
 ### 15.1 Proof Dağılımı
 
 | Modül | Proof | Kapsam |
 |-------|-------|--------|
-| verify.rs (global) | 53 | DAL, PMP, bellek, cross-module invariantlar |
+| verify.rs (global) | 57 | DAL, PMP, bellek, cross-module invariantlar |
 | sandbox (mod+allocator) | 19+1 | LEB128, float tarama, bounds safety, allocator overlap |
 | dispatch | 18 | Syscall tablo, pointer reddi, dispatch fuzzing |
 | scheduler | 17 | Seçim doğruluğu, Isolated/Dead asla seçilmez, watchdog, priority |
@@ -483,6 +483,7 @@ Her task 128-byte TaskContext + metadata alanları içerir:
 | syscall_count | u32 | Anomali tespiti — dispatch'te wrapping_add(1) |
 | ipc_send_count | u32 | Rate limiter — tick'te sıfırlanır |
 | original_budget | u32 | Degrade öncesi orijinal bütçe (kurtarma için) |
+| pmp_addr_napot | usize | NAPOT-encoded PMP address (entry 8, per-task stack) |
 
 Tüm alanlar statik tahsis — heap yok. `Task::empty()` ile sıfırlanmış varsayılan değerler. `restart_task()` context'i sıfırlar, entry + stack + mepc + mstatus yeniden ayarlar, `task_trampoline` U-mode geçişi için ra'ya atanır.
 
@@ -494,12 +495,13 @@ Tüm alanlar statik tahsis — heap yok. `Task::empty()` ile sıfırlanmış var
 |---|-------|-------|----------|
 | 1 | WASM Sandbox | ✅ Tam | Fuel metering + float reddi + izole bellek |
 | 2 | Capability Token | ✅ Tam | BLAKE3 MAC + nonce + expiry + constant-time cache |
-| 3 | PMP | ✅ Tam | M/U-mode ayrımı + L-bit kilitleme + shadow register |
-| 4 | IOPMP | ⚠️ Stub | Gerçek donanım (DMA controller) gerektirir — FPGA |
-| 5 | M-mode PMP | ✅ Tam | Kernel M-mode, task'lar U-mode, ayrım gerçek |
-| 6 | Fiziksel | ❌ Yok | JTAG/OTP/tamper — FPGA+üretim seviyesi |
+| 3 | PMP (kernel) | ✅ Tam | 4 TOR bölge, L-bit kilitleme + shadow register |
+| 4 | PMP (per-task) | ✅ Tam | NAPOT entry 8, context switch'te reprogramlama, W^X |
+| 5 | IOPMP | ⚠️ Stub | Gerçek donanım (DMA controller) gerektirir — FPGA |
+| 6 | M/U-mode ayrımı | ✅ Tam | Kernel M-mode, task'lar U-mode, mret geçişi |
+| 7 | Fiziksel | ❌ Yok | JTAG/OTP/tamper — FPGA+üretim seviyesi |
 
-Yazılım seviyesinde çözülebilen 4/6 duvar tamamlandı. Kalan 1 donanım (IOPMP), 1 üretim seviyesi (fiziksel).
+Yazılım seviyesinde çözülebilen 5/7 duvar tamamlandı. Kalan 1 donanım (IOPMP), 1 üretim seviyesi (fiziksel).
 
 ---
 
@@ -535,7 +537,7 @@ UART üzerinden debug çıktısı için heap-free format fonksiyonları: `print_
 - **Toolchain:** Rust nightly-2026-03-01, riscv64imac-unknown-none-elf target
 - **Build:** `make build` (build-std flags), `cargo clippy -- -D warnings` (target config.toml'da)
 - **Run:** `make run` (QEMU 8.2.2 virt machine, -bios none, 512MB RAM)
-- **Verify:** `cargo kani` (173 proof), const assert (7 derleme zamanı kontrol)
+- **Verify:** `cargo kani` (177 proof), const assert (7 derleme zamanı kontrol)
 - **WASM:** Wasmi 1.0.9, `default-features = false`, `prefer-btree-collections`
 - **Crypto:** BLAKE3 (`fast-crypto` feature), Ed25519 (`fast-sign` feature, `ed25519-dalek`)
 
@@ -644,4 +646,4 @@ U-mode task illegal instruction çalıştırınca trap handler `WasmTrap` event 
 
 Kani fonksiyon seviyesinde, TLA+ sistem seviyesinde doğrulama yapar. İkisi farklı soruları cevaplar ve birbirini tamamlar. WIP spec'ler "model incomplete" — property fail çünkü model eksik, kod hatalı değil.
 
-*Sipahi Microkernel v1.5 — 173 Kani Proof · 3/7 TLA+ Verified · 12 Hardening · 0 Clippy Warning · 0 Runtime Panic · 0 Heap Allocation (kernel) · 4/6 Security Wall Active*
+*Sipahi Microkernel v1.5 — 177 Kani Proof · 3/7 TLA+ Verified · 12 Hardening · 0 Clippy Warning · 0 Runtime Panic · 0 Heap Allocation (kernel) · 5/7 Security Wall Active*

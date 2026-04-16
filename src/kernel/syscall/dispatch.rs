@@ -228,7 +228,9 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
     // Cache-only fast path (~10c) — validate_full ile önceden kayıt edilmeli
     #[cfg(not(kani))]
     {
+        let caller = crate::kernel::scheduler::current_task_id();
         let ok = crate::kernel::capability::broker::validate_cached(
+            caller,
             cap as u8,
             resource as u16,
             action as u8,

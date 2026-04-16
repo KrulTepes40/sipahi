@@ -56,11 +56,11 @@ pub(crate) fn provision_key(key: &[u8; 32]) {
 /// Cache-only lookup — sys_cap_invoke fast path (~10c)
 /// validate_full ile cache'e eklenmemiş token → false döner
 #[must_use = "cache lookup result must be checked"]
-pub(crate) fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
+pub(crate) fn validate_cached(caller_task_id: u8, token_id: u8, resource: u16, action: u8) -> bool {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
         let cache = TOKEN_CACHE.get();
-        cache.lookup(token_id, resource, action)
+        cache.lookup(caller_task_id, token_id, resource, action)
     }
 }
 
@@ -68,11 +68,11 @@ pub(crate) fn validate_cached(token_id: u8, resource: u16, action: u8) -> bool {
 /// Returns: true = geçerli + cache'e eklendi, false = RED (MAC/nonce/key fail)
 #[cfg(feature = "fast-crypto")]
 #[must_use = "validation result must be checked"]
-pub(crate) fn validate_full(token: &Token) -> bool {
+pub(crate) fn validate_full(token: &Token, caller_task_id: u8) -> bool {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
         let cache = TOKEN_CACHE.get();
-        if cache.lookup(token.id, token.resource, token.action) {
+        if cache.lookup(caller_task_id, token.id, token.resource, token.action) {
             return true;
         }
         if !*KEY_READY.get() {
@@ -103,7 +103,7 @@ pub(crate) fn validate_full(token: &Token) -> bool {
                 token.nonce,
             );
             let cache_mut = TOKEN_CACHE.get_mut();
-            cache_mut.insert(token.id, token.resource, token.action, token.expires);
+            cache_mut.insert(caller_task_id, token.id, token.resource, token.action, token.expires);
             true
         } else {
             false

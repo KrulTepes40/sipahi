@@ -28,6 +28,9 @@ use crate::common::sync::SingleHartCell;
 
 static PMP_SHADOW: SingleHartCell<u64> = SingleHartCell::new(0);
 
+/// PMP entry 0-7 address shadow — boot'ta kaydedilir, her tick'te doğrulanır
+static PMP_SHADOW_ADDRS: SingleHartCell<[usize; 8]> = SingleHartCell::new([0; 8]);
+
 /// PMP entry 8 shadow — per-task NAPOT stack region
 pub(crate) static PMP_SHADOW_ADDR8: SingleHartCell<usize> = SingleHartCell::new(0);
 pub(crate) static PMP_SHADOW_CFG2: SingleHartCell<usize> = SingleHartCell::new(0);
@@ -100,7 +103,19 @@ pub(crate) fn init_pmp() {
     pmp::write_pmpcfg0(packed);
 
     // Shadow kaydet — her tick'te doğrulama için
-    unsafe { *PMP_SHADOW.get_mut() = packed; }
+    unsafe {
+        *PMP_SHADOW.get_mut() = packed;
+        // pmpaddr0-7 shadow (write_pmpaddr >> 2 yapıyor, read_pmpaddr da >> 2 döner)
+        let addrs = PMP_SHADOW_ADDRS.get_mut();
+        addrs[0] = text_start >> 2;
+        addrs[1] = text_end >> 2;
+        addrs[2] = rodata_start >> 2;
+        addrs[3] = rodata_end >> 2;
+        addrs[4] = data_start >> 2;
+        addrs[5] = end >> 2;
+        addrs[6] = uart_start >> 2;
+        addrs[7] = uart_end >> 2;
+    }
 
     // ─── Doğrulama çıktısı ───
     uart::println("[PMP] Memory protection configured:");
@@ -141,9 +156,19 @@ use crate::common::fmt::print_hex;
 /// PMP bütünlük doğrulama — shadow ile karşılaştır
 #[cfg(not(kani))]
 pub(crate) fn verify_pmp_integrity() -> bool {
+    // pmpcfg0 shadow
     let current = pmp::read_pmpcfg0();
     let shadow = unsafe { *PMP_SHADOW.get() };
     if current != shadow { return false; }
+
+    // pmpaddr0-7 shadow (defense-in-depth, L-bit kilitli)
+    let shadow_addrs = unsafe { PMP_SHADOW_ADDRS.get() };
+    let mut i = 0;
+    while i < 8 {
+        if pmp::read_pmpaddr(i) != shadow_addrs[i] { return false; }
+        i += 1;
+    }
+
     // Task PMP shadow (entry 8)
     let cfg2 = pmp::read_pmpcfg2();
     let addr8 = pmp::read_pmpaddr8();

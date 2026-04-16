@@ -84,12 +84,12 @@ sipahi/
 
 | Metric | Value |
 |---|---|
-| Source lines (Rust + ASM) | ~7,380 |
+| Source lines (Rust + ASM) | ~7,540 |
 | `.rs` files | 39 |
 | `.S` files | 3 |
-| Kani proofs | 173 |
+| Kani proofs | 177 |
 | Compile-time asserts | 7 |
 | `static mut` count | 0 |
-| `unsafe` blocks | 93 (all documented with `// SAFETY:`) |
+| `unsafe` blocks | 99 (all documented with `// SAFETY:`) |
 | TLA+ specs | 7 (3 verified, 4 WIP) |
 | TLA+ lines | ~1,030 |

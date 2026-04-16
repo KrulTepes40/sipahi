@@ -14,7 +14,7 @@ Sipahi is a bare-metal microkernel designed for DO-178C DAL-A avionics workloads
 
 - **U-mode task isolation** — tasks run in User mode, kernel in Machine mode (mret transition)
 - **Zero heap in kernel** — bump allocator confined to WASM sandbox only
-- **Formal verification** — 173 Kani model-checking proofs + 7 compile-time const asserts
+- **Formal verification** — 177 Kani model-checking proofs + 7 compile-time const asserts
 - **PMP hardware protection** — 4 L-bit locked regions (text RX, rodata R, data RW, UART RW)
 - **Capability-based access control** — BLAKE3-keyed tokens with per-task nonce, cache TTL, replay guard
 - **Fixed-priority preemptive scheduler** — DAL budget enforcement, windowed watchdog, graceful degradation
@@ -76,7 +76,7 @@ make kani           # Formal verification (requires Kani)
 | Check | Status |
 |---|---|
 | `cargo clippy -- -D warnings` | 0 warnings |
-| Kani proofs | 173 harnesses |
+| Kani proofs | 177 harnesses |
 | Compile-time asserts | 7 const asserts |
 | `no_std` + `no alloc` in kernel | enforced |
 | Panic-free kernel | enforced (`overflow-checks = true`, no `unwrap`) |
@@ -105,7 +105,7 @@ make kani           # Formal verification (requires Kani)
 | 12 | WASM sandbox: wasmi 1.0.9, float-opcode rejection v2, fuel limit, bump allocator |
 | 13 | Secure boot: Ed25519 (RFC 8032), real BLAKE3 MAC (no-std), key provisioning |
 | 14 | `TaskState::Isolated`, GitHub Actions CI, debug-boot feature |
-| 1.5 | U-mode tasks, windowed watchdog, policy lockstep, graceful degradation, POST, 173 Kani proofs |
+| 1.5 | U-mode tasks, per-task PMP (NAPOT), windowed watchdog, policy lockstep, graceful degradation, POST, 177 Kani proofs |
 
 ---
 

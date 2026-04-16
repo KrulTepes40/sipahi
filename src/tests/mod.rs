@@ -83,7 +83,7 @@ pub fn test_capability_broker() {
         broker::sign_token(&mut tok); // SipahiMAC-STUB
 
         // 3. Full validate → cache'e ekler
-        let v = broker::validate_full(&tok);
+        let v = broker::validate_full(&tok, 0); // task_id=0 (boot context)
         arch::uart::println(if v { "[TEST] validate_full OK ✓" } else { "[TEST] validate_full FAIL ✗" });
 
         // 4. Cache hit via syscall (~10c)
