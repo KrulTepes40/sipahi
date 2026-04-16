@@ -3,7 +3,7 @@
 // Circular buffer · PMP R4 · 8KB · 128 kayıt
 //
 // Kayıt formatı (64B, doküman §BLACKBOX):
-//   [MAGIC:4][VER:2][SEQ:2][TS:4][TASK:1][EVENT:1][DATA:46][CRC32:4]
+//   [MAGIC:4][VER:2][PAD:2][SEQ:4][TS:4][TASK:1][EVENT:1][DATA:42][CRC32:4]
 //
 // Power-loss koruması (v8.0):
 //   Yarım yazılmış kayıt → CRC32 fail → kayıt ATLANIR
@@ -16,7 +16,7 @@
 //
 // WCET: log() = O(1), 64B kopyalama + CRC(60B) = sabit zaman
 
-use crate::common::config::{BLACKBOX_RECORD_SIZE, BLACKBOX_MAX_RECORDS};
+use crate::common::config::{BLACKBOX_RECORD_SIZE, BLACKBOX_MAX_RECORDS, BLACKBOX_DATA_SIZE};
 use crate::common::sync::SingleHartCell;
 
 // ═══════════════════════════════════════════════════════
@@ -57,27 +57,28 @@ pub enum BlackboxEvent {
 // Kayıt yapısı — 64B sabit
 // ═══════════════════════════════════════════════════════
 
-/// Blackbox kaydı — 64B, padding yok (repr(C) + hizalama kanıtlandı)
+/// Blackbox kaydı — 64B, repr(C) (padding dahil boyut kanıtlandı)
 ///
 /// Byte layout (Proof 52 ile doğrulandı):
 ///   [0..4]   magic:     [u8;4]   → "SPHI"
 ///   [4..6]   version:   u16      → 1
-///   [6..8]   seq:       u16      → monoton, u16 wrap
-///   [8..12]  timestamp: u32      → boot'tan tick sayısı
-///   [12]     task_id:   u8       → tetikleyen task (0xFF=kernel)
-///   [13]     event:     u8       → BlackboxEvent as u8
-///   [14..60] data:      [u8;46]  → olay verisi (KernelBoot: data[0..2]=epoch)
+///   [6..8]   (padding)  2B       → repr(C) u32 alignment
+///   [8..12]  seq:       u32      → monoton, u32 wrap (~900K yıl)
+///   [12..16] timestamp: u32      → boot'tan tick sayısı
+///   [16]     task_id:   u8       → tetikleyen task (0xFF=kernel)
+///   [17]     event:     u8       → BlackboxEvent as u8
+///   [18..60] data:      [u8;42]  → olay verisi (KernelBoot: data[0..2]=epoch)
 ///   [60..64] crc:       u32      → CRC32 byte 0..60 üzerinde
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BlackboxRecord {
     pub magic:     [u8; 4],
     pub version:   u16,
-    pub seq:       u16,
+    pub seq:       u32,
     pub timestamp: u32,
     pub task_id:   u8,
     pub event:     u8,
-    pub data:      [u8; 46],
+    pub data:      [u8; BLACKBOX_DATA_SIZE],
     pub crc:       u32,
 }
 
@@ -94,7 +95,7 @@ impl BlackboxRecord {
             timestamp: 0,
             task_id:   0,
             event:     0,
-            data:      [0u8; 46],
+            data:      [0u8; BLACKBOX_DATA_SIZE],
             crc:       0,
         }
     }
@@ -134,8 +135,8 @@ static BB_BUFFER: SingleHartCell<[BlackboxRecord; BLACKBOX_MAX_RECORDS]> =
 /// Sonraki yazma konumu [0, BLACKBOX_MAX_RECORDS)
 static BB_WRITE_POS: SingleHartCell<u8> = SingleHartCell::new(0);
 
-/// Sonraki sıra numarası (u16, saturating add değil wrapping — ring buffer)
-static BB_NEXT_SEQ: SingleHartCell<u16> = SingleHartCell::new(0);
+/// Sonraki sıra numarası (u32, ~900K yıl wrap-free @ 6 kayıt/saniye)
+static BB_NEXT_SEQ: SingleHartCell<u32> = SingleHartCell::new(0);
 
 /// Boot'tan bu yana geçen tick — schedule() her çağrısında advance_tick() artırır
 static BB_TICK: SingleHartCell<u32> = SingleHartCell::new(0);
@@ -182,7 +183,7 @@ pub(crate) fn init() {
 
         vol_write!(BB_COUNT, 0u8);
         vol_write!(BB_WRITE_POS, 0u8);
-        vol_write!(BB_NEXT_SEQ, 0u16);
+        vol_write!(BB_NEXT_SEQ, 0u32);
         vol_write!(BB_TICK, 0u32);
         vol_write!(BB_BOOT_EPOCH, 0u16);
     }
@@ -209,12 +210,12 @@ pub(crate) fn advance_tick() {
 ///
 /// event:   Olay türü
 /// task_id: Tetikleyen task ID (0xFF = kernel dahili olay)
-/// data:    En fazla 46 byte olay verisi (kısa girişler sıfır doldurulur)
+/// data:    En fazla BLACKBOX_DATA_SIZE(42) byte olay verisi (kısa girişler sıfır doldurulur)
 pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe {
         let pos = vol_read!(BB_WRITE_POS -> u8) as usize;
-        let seq = vol_read!(BB_NEXT_SEQ -> u16);
+        let seq = vol_read!(BB_NEXT_SEQ -> u32);
         let tick = vol_read!(BB_TICK -> u32);
 
         let mut rec = BlackboxRecord::zeroed();
@@ -225,8 +226,8 @@ pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
         rec.task_id   = task_id;
         rec.event     = event as u8;
 
-        // Veri kopyala — en fazla 46 byte, geri kalanı sıfır
-        let n = if data.len() < 46 { data.len() } else { 46 };
+        // Veri kopyala — en fazla BLACKBOX_DATA_SIZE byte, geri kalanı sıfır
+        let n = if data.len() < BLACKBOX_DATA_SIZE { data.len() } else { BLACKBOX_DATA_SIZE };
         let mut i = 0;
         while i < n {
             rec.data[i] = data[i];
@@ -287,8 +288,9 @@ pub(crate) fn get_tick() -> u64 {
     }
 }
 
-// Compile-time guarantee
+// Compile-time guarantees
 const _: () = assert!(BLACKBOX_MAX_RECORDS <= 255);
+const _: () = assert!(core::mem::size_of::<BlackboxRecord>() == BLACKBOX_RECORD_SIZE);
 
 // ═══════════════════════════════════════════════════════
 // Kani — Sprint 11 (Proof 52-57)

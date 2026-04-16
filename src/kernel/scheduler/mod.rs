@@ -191,7 +191,7 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
         t.watchdog_window_min  = WATCHDOG_WINDOW_MIN;
         t.original_budget      = cfg.budget_cycles;
         // NAPOT PMP: 8KB stack bölgesini entry 8'e encode et
-        t.pmp_addr_napot       = (stack_base >> 2) | 0x3FF;
+        t.pmp_addr_napot       = (stack_base >> 2) | crate::arch::pmp::PMP_NAPOT_MASK_8KB;
 
         *TASK_COUNT.get_mut() += 1;
     }
@@ -227,13 +227,14 @@ pub(crate) fn schedule() {
         // Periyot dolarsa: bütçe sıfırla, SUSPENDED → READY
         let mut i: usize = 0;
         while i < *TASK_COUNT.get() {
-            if TASKS.get_mut()[i].period_ticks > 0 {
-                TASKS.get_mut()[i].period_counter = TASKS.get_mut()[i].period_counter.wrapping_add(1);
-                if TASKS.get_mut()[i].period_counter >= TASKS.get_mut()[i].period_ticks {
-                    TASKS.get_mut()[i].period_counter   = 0;
-                    TASKS.get_mut()[i].remaining_cycles = TASKS.get_mut()[i].budget_cycles;
-                    if TASKS.get_mut()[i].state == TaskState::Suspended {
-                        TASKS.get_mut()[i].state = TaskState::Ready;
+            let t = &mut TASKS.get_mut()[i];
+            if t.period_ticks > 0 {
+                t.period_counter = t.period_counter.wrapping_add(1);
+                if t.period_counter >= t.period_ticks {
+                    t.period_counter   = 0;
+                    t.remaining_cycles = t.budget_cycles;
+                    if t.state == TaskState::Suspended {
+                        t.state = TaskState::Ready;
                         // Not: Isolated task'lar bu blokta hiç eşleşmez —
                         // kasıtlı. Isolated → periyot reset ile READY yapılmaz.
                     }
@@ -249,22 +250,21 @@ pub(crate) fn schedule() {
         // ─── Faz 1.5: Watchdog + IPC rate reset ───
         let mut w: usize = 0;
         while w < *TASK_COUNT.get() {
-            let st = TASKS.get_mut()[w].state;
+            let t = &mut TASKS.get_mut()[w];
+            let st = t.state;
             if st == TaskState::Running || st == TaskState::Ready {
-                TASKS.get_mut()[w].ipc_send_count = 0;
-                TASKS.get_mut()[w].watchdog_counter += 1;
-                if TASKS.get_mut()[w].watchdog_limit > 0
-                    && TASKS.get_mut()[w].watchdog_counter >= TASKS.get_mut()[w].watchdog_limit
-                {
+                t.ipc_send_count = 0;
+                t.watchdog_counter += 1;
+                if t.watchdog_limit > 0 && t.watchdog_counter >= t.watchdog_limit {
+                    // Watchdog tetiklendi — t'yi drop et, apply_action aliasing safe
+                    let (id, dal) = (t.id, t.dal);
                     #[cfg(not(kani))]
                     crate::ipc::blackbox::log(
                         crate::ipc::blackbox::BlackboxEvent::WatchdogTimeout,
-                        TASKS.get_mut()[w].id, &[],
+                        id, &[],
                     );
                     let action = crate::kernel::policy::apply_policy(
-                        TASKS.get_mut()[w].id,
-                        PolicyEvent::WatchdogTimeout,
-                        TASKS.get_mut()[w].dal,
+                        id, PolicyEvent::WatchdogTimeout, dal,
                     );
                     apply_action(w, action);
                     TASKS.get_mut()[w].watchdog_counter = 0;
@@ -275,31 +275,31 @@ pub(crate) fn schedule() {
 
         // ─── Faz 2: Bütçe düşümü + politika (mevcut task) ───
         // budget_cycles == 0 → sınırsız bütçe (bütçe izleme devre dışı)
-        if TASKS.get_mut()[old].budget_cycles > 0 && TASKS.get_mut()[old].state == TaskState::Running {
-            TASKS.get_mut()[old].remaining_cycles =
-                TASKS.get_mut()[old].remaining_cycles.saturating_sub(CYCLES_PER_TICK);
-
-            if TASKS.get_mut()[old].remaining_cycles == 0 {
-                TASKS.get_mut()[old].state = TaskState::Suspended;
-
-                // Blackbox: bütçe tükenmesi kaydı
-                #[cfg(not(kani))]
-                {
-                    let ev = [TASKS.get_mut()[old].id, TASKS.get_mut()[old].dal];
-                    crate::ipc::blackbox::log(
-                        crate::ipc::blackbox::BlackboxEvent::BudgetExhausted,
-                        TASKS.get_mut()[old].id,
-                        &ev,
-                    );
+        let (budget_active, remaining, id_old, dal_old) = {
+            let t = &mut TASKS.get_mut()[old];
+            if t.budget_cycles > 0 && t.state == TaskState::Running {
+                t.remaining_cycles = t.remaining_cycles.saturating_sub(CYCLES_PER_TICK);
+                if t.remaining_cycles == 0 {
+                    t.state = TaskState::Suspended;
                 }
-
-                let action = crate::kernel::policy::apply_policy(
-                    TASKS.get_mut()[old].id,
-                    PolicyEvent::BudgetExhausted,
-                    TASKS.get_mut()[old].dal,
-                );
-                apply_action(old, action);
+                (true, t.remaining_cycles, t.id, t.dal)
+            } else {
+                (false, 1, 0, 0) // dummy values, budget_active=false → skip
             }
+        }; // t dropped here
+        if budget_active && remaining == 0 {
+            #[cfg(not(kani))]
+            {
+                let ev = [id_old, dal_old];
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::BudgetExhausted,
+                    id_old, &ev,
+                );
+            }
+            let action = crate::kernel::policy::apply_policy(
+                id_old, PolicyEvent::BudgetExhausted, dal_old,
+            );
+            apply_action(old, action);
         }
 
         // ─── Faz 3: En yüksek öncelikli Ready task ───
@@ -334,16 +334,10 @@ pub(crate) fn schedule() {
         #[cfg(not(kani))]
         {
             let napot_addr = TASKS.get()[next].pmp_addr_napot;
-            // 1. pmpcfg2 sıfırla — deny-by-default penceresi
-            core::arch::asm!("csrw pmpcfg2, zero");
-            // 2. NAPOT adresini yaz (zaten >> 2 encoded, çift shift yok)
-            core::arch::asm!("csrw pmpaddr8, {}", in(reg) napot_addr);
-            // 3. pmpcfg2 config: NAPOT, R+W, X=0 (W^X), L=0
-            let pmpcfg2_val: usize = 0x1B;
-            core::arch::asm!("csrw pmpcfg2, {}", in(reg) pmpcfg2_val);
+            crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
             // Shadow güncelle
             *crate::kernel::memory::PMP_SHADOW_ADDR8.get_mut() = napot_addr;
-            *crate::kernel::memory::PMP_SHADOW_CFG2.get_mut() = pmpcfg2_val;
+            *crate::kernel::memory::PMP_SHADOW_CFG2.get_mut() = crate::arch::pmp::PMP_NAPOT_RW;
         }
 
         let old_ctx = &mut TASKS.get_mut()[old].context as *mut TaskContext;
@@ -391,15 +385,12 @@ pub(crate) fn start_first_task() -> ! {
         *CURRENT_TASK.get_mut()  = 0;
 
         // PMP entry 8: ilk task'ın stack bölgesi
-        let napot_addr = TASKS.get()[0].pmp_addr_napot;
-        core::arch::asm!("csrw pmpcfg2, zero");
-        core::arch::asm!("csrw pmpaddr8, {}", in(reg) napot_addr);
-        let pmpcfg2_val: usize = 0x1B;
-        core::arch::asm!("csrw pmpcfg2, {}", in(reg) pmpcfg2_val);
         #[cfg(not(kani))]
         {
+            let napot_addr = TASKS.get()[0].pmp_addr_napot;
+            crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
             *crate::kernel::memory::PMP_SHADOW_ADDR8.get_mut() = napot_addr;
-            *crate::kernel::memory::PMP_SHADOW_CFG2.get_mut() = pmpcfg2_val;
+            *crate::kernel::memory::PMP_SHADOW_CFG2.get_mut() = crate::arch::pmp::PMP_NAPOT_RW;
         }
 
         let ctx     = &TASKS.get_mut()[0].context;

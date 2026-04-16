@@ -29,6 +29,15 @@ pub const PMP_W: u8 = 1 << 1;   // Write
 pub const PMP_X: u8 = 1 << 2;   // Execute
 pub const PMP_TOR: u8 = 1 << 3; // Top of Range mode
 pub const PMP_L: u8 = 1 << 7;   // Lock (M-mode dahil)
+#[allow(dead_code)]
+pub const PMP_NAPOT: u8 = 0x18; // NAPOT mode — bit [4:3] = 11
+
+/// Per-task stack NAPOT config: R+W, X=0 (W^X), L=0, NAPOT
+/// 0b00011011 = 0x1B
+pub const PMP_NAPOT_RW: usize = 0x1B;
+
+/// 8KB NAPOT mask: (size >> 3) - 1 = (8192 >> 3) - 1 = 0x3FF
+pub const PMP_NAPOT_MASK_8KB: usize = 0x3FF;
 
 // ═══════════════════════════════════════════════════════
 // PMP Address Register Yazma (pmpaddr0-7)
@@ -117,6 +126,27 @@ pub fn read_pmpaddr(index: usize) -> usize {
         }
     }
     val
+}
+
+// ═══════════════════════════════════════════════════════
+// Per-task PMP NAPOT reprogramlama
+// ═══════════════════════════════════════════════════════
+
+/// Per-task PMP NAPOT reprogramlama — deny-by-default sıra
+/// 1. pmpcfg2 = 0 (eski config temizle)
+/// 2. pmpaddr8 = NAPOT encoded adres
+/// 3. pmpcfg2 = config (NAPOT RW)
+///
+/// Caller: scheduler context switch + start_first_task
+/// Interrupt: trap context'inde çağrılır, MIE=0
+#[cfg(not(kani))]
+pub fn write_per_task_napot(napot_addr: usize, cfg_val: usize) {
+    // SAFETY: CSR write in M-mode, interrupt disabled (trap context).
+    unsafe {
+        asm!("csrw pmpcfg2, zero");
+        asm!("csrw pmpaddr8, {}", in(reg) napot_addr);
+        asm!("csrw pmpcfg2, {}", in(reg) cfg_val);
+    }
 }
 
 // ═══════════════════════════════════════════════════════

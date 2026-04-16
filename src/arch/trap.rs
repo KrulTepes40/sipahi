@@ -36,6 +36,7 @@ const ECALL_M: usize = 11;
 static TICK_COUNT: SingleHartCell<u64> = SingleHartCell::new(0);
 
 #[cfg(not(kani))]
+#[allow(dead_code)]
 pub fn get_tick_count() -> u64 {
     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
     unsafe { *TICK_COUNT.get() }
@@ -75,18 +76,20 @@ pub extern "C" fn trap_handler(
                 // Machine Timer Interrupt
                 // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
                 unsafe { *TICK_COUNT.get_mut() += 1 };
-                let ticks = get_tick_count();
 
-                if ticks <= 5 {
-                    uart::puts("[TICK] #");
-                    print_u64(ticks);
-                    uart::puts(" mtime=");
-                    print_u64(clint::read_mtime());
-                    uart::println("");
-                }
-
-                if ticks == 5 {
-                    uart::println("[TICK] (further ticks silent)");
+                #[cfg(feature = "debug-boot")]
+                {
+                    let ticks = get_tick_count();
+                    if ticks <= 5 {
+                        uart::puts("[TICK] #");
+                        print_u64(ticks);
+                        uart::puts(" mtime=");
+                        print_u64(clint::read_mtime());
+                        uart::println("");
+                    }
+                    if ticks == 5 {
+                        uart::println("[TICK] (further ticks silent)");
+                    }
                 }
 
                 clint::schedule_next_tick();

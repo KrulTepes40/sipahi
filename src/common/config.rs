@@ -176,8 +176,14 @@ pub const WCET_COMPUTE_MATH: u64 = 200;
 /// Blackbox depolama boyutu (byte) — PMP R4 bölgesi, battery-backed SRAM/FRAM
 pub const BLACKBOX_SIZE: usize = 8192; // 8KB
 
-/// Tek blackbox kaydı boyutu (byte) — [MAGIC:4][VER:2][SEQ:2][TS:4][TASK:1][EVENT:1][DATA:46][CRC:4]
+/// Tek blackbox kaydı boyutu (byte)
+/// repr(C) layout: [MAGIC:4][VER:2][PAD:2][SEQ:4][TS:4][TASK:1][EVENT:1][DATA:42][CRC:4] = 64
+/// PAD: u16 version sonrası u32 seq alignment için repr(C) padding
 pub const BLACKBOX_RECORD_SIZE: usize = 64;
+
+/// Blackbox record data alanı boyutu (byte)
+/// BLACKBOX_RECORD_SIZE(64) - header(18, padding dahil) - CRC(4) = 42
+pub const BLACKBOX_DATA_SIZE: usize = 42;
 
 /// Maksimum kayıt sayısı — BLACKBOX_SIZE / BLACKBOX_RECORD_SIZE
 pub const BLACKBOX_MAX_RECORDS: usize = 128;

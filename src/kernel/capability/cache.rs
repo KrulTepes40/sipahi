@@ -43,23 +43,28 @@ impl TokenCache {
     }
 
     /// Sabit zamanlı lookup — 4 slot her zaman taranır, erken çıkış YOK
-    /// Dal-free: bitwise AND ile hit accumulate + TTL kontrolü
+    /// Branch-free: bitwise AND ile hit accumulate + TTL kontrolü
+    /// get_tick() bir kez çağrılır — 4× volatile read yerine 1×
     pub fn lookup(&self, task_id: u8, token_id: u8, resource: ResourceId, action: u8) -> bool {
+        let now = crate::ipc::blackbox::get_tick(); // bir kez, döngü dışında
         let mut found: u8 = 0;
         let mut i = 0;
         while i < CACHE_SLOTS {
             let e = &self.entries[i];
-            let not_expired: bool = if e.expires > 0 {
-                crate::ipc::blackbox::get_tick() <= e.expires as u64
-            } else {
-                true
-            };
+            // Branch-free expiry check:
+            // expires == 0 → sonsuz (is_infinite=1, not_expired irrelevant)
+            // expires > 0 → now <= expires ise geçerli
+            let expires = e.expires as u64;
+            let is_infinite = (expires == 0) as u8;
+            let not_expired = (now <= expires) as u8;
+            let expiry_ok = is_infinite | not_expired;
+
             let hit = (e.valid as u8)
                 & ((e.owner_task_id == task_id) as u8)
                 & ((e.token_id == token_id) as u8)
                 & ((e.resource == resource) as u8)
                 & ((e.action   == action)   as u8)
-                & (not_expired as u8);
+                & expiry_ok;
             found |= hit;
             i += 1;
         }
