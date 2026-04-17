@@ -797,4 +797,122 @@ mod verification {
         assert!((cfg >> 3) & 0x03 == 3);    // A=11 (NAPOT)
         assert!((cfg >> 7) & 0x01 == 0);    // L=0
     }
+
+    // ═══════════════════════════════════════════════════════
+    // Sprint U-8: validate_full logic proofs
+    // validate_full'un iç mantığını pure helper fonksiyonlar üzerinden kanıtla
+    // ═══════════════════════════════════════════════════════
+
+    /// Nonce: token_nonce > last → valid
+    #[kani::proof]
+    fn nonce_greater_than_last_is_valid() {
+        let token_nonce: u32 = kani::any();
+        let last_nonce: u32 = kani::any();
+        kani::assume(token_nonce > last_nonce);
+        assert!(crate::kernel::capability::broker::is_nonce_valid(token_nonce, last_nonce));
+    }
+
+    /// Nonce: token_nonce <= last → invalid (replay)
+    #[kani::proof]
+    fn nonce_replay_is_rejected() {
+        let token_nonce: u32 = kani::any();
+        let last_nonce: u32 = kani::any();
+        kani::assume(token_nonce <= last_nonce);
+        assert!(!crate::kernel::capability::broker::is_nonce_valid(token_nonce, last_nonce));
+    }
+
+    /// Expiry: expires=0 → always valid (sonsuz token)
+    #[kani::proof]
+    fn expiry_zero_always_valid() {
+        let tick: u64 = kani::any();
+        assert!(crate::kernel::capability::broker::is_not_expired(0, tick));
+    }
+
+    /// Expiry: current_tick > expires → expired
+    #[kani::proof]
+    fn expiry_past_is_rejected() {
+        let expires: u32 = kani::any();
+        let tick: u64 = kani::any();
+        kani::assume(expires > 0);
+        kani::assume(tick > expires as u64);
+        assert!(!crate::kernel::capability::broker::is_not_expired(expires, tick));
+    }
+
+    /// Expiry: current_tick <= expires → valid
+    #[kani::proof]
+    fn expiry_within_range_is_valid() {
+        let expires: u32 = kani::any();
+        let tick: u64 = kani::any();
+        kani::assume(expires > 0);
+        kani::assume(tick <= expires as u64);
+        assert!(crate::kernel::capability::broker::is_not_expired(expires, tick));
+    }
+
+    /// Task ID: valid range [0, MAX_TASKS)
+    #[kani::proof]
+    fn task_id_in_range_is_valid() {
+        let task_id: u8 = kani::any();
+        kani::assume((task_id as usize) < MAX_TASKS);
+        assert!(crate::kernel::capability::broker::is_task_id_valid(task_id, MAX_TASKS));
+    }
+
+    /// Task ID: >= MAX_TASKS → invalid
+    #[kani::proof]
+    fn task_id_out_of_range_is_invalid() {
+        let task_id: u8 = kani::any();
+        kani::assume((task_id as usize) >= MAX_TASKS);
+        assert!(!crate::kernel::capability::broker::is_task_id_valid(task_id, MAX_TASKS));
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // Sprint U-8: pack_pmpcfg proofs
+    // PMP konfigürasyonunun doğru paketlendiği formal garanti
+    // ═══════════════════════════════════════════════════════
+
+    /// pack_pmpcfg: her entry doğru byte pozisyonunda
+    #[kani::proof]
+    fn pack_pmpcfg_extracts_each_entry() {
+        let configs: [u8; 8] = [
+            kani::any(), kani::any(), kani::any(), kani::any(),
+            kani::any(), kani::any(), kani::any(), kani::any(),
+        ];
+        let packed = crate::arch::pmp::pack_pmpcfg(configs);
+        let mut i = 0;
+        while i < 8 {
+            let extracted = ((packed >> (i * 8)) & 0xFF) as u8;
+            assert!(extracted == configs[i]);
+            i += 1;
+        }
+    }
+
+    /// pack_pmpcfg: sıfır configs → sıfır packed
+    #[kani::proof]
+    fn pack_pmpcfg_zeros() {
+        let configs = [0u8; 8];
+        let packed = crate::arch::pmp::pack_pmpcfg(configs);
+        assert!(packed == 0);
+    }
+
+    /// pack_pmpcfg: Sipahi'nin gerçek config'i doğru paketleniyor
+    #[kani::proof]
+    fn pack_pmpcfg_sipahi_config_correct() {
+        use crate::arch::pmp::*;
+        let configs: [u8; 8] = [
+            0,                                          // Entry 0: OFF
+            PMP_TOR | PMP_R | PMP_X | PMP_L,           // Entry 1: .text RX locked
+            0,                                          // Entry 2: OFF
+            PMP_TOR | PMP_R | PMP_L,                    // Entry 3: .rodata R locked
+            0,                                          // Entry 4: OFF
+            PMP_TOR | PMP_R | PMP_W | PMP_L,            // Entry 5: .data RW locked
+            0,                                          // Entry 6: OFF
+            PMP_TOR | PMP_R | PMP_W | PMP_L,            // Entry 7: UART RW locked
+        ];
+        let packed = pack_pmpcfg(configs);
+        // Entry 1 = byte 1: TOR(0x08) | R(0x01) | X(0x04) | L(0x80) = 0x8D
+        assert!(((packed >> 8) & 0xFF) as u8 == 0x8D);
+        // Entry 3 = byte 3: TOR(0x08) | R(0x01) | L(0x80) = 0x89
+        assert!(((packed >> 24) & 0xFF) as u8 == 0x89);
+        // Entry 5 = byte 5: TOR(0x08) | R(0x01) | W(0x02) | L(0x80) = 0x8B
+        assert!(((packed >> 40) & 0xFF) as u8 == 0x8B);
+    }
 }

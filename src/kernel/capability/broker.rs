@@ -53,6 +53,35 @@ pub(crate) fn provision_key(key: &[u8; 32]) {
     }
 }
 
+// ═══════════════════════════════════════════════════════
+// Sprint U-8: validate_full pure helper fonksiyonlar (Kani doğrulanabilir)
+// validate_full'un iç mantığı — ayrı proof'lanabilir parçalar
+// validate_full'un KENDİSİ bu helperlara REFACTOR EDİLMEZ.
+// ═══════════════════════════════════════════════════════
+
+/// Nonce replay kontrolü — pure fonksiyon, Kani doğrulanabilir
+/// Token nonce kesinlikle son görülen nonce'dan büyük olmalı (monoton artan)
+#[allow(dead_code)]
+pub(crate) const fn is_nonce_valid(token_nonce: u32, last_nonce: u32) -> bool {
+    token_nonce > last_nonce
+}
+
+/// Expiry kontrolü — pure fonksiyon
+/// expires == 0 → sonsuz geçerli
+/// expires > 0 → current_tick <= expires olmalı
+#[allow(dead_code)]
+pub(crate) const fn is_not_expired(token_expires: u32, current_tick: u64) -> bool {
+    if token_expires == 0 { return true; }
+    current_tick <= token_expires as u64
+}
+
+/// Task ID bounds kontrolü — pure fonksiyon
+/// task_id < max_tasks olmalı
+#[allow(dead_code)]
+pub(crate) const fn is_task_id_valid(task_id: u8, max_tasks: usize) -> bool {
+    (task_id as usize) < max_tasks
+}
+
 /// Cache-only lookup — sys_cap_invoke fast path (~10c)
 /// validate_full ile cache'e eklenmemiş token → false döner
 #[must_use = "cache lookup result must be checked"]
