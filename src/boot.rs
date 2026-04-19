@@ -23,11 +23,17 @@ pub fn init() {
     arch::uart::println("[HAL]  IOPMP stub ready");
 
     // ─── Capability MAC key provisioning ───
+    // Sprint U-9: test-keys gate — production'da HSM/OTP'den gelmeli.
+    // no-test-keys build'de KEY_READY=false → capability sistemi kapalı
+    // (validate_full her zaman false → güvenli fail-closed davranış).
+    #[cfg(feature = "test-keys")]
     {
-        let mac_key = [0x5Au8; 32]; // QEMU test key (production: HSM'den gelir)
+        let mac_key = [0x5Au8; 32];
         kernel::capability::broker::provision_key(&mac_key);
-        arch::uart::println("[BOOT] Capability MAC key provisioned");
+        arch::uart::println("[BOOT] Capability MAC key provisioned (TEST KEY)");
     }
+    #[cfg(not(feature = "test-keys"))]
+    arch::uart::println("[BOOT] MAC key SKIP (no test-keys, production: HSM/OTP v2.0)");
 
     // ─── Secure boot doğrulama ───
     #[cfg(feature = "test-keys")]

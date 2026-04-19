@@ -28,7 +28,10 @@ _start:
     # 3. Stack pointer'ı ayarla
     la      sp, __stack_top
 
-    # 4. Rust'a atla (geri dönmez)
+    # 4. mscratch = kernel stack top (Sprint U-9: trap handler swap uses this)
+    csrw    mscratch, sp
+
+    # 5. Rust'a atla (geri dönmez)
     call    rust_main
 
     # Rust'tan dönerse (olmamalı) → sonsuz döngü

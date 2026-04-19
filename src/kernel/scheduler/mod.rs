@@ -144,6 +144,8 @@ static CURRENT_TASK: SingleHartCell<usize> = SingleHartCell::new(0);
 extern "C" {
     fn switch_context(old: *mut TaskContext, new: *const TaskContext);
     fn task_trampoline() -> !;
+    /// Linker sembolü — kernel stack üst sınırı (trap handler kernel_sp)
+    static __stack_top: u8;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -398,11 +400,17 @@ pub(crate) fn start_first_task() -> ! {
         let sp_val  = ctx.sp;
         let mstatus = ctx.mstatus;  // MPP=U, MPIE=1
 
+        // Sprint U-9: mscratch = kernel_sp — trap handler swap için şart
+        // extern static + register operand (PIE/PIC güvenli, `la` kullanma)
+        let kernel_sp = &__stack_top as *const u8 as usize;
+
         core::arch::asm!(
+            "csrw mscratch, {ksp}",
             "csrw mepc, {entry}",
             "csrw mstatus, {mstatus}",
             "mv sp, {sp}",
             "mret",
+            ksp     = in(reg) kernel_sp,
             entry   = in(reg) entry,
             mstatus = in(reg) mstatus,
             sp      = in(reg) sp_val,

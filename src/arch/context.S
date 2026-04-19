@@ -1,11 +1,21 @@
 # Sipahi Microkernel — Context Switch Assembly
-# U-mode altyapısı: Task register save/restore + mepc/mstatus
+# Sprint U-9: user_sp kaydı sabit trap frame adresinden (mscratch swap sonrası)
 #
 # switch_context(old_ctx: *mut TaskContext, new_ctx: *const TaskContext)
 #   a0 = eski task'ın context pointer'ı (kaydet)
 #   a1 = yeni task'ın context pointer'ı (yükle)
 #
 # 14 callee-saved + mepc + mstatus = 16 alan × 8 byte = 128 byte
+#
+# ÖNEMLİ: switch_context trap handler içinden çağrılıyor. sp = kernel_sp
+# olmasına rağmen trap frame çok aşağıda DEĞİL — her Rust fonksiyonu
+# kendi frame'ini itmiş. `sd sp, 8(a0)` YANLIŞ: kernel sp'sini kaydeder,
+# user_sp'yi DEĞİL. `ld sp, 8(a1)` YANLIŞ: TaskContext.sp'den kernel sp
+# yükler, ama bu task'ın user_sp'sidir.
+#
+# ÇÖZÜM: user_sp trap frame'inde kaydedilmiş — sabit adres __stack_top - 16
+# (trap_entry: addi sp, sp, -272; user_sp offset 256 → __stack_top-272+256).
+# switch_context bu sabit adresten okur/yazar. sp'ye dokunmaz.
 
 .section .text
 .global switch_context
@@ -13,7 +23,13 @@
 switch_context:
     # ─── Eski task'ın register'larını kaydet ───
     sd      ra,    0(a0)
-    sd      sp,    8(a0)
+
+    # user_sp: trap frame'den oku (SABİT ADRES __stack_top - 16)
+    # sp trap frame'i göstermiyor (Rust call zinciri itti)
+    la      t0, __stack_top
+    ld      t1, -16(t0)        # trap frame user_sp slot
+    sd      t1,    8(a0)       # TaskContext.sp = user_sp
+
     sd      s0,   16(a0)
     sd      s1,   24(a0)
     sd      s2,   32(a0)
@@ -33,7 +49,12 @@ switch_context:
 
     # ─── Yeni task'ın register'larını yükle ───
     ld      ra,    0(a1)
-    ld      sp,    8(a1)
+
+    # user_sp: TaskContext'ten trap frame'e yaz (SABİT ADRES __stack_top - 16)
+    ld      t1,    8(a1)       # t1 = yeni task'ın user_sp
+    la      t0, __stack_top
+    sd      t1, -16(t0)        # trap frame user_sp slot güncelle
+
     ld      s0,   16(a1)
     ld      s1,   24(a1)
     ld      s2,   32(a1)
