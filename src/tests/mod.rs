@@ -75,6 +75,23 @@ pub fn test_policy_engine() {
             "[TEST] DeadlineMiss DAL-D→Isolate ✓",
             "[TEST] DeadlineMiss DAL-D FAIL ✗");
 
+        // Sprint U-11: StackOverflow escalation (restart 0-2 → Restart, 3+ → Isolate)
+        let a_so = decide_action(PolicyEvent::StackOverflow as u8, 0, 2);
+        test_result(a_so == FailureMode::Restart,
+            "[TEST] StackOverflow(0)→Restart ✓",
+            "[TEST] StackOverflow(0)→Restart FAIL ✗");
+
+        let a_so3 = decide_action(PolicyEvent::StackOverflow as u8, 3, 2);
+        test_result(a_so3 == FailureMode::Isolate,
+            "[TEST] StackOverflow(3)→Isolate ✓",
+            "[TEST] StackOverflow(3)→Isolate FAIL ✗");
+
+        // Sprint U-11: MultiModuleCrash → Shutdown
+        let a_mc = decide_action(PolicyEvent::MultiModuleCrash as u8, 0, 0);
+        test_result(a_mc == FailureMode::Shutdown,
+            "[TEST] MultiModuleCrash→Shutdown ✓",
+            "[TEST] MultiModuleCrash→Shutdown FAIL ✗");
+
         arch::uart::println("[TEST] ★ Policy engine OK ★");
     }
 }

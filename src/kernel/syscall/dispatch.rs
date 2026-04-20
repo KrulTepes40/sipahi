@@ -7,11 +7,17 @@
 use crate::arch::uart;
 
 use crate::common::sync::SingleHartCell;
+use crate::common::config::MAX_TASKS;
 
 pub use crate::common::config::{
     SYS_CAP_INVOKE, SYS_IPC_SEND, SYS_IPC_RECV,
     SYS_YIELD, SYS_TASK_INFO, SYSCALL_COUNT,
 };
+
+/// Ardışık cap_invoke fail sayacı (per-task) — 3 fail → CapViolation
+/// Başarılı cap_invoke sıfırlar. Sadece ardışık fail tetikler.
+#[cfg(not(kani))]
+static CAP_FAIL_COUNT: SingleHartCell<[u8; MAX_TASKS]> = SingleHartCell::new([0u8; MAX_TASKS]);
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -242,6 +248,36 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
             uart::puts(") ");
             uart::println(if ok { "OK" } else { "DENIED" });
         }
+
+        // CapViolation detection — 3 ardışık fail → policy tetikle
+        // SAFETY: MIE=0 in trap context, single-hart.
+        unsafe {
+            if ok {
+                // Başarılı cap_invoke → fail counter sıfırla
+                (*CAP_FAIL_COUNT.get_mut())[caller as usize] = 0;
+            } else {
+                let count = &mut (*CAP_FAIL_COUNT.get_mut())[caller as usize];
+                *count = count.saturating_add(1);
+                if *count >= 3 {
+                    // 3 ardışık cap fail → CapViolation policy
+                    *count = 0; // reset (tekrar kuluçka periyodu)
+                    crate::ipc::blackbox::log(
+                        crate::ipc::blackbox::BlackboxEvent::CapViolation,
+                        caller, &[],
+                    );
+                    let dal = crate::kernel::scheduler::TASKS.get()[caller as usize].dal;
+                    let cap_action = crate::kernel::policy::apply_policy(
+                        caller,
+                        crate::kernel::policy::PolicyEvent::CapViolation,
+                        dal,
+                    );
+                    crate::kernel::scheduler::apply_action_from_trap(
+                        caller as usize, cap_action,
+                    );
+                }
+            }
+        }
+
         if ok { E_OK } else { E_NO_CAPABILITY }
     }
     #[cfg(kani)]

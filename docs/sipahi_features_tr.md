@@ -193,11 +193,13 @@ Her cache entry'nin `expires` alanı var. `lookup()` sırasında `get_tick() <= 
 
 ---
 
-## 7. Policy Engine — 6 Modlu Arıza Politikası
+## 7. Policy Engine — 5+1 Modlu Arıza Politikası
 
 ### 7.1 Tasarım
 
 `decide_action(event, restart_count, dal)` pure fonksiyon — static mut yok, side effect yok. 9 event tipi, 6 FailureMode: Restart, Degrade, Isolate, Failover, Alert, Shutdown. Match tablosu — her yol sabit cycle.
+
+**5+1 mod:** Failover v1.0'da Degrade'e fallback — hot-standby task switch mekanizması v2.0'da planlanıyor. `decide_action → Failover → runtime Degrade` uygular, blackbox kaydında `PolicyFailover` event olarak ayrışır (forensics için).
 
 ### 7.2 Escalation Zincirleri
 

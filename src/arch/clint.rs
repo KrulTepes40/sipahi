@@ -28,13 +28,25 @@ pub fn init_timer() {
     write_mtimecmp(now + ticks_per_period());
 }
 
+/// Schedule next tick. Returns true if overrun detected
+/// (current mtime already past target → tick deadline missed).
 #[cfg(not(kani))]
-pub fn schedule_next_tick() {
+pub fn schedule_next_tick() -> bool {
     // mtimecmp bazlı ilerleme — birikimli drift önleme
     let addr = (CLINT_BASE + CLINT_MTIMECMP_OFFSET) as *const u64;
     // SAFETY: Volatile read from MMIO register at hardware-guaranteed address.
     let prev = unsafe { core::ptr::read_volatile(addr) };
-    write_mtimecmp(prev + ticks_per_period());
+    let target = prev + ticks_per_period();
+    let now = read_mtime();
+    if now > target {
+        // OVERRUN: trap handler + schedule() daha uzun sürdü
+        // Catch up — bir sonraki tick'i now bazlı ayarla
+        write_mtimecmp(now + ticks_per_period());
+        true
+    } else {
+        write_mtimecmp(target);
+        false
+    }
 }
 
 #[cfg(not(kani))]

@@ -164,6 +164,16 @@ pub(crate) fn init_pmp() {
 
 use crate::common::fmt::print_hex;
 
+/// Task stacks bölgesi adres aralığı (trap handler stack overflow detection için)
+/// Dönüş: (start, end) — linker symbol adresleri
+#[cfg(not(kani))]
+pub(crate) fn task_stacks_range() -> (usize, usize) {
+    // SAFETY: Linker-provided symbols — valid for duration of program.
+    let start = unsafe { &__task_stacks_start as *const u8 as usize };
+    let end   = unsafe { &__task_stacks_end   as *const u8 as usize };
+    (start, end)
+}
+
 /// PMP bütünlük doğrulama — shadow ile karşılaştır
 #[cfg(not(kani))]
 pub(crate) fn verify_pmp_integrity() -> bool {

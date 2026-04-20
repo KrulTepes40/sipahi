@@ -78,10 +78,10 @@ pub extern "C" fn trap_handler(
                 // Machine Timer Interrupt
                 // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
                 unsafe { *TICK_COUNT.get_mut() += 1 };
+                let ticks = unsafe { *TICK_COUNT.get() };
 
                 #[cfg(feature = "debug-boot")]
                 {
-                    let ticks = get_tick_count();
                     if ticks <= 5 {
                         uart::puts("[TICK] #");
                         print_u64(ticks);
@@ -94,7 +94,26 @@ pub extern "C" fn trap_handler(
                     }
                 }
 
-                clint::schedule_next_tick();
+                let overrun = clint::schedule_next_tick();
+                // Grace period: ilk 10 tick'te overrun ignore (boot testleri
+                // mtime'ı çok ilerletiyor, false positive önle)
+                if overrun && ticks > 10 {
+                    let task_id = scheduler::current_task_id();
+                    // SAFETY: MIE=0 in trap context, single-hart.
+                    let dal = unsafe {
+                        crate::kernel::scheduler::TASKS.get()[task_id as usize].dal
+                    };
+                    crate::ipc::blackbox::log(
+                        crate::ipc::blackbox::BlackboxEvent::DeadlineMiss,
+                        task_id, &[],
+                    );
+                    let action = crate::kernel::policy::apply_policy(
+                        task_id,
+                        crate::kernel::policy::PolicyEvent::DeadlineMiss,
+                        dal,
+                    );
+                    scheduler::apply_action_from_trap(task_id as usize, action);
+                }
                 scheduler::schedule();
             }
             _ => {
@@ -137,42 +156,58 @@ pub extern "C" fn trap_handler(
                 crate::kernel::scheduler::handle_illegal_instruction();
                 0
             }
-            5 => {
-                // LoadAccessFault — PMP violation (U-mode, match yok veya izin yok)
+            5 | 7 => {
+                // Load/StoreAccessFault — PMP violation
+                // Fault adresi task stacks bölgesinde → StackOverflow (policy path)
+                // Dışında → genel PmpFail (WasmTrap via handle_illegal_instruction)
+                let fault_addr = crate::arch::csr::read_mtval();
+                let task_id = crate::kernel::scheduler::current_task_id();
+
                 #[cfg(feature = "debug-boot")]
                 {
-                    let fault_addr = crate::arch::csr::read_mtval();
-                    uart::puts("[TRAP] LoadAccessFault at 0x");
+                    let fault_name = if mcause == 5 {
+                        "LoadAccessFault"
+                    } else {
+                        "StoreAccessFault"
+                    };
+                    uart::puts("[TRAP] ");
+                    uart::puts(fault_name);
+                    uart::puts(" at 0x");
                     print_hex(fault_addr);
                     uart::puts(" mepc=0x");
                     print_hex(_mepc);
-                    uart::println(" → ISOLATE");
+                    uart::println("");
                 }
+
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PmpFail,
-                    crate::kernel::scheduler::current_task_id(),
-                    &[],
+                    task_id, &[],
                 );
-                crate::kernel::scheduler::handle_illegal_instruction();
-                0
-            }
-            7 => {
-                // StoreAccessFault — PMP violation (stack overflow veya cross-task yazma)
-                #[cfg(feature = "debug-boot")]
-                {
-                    let fault_addr = crate::arch::csr::read_mtval();
-                    uart::puts("[TRAP] StoreAccessFault at 0x");
-                    print_hex(fault_addr);
-                    uart::puts(" mepc=0x");
-                    print_hex(_mepc);
-                    uart::println(" → ISOLATE");
+
+                // Fault adresi task stacks bölgesinde mi?
+                let (stack_start, stack_end) =
+                    crate::kernel::memory::task_stacks_range();
+                let in_task_stacks = fault_addr >= stack_start
+                                  && fault_addr < stack_end;
+
+                if in_task_stacks {
+                    // Stack overflow veya cross-task stack erişimi
+                    // SAFETY: MIE=0 in trap context, single-hart.
+                    let dal = unsafe {
+                        crate::kernel::scheduler::TASKS.get()[task_id as usize].dal
+                    };
+                    let action = crate::kernel::policy::apply_policy(
+                        task_id,
+                        crate::kernel::policy::PolicyEvent::StackOverflow,
+                        dal,
+                    );
+                    crate::kernel::scheduler::apply_action_from_trap(
+                        task_id as usize, action,
+                    );
+                } else {
+                    // Genel PMP violation (WASM arena, kernel bölgesi vb.)
+                    crate::kernel::scheduler::handle_illegal_instruction();
                 }
-                crate::ipc::blackbox::log(
-                    crate::ipc::blackbox::BlackboxEvent::PmpFail,
-                    crate::kernel::scheduler::current_task_id(),
-                    &[],
-                );
-                crate::kernel::scheduler::handle_illegal_instruction();
                 0
             }
             _ => {

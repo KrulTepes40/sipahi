@@ -193,11 +193,13 @@ Each cache entry has an `expires` field. During `lookup()`, a `get_tick() <= exp
 
 ---
 
-## 7. Policy Engine — 6-Mode Failure Policy
+## 7. Policy Engine — 5+1 Mode Failure Policy
 
 ### 7.1 Design
 
 `decide_action(event, restart_count, dal)` is a pure function — no static mut, no side effects. 9 event types, 6 FailureModes: Restart, Degrade, Isolate, Failover, Alert, Shutdown. Match table — every path takes constant cycles.
+
+**5+1 mode:** In v1.0, Failover falls back to Degrade — hot-standby task switch mechanism is planned for v2.0. `decide_action → Failover → runtime applies Degrade`, while the blackbox records it as `PolicyFailover` event (for forensics).
 
 ### 7.2 Escalation Chains
 

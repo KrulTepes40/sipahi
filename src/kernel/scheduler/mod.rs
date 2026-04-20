@@ -218,11 +218,18 @@ pub(crate) fn schedule() {
         // ─── PMP bütünlük doğrulama ───
         #[cfg(not(kani))]
         if !crate::kernel::memory::verify_pmp_integrity() {
+            #[cfg(feature = "debug-boot")]
             crate::arch::uart::println("[PMP] INTEGRITY FAIL — SHUTDOWN");
             crate::ipc::blackbox::log(
                 crate::ipc::blackbox::BlackboxEvent::PmpFail, 0xFF, &[],
             );
-            shutdown_system();
+            // Policy path — decide_action(PmpIntegrityFail, *, *) → Shutdown
+            let action = crate::kernel::policy::apply_policy(
+                0xFF_u8, // kernel pseudo-task
+                PolicyEvent::PmpIntegrityFail,
+                0_u8, // DAL-A
+            );
+            apply_action(0xFF_usize, action);
         }
 
         // ─── Faz 1: Periyot ilerletme (tüm task'lar) ───
@@ -425,6 +432,14 @@ pub(crate) fn start_first_task() -> ! {
 
 /// Policy kararını uygula
 fn apply_action(task_id: usize, mode: FailureMode) {
+    // Kernel-level event (task_id >= MAX_TASKS, örn. 0xFF) → sadece Shutdown geçerli
+    // PmpIntegrityFail, MultiModuleCrash gibi global event'ler buraya düşer.
+    if task_id >= MAX_TASKS {
+        if mode == FailureMode::Shutdown {
+            shutdown_system();
+        }
+        return; // kernel event, task operation yok
+    }
     match mode {
         FailureMode::Restart => {
             // Spam önleme: sadece ilk restart'ta yazdır (count artırılmış, 1 == ilk kez)
@@ -472,10 +487,13 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             degrade_system();
         }
         FailureMode::Failover => {
-            // v1.0 stub: yedek task mekanizması Sprint 12+
+            // v1.0: Failover = Degrade (hot-standby task mekanizması v2.0'da)
+            // decide_action → Failover → runtime Degrade uygular
+            // Blackbox kaydında PolicyFailover olarak ayrışır (forensics)
             #[cfg(not(kani))]
             {
-                crate::arch::uart::println("[POLICY] FAILOVER (stub) → DEGRADE");
+                #[cfg(feature = "trace")]
+                crate::arch::uart::println("[POLICY] FAILOVER → DEGRADE (stub)");
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyFailover,
                     // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
@@ -620,6 +638,37 @@ fn isolate_task(id: usize) {
             crate::kernel::capability::broker::invalidate_task(TASKS.get_mut()[id].id);
         }
     }
+
+    // MultiModuleCrash detection — 2+ task izole olursa global shutdown
+    // Threshold ≥ 2: 8 task'ta %25 kayıp → Shutdown (safety-critical'de
+    // erken shutdown geç shutdown'dan güvenli)
+    #[cfg(not(kani))]
+    {
+        let mut isolated_count: u8 = 0;
+        let mut j: usize = 0;
+        // SAFETY: MIE=0 in trap context, single-hart.
+        unsafe {
+            while j < *TASK_COUNT.get() {
+                if TASKS.get()[j].state == TaskState::Isolated {
+                    isolated_count += 1;
+                }
+                j += 1;
+            }
+        }
+        if isolated_count >= 2 {
+            crate::ipc::blackbox::log(
+                crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
+                0xFF, &[],
+            );
+            let action = crate::kernel::policy::apply_policy(
+                0xFF_u8,
+                PolicyEvent::MultiModuleCrash,
+                0_u8, // DAL-A
+            );
+            apply_action(0xFF_usize, action);
+            // decide_action(MultiModuleCrash, *, *) → Shutdown
+        }
+    }
 }
 
 /// Kapatma — güvenli durum, sonsuz bekleme
@@ -638,6 +687,13 @@ fn shutdown_system() -> ! {
 /// Mevcut çalışan task'ın ID'sini döndür
 pub(crate) fn current_task_id() -> u8 {
     unsafe { *CURRENT_TASK.get() as u8 }
+}
+
+/// Trap handler'dan policy action uygulama — apply_action wrapper
+/// apply_action private, trap handler erişimi için pub(crate) gerekli
+#[cfg(not(kani))]
+pub(crate) fn apply_action_from_trap(task_id: usize, mode: FailureMode) {
+    apply_action(task_id, mode);
 }
 
 /// Watchdog kick — task yield etti, canlılık kanıtı
