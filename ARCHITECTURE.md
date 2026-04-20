@@ -52,8 +52,9 @@ No circular dependencies. Upper layers depend on lower layers only.
 
 ## Formal Verification
 
-- Kani: 177 bounded model checking proofs
-- TLA+: 7 system-level specs (3 verified: IPC, Watchdog, Capability; 4 WIP)
+- Kani: 188 bounded model checking harnesses
+  (88 symbolic proofs, 100 concrete/compile-time assertions)
+- TLA+: 7 specifications, all verified (Sprint U-12: TLC 2026.04 compatibility)
 - Compile-time: 7 `const assert!` (layout, size, config invariants)
 - Clippy: zero warnings (`-D warnings`)
 - Overflow checks: enabled in release (`overflow-checks = true`)

@@ -2,9 +2,16 @@
 (* Sipahi Microkernel — Scheduler TLA+ Specification
    Models: task state transitions, fixed-priority preemptive scheduling,
            period-based budget replenishment.
-   Verifies: starvation freedom, priority correctness, state invariants. *)
+   Verifies: starvation freedom, priority correctness, state invariants.
 
-EXTENDS Integers, FiniteSets, Sequences
+   NOTE: This spec models policy DECISION logic, not trigger mechanisms.
+   Runtime trigger conditions (e.g., 3× consecutive cap fail → CapViolation,
+   isolated_count ≥ 2 → MultiModuleCrash, CLINT overrun → DeadlineMiss)
+   are implementation details verified by Kani proofs and runtime tests.
+   This spec verifies that GIVEN a PolicyEvent, the correct FailureMode
+   is selected and escalation terminates. *)
+
+EXTENDS Integers, FiniteSets, Sequences, TLC
 
 CONSTANTS
     TASKS,          \* Set of task IDs (e.g., {0, 1, 2, 3})
@@ -78,9 +85,10 @@ WakeupSuspended ==
     ]
 
 (* ═══ Phase 2: Budget consumption ═══ *)
-ConsumeBudget(t) ==
-    IF budget[t] > 0
-    THEN budget[t] - 1
+(* Argument is a budget VALUE, not a task id — callers pass newBudget[t] *)
+ConsumeBudget(b) ==
+    IF b > 0
+    THEN b - 1
     ELSE 0
 
 (* ═══ Phase 3: Schedule tick ═══ *)

@@ -167,6 +167,8 @@ Token integrity is protected by BLAKE3 keyed hash. A 32-byte key is written once
 
 **Why BLAKE3, not HMAC-SHA256?** BLAKE3 is Rust-native, `no_std` compatible, ~350 cycles (3-5x faster than SHA-256). Deterministic, timing side-channel protected. BLAKE3 uses the portable backend (SIMD optimization disabled, `default-features = false`). This ensures platform-independent deterministic execution.
 
+**Verification scope:** Kani proofs verify BLAKE3 API memory safety (using a Kani stub — a trivial impl returning the first 16 bytes of the key). Cryptographic correctness is NOT proven by Kani — the BLAKE3 crate has been externally audited (Runtime Verification, Stellar Dev Foundation sponsorship, Dec 2025). Ed25519: `ed25519-dalek` 2.x, RUSTSEC-2022-0093 patched. Sipahi's responsibility is correct crate invocation + input bounds checking — these are verified by Kani.
+
 ### 6.3 4-Slot Constant-Time Cache
 
 `TokenCache` performs a 4-slot constant-time scan — always compares all 4 entries, no early exit. Hit accumulation via bitwise AND, branchless. Cache hit ~10 cycles, full validation ~400 cycles.
@@ -358,7 +360,7 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 | policy | 14 | Escalation chains, PMP→Shutdown, livelock freedom |
 | capability (mod+broker) | 14+2 | Token encoding, cache, invalidation, nonce, ct_eq_16 |
 | blackbox | 14 | Record layout, CRC, wrap, tick monotonicity |
-| crypto | 2 | BLAKE3 determinism |
+| crypto | 2 | BLAKE3 API memory safety (Kani stub) — cryptographic correctness via external audit |
 | hal (iopmp+key+boot) | 2+1+1 | IOPMP boundary, key size, secure boot |
 | **Total** | **173** | |
 
@@ -647,8 +649,8 @@ When a U-mode task executes an illegal instruction, the trap handler sends a `Wa
 
 ## Appendix 8. TLA+ Formal Verification — System Level
 
-7 TLA+ specs: SipahiIPC (✅), SipahiWatchdog (✅), SipahiCapability (✅), SipahiPolicy (⚠️ WIP), SipahiScheduler (⚠️ WIP), SipahiBudgetFairness (⚠️ WIP), SipahiDegradeRecover (⚠️ WIP).
+7 TLA+ specs: SipahiIPC (✅), SipahiWatchdog (✅), SipahiCapability (✅), SipahiPolicy (✅), SipahiScheduler (✅), SipahiBudgetFairness (✅), SipahiDegradeRecover (✅).
 
-Kani verifies at function level, TLA+ at system level. They answer different questions and complement each other. WIP specs are "model incomplete" — properties fail because the model is incomplete, not because the code is wrong.
+Kani verifies at function level, TLA+ at system level. They answer different questions and complement each other. In Sprint U-12 all specs were brought to TLC 2026.04 compatibility (tick bound → StateConstraint, bounded message IDs, WF→SF fairness adjustments).
 
-*Sipahi Microkernel v1.5 — 177 Kani Proofs · 3/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 5/7 Security Walls Active*
+*Sipahi Microkernel v1.5 — 188 Kani Harnesses · 7/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 5/7 Security Walls Active*

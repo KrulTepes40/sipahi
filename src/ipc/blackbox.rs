@@ -51,6 +51,7 @@ pub enum BlackboxEvent {
     DeadlineMiss    = 11, // Deadline aşımı
     WatchdogTimeout = 12, // Watchdog süresi doldu
     PmpFail         = 13, // PMP bütünlük hatası (→ SHUTDOWN)
+    LockstepFail    = 14, // Policy lockstep mismatch (action1 != action2 → SHUTDOWN)
 }
 
 // ═══════════════════════════════════════════════════════

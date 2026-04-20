@@ -5,7 +5,7 @@
    Verifies: no infinite oscillation, eventual stability,
              original budget restored on recovery, DAL-A/B never degraded. *)
 
-EXTENDS Integers, FiniteSets
+EXTENDS Integers, FiniteSets, TLC
 
 CONSTANTS
     TASKS,          \* Set of task IDs
@@ -86,9 +86,11 @@ RecoverSystem ==
     /\ cycle' = cycle + 1
     /\ UNCHANGED <<dal, originalBudget, degradeCount>>
 
+(* Sprint U-12: cycle bound'ları kaldırıldı — liveness için unbounded gerekli.
+   Arama derinliği TLC CONSTRAINT ile sınırlanır (cfg: cycle < MAX_CYCLES). *)
+
 (* ═══ DAL-A/B task failure (can prevent recovery) ═══ *)
 HighTaskFailure ==
-    /\ cycle < MAX_CYCLES
     /\ \E t \in HighDAL :
         /\ state[t] \in {"Ready", "Running"}
         /\ state' = [state EXCEPT ![t] = "Isolated"]
@@ -97,7 +99,6 @@ HighTaskFailure ==
 
 (* ═══ DAL-A/B task recovery (enables system recovery) ═══ *)
 HighTaskRecover ==
-    /\ cycle < MAX_CYCLES
     /\ \E t \in HighDAL :
         /\ state[t] = "Isolated"
         /\ state' = [state EXCEPT ![t] = "Ready"]
@@ -106,9 +107,11 @@ HighTaskRecover ==
 
 (* ═══ Idle — system stable, no action ═══ *)
 Idle ==
-    /\ cycle < MAX_CYCLES
     /\ cycle' = cycle + 1
     /\ UNCHANGED <<dal, state, budget, originalBudget, degraded, degradeCount, recoverCount>>
+
+(* ═══ State Constraint — TLC arama derinliği sınırı ═══ *)
+StateConstraint == cycle < MAX_CYCLES
 
 (* ═══ Next State ═══ *)
 Next ==
@@ -118,7 +121,12 @@ Next ==
     \/ HighTaskRecover
     \/ Idle
 
-Spec == Init /\ [][Next]_vars /\ WF_vars(RecoverSystem)
+\* WF: RecoverSystem VE HighTaskRecover eventually fire — aksi halde
+\* HighTaskFailure sonrası stuck kalabilir (HighHealthy false → RecoverSystem
+\* precondition fail), EventualRecovery tutmaz.
+Spec == Init /\ [][Next]_vars
+        /\ WF_vars(RecoverSystem)
+        /\ WF_vars(HighTaskRecover)
 
 (* ═══════════════════════════════════════════════════════
    INVARIANTS

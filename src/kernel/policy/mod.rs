@@ -158,6 +158,13 @@ pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureM
     let action2 = decide_action_fenced(event as u8, count, dal);
     // Lockstep: iki çağrı aynı sonucu vermeli — farklıysa bellek bozulması
     let action = if action1 != action2 {
+        // SEU / bit flip / glitch detected — forensics için blackbox log
+        #[cfg(not(kani))]
+        crate::ipc::blackbox::log(
+            crate::ipc::blackbox::BlackboxEvent::LockstepFail,
+            task_id,
+            &[event as u8, action1 as u8, action2 as u8],
+        );
         FailureMode::Shutdown
     } else {
         action1

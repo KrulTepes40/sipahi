@@ -64,8 +64,9 @@ SelectTask ==
         \A t2 \in ReadyTasks : Priority(t) <= Priority(t2)
 
 (* ═══ Schedule Tick ═══ *)
+(* Sprint U-12: tick bound kaldırıldı — liveness için unbounded gerekli.
+   Arama derinliği TLC CONSTRAINT ile sınırlanır (cfg: tick < 20). *)
 ScheduleTick ==
-    /\ tick < PERIOD * 4
     /\ tick' = tick + 1
     /\ LET newPeriod == (periodCounter + 1) % PERIOD
        IN /\ periodCounter' = newPeriod
@@ -99,6 +100,9 @@ ScheduleTick ==
                             ELSE IF state[t] = "Running" THEN "Ready"
                             ELSE state[t]]
     /\ UNCHANGED <<dal, maxBudget>>
+
+(* ═══ State Constraint — TLC arama derinliği sınırı ═══ *)
+StateConstraint == tick < 20
 
 Next == ScheduleTick
 

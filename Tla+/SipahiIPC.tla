@@ -20,19 +20,26 @@ VARIABLES
 
 vars == <<head, tail, buffer, sent, received, msgCounter>>
 
+(* Sprint U-12: TLC 2026.04 strict type checking — mixed-type set
+   (Nat ∪ {"empty"}) yasak. Integer sentinel: 0 = empty, 1..MAX_MSGS = message.
+   Messages start from 1 because msgCounter starts at 1 (Init). *)
+EMPTY == 0
+Messages == 1..(MAX_MSGS + 1)
+BufferValues == {EMPTY} \cup Messages
+
 TypeOK ==
     /\ head \in 0..(SLOTS - 1)
     /\ tail \in 0..(SLOTS - 1)
-    /\ buffer \in [0..(SLOTS - 1) -> Nat \cup {"empty"}]
-    /\ sent \in Seq(Nat)
-    /\ received \in Seq(Nat)
-    /\ msgCounter \in Nat
+    /\ buffer \in [0..(SLOTS - 1) -> BufferValues]
+    /\ sent \in Seq(Messages)
+    /\ received \in Seq(Messages)
+    /\ msgCounter \in Messages
 
 (* ═══ Initial State ═══ *)
 Init ==
     /\ head = 0
     /\ tail = 0
-    /\ buffer = [i \in 0..(SLOTS - 1) |-> "empty"]
+    /\ buffer = [i \in 0..(SLOTS - 1) |-> EMPTY]
     /\ sent = <<>>
     /\ received = <<>>
     /\ msgCounter = 1
@@ -64,7 +71,7 @@ Recv ==
     /\ LET msg == buffer[tail]
            nextTail == (tail + 1) % SLOTS
        IN /\ received' = Append(received, msg)
-          /\ buffer' = [buffer EXCEPT ![tail] = "empty"]
+          /\ buffer' = [buffer EXCEPT ![tail] = EMPTY]
           /\ tail' = nextTail
           /\ UNCHANGED <<head, sent, msgCounter>>
 
