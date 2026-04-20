@@ -183,7 +183,7 @@ pub fn dispatch(
     arg3: usize,
 ) -> usize {
     if syscall_id >= SYSCALL_COUNT {
-        #[cfg(not(kani))]
+        #[cfg(all(not(kani), feature = "trace"))]
         {
             uart::puts("[SYSCALL] Invalid ID: ");
             print_u64(syscall_id as u64);
@@ -220,7 +220,7 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
         || resource > u16::MAX as usize
         || action > u8::MAX as usize
     {
-        #[cfg(not(kani))]
+        #[cfg(all(not(kani), feature = "trace"))]
         uart::println("[SYS] cap_invoke: argument overflow");
         return E_INVALID_ARG;
     }
@@ -235,10 +235,13 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
             resource as u16,
             action as u8,
         );
-        uart::puts("[SYS] cap_invoke(cap=");
-        print_u64(cap as u64);
-        uart::puts(") ");
-        uart::println(if ok { "OK" } else { "DENIED" });
+        #[cfg(feature = "trace")]
+        {
+            uart::puts("[SYS] cap_invoke(cap=");
+            print_u64(cap as u64);
+            uart::puts(") ");
+            uart::println(if ok { "OK" } else { "DENIED" });
+        }
         if ok { E_OK } else { E_NO_CAPABILITY }
     }
     #[cfg(kani)]
@@ -249,7 +252,7 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
 /// arg0 = channel_id, arg1 = mesaj pointer
 fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize {
     if channel_id >= 8 {
-        #[cfg(not(kani))]
+        #[cfg(all(not(kani), feature = "trace"))]
         uart::println("[SYS] ipc_send: invalid channel");
         return E_INVALID_ARG;
     }
@@ -257,7 +260,7 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
         return E_INVALID_ARG;
     }
     if !msg_ptr.is_multiple_of(8) {
-        #[cfg(not(kani))]
+        #[cfg(all(not(kani), feature = "trace"))]
         uart::println("[SYS] ipc_send: misaligned pointer");
         return E_INVALID_ARG;
     }
@@ -265,6 +268,7 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
     #[cfg(not(kani))]
     {
         if !crate::kernel::scheduler::check_ipc_rate() {
+            #[cfg(feature = "trace")]
             uart::println("[SYS] ipc_send: rate limited");
             return E_RATE_LIMITED;
         }
@@ -282,15 +286,21 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
 
         match ch.send(&msg) {
             Ok(()) => {
-                uart::puts("[SYS] ipc_send(ch=");
-                print_u64(channel_id as u64);
-                uart::println(") OK");
+                #[cfg(feature = "trace")]
+                {
+                    uart::puts("[SYS] ipc_send(ch=");
+                    print_u64(channel_id as u64);
+                    uart::println(") OK");
+                }
                 E_OK
             }
             Err(_) => {
-                uart::puts("[SYS] ipc_send(ch=");
-                print_u64(channel_id as u64);
-                uart::println(") FULL");
+                #[cfg(feature = "trace")]
+                {
+                    uart::puts("[SYS] ipc_send(ch=");
+                    print_u64(channel_id as u64);
+                    uart::println(") FULL");
+                }
                 E_IPC_FULL
             }
         }
@@ -304,7 +314,7 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
 /// arg0 = channel_id, arg1 = buffer pointer
 fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize {
     if channel_id >= 8 {
-        #[cfg(not(kani))]
+        #[cfg(all(not(kani), feature = "trace"))]
         uart::println("[SYS] ipc_recv: invalid channel");
         return E_INVALID_ARG;
     }
@@ -312,7 +322,7 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
         return E_INVALID_ARG;
     }
     if !buf_ptr.is_multiple_of(8) {
-        #[cfg(not(kani))]
+        #[cfg(all(not(kani), feature = "trace"))]
         uart::println("[SYS] ipc_recv: misaligned pointer");
         return E_INVALID_ARG;
     }
@@ -330,15 +340,21 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
                 unsafe {
                     core::ptr::write_volatile(buf_ptr as *mut crate::ipc::IpcMessage, msg);
                 }
-                uart::puts("[SYS] ipc_recv(ch=");
-                print_u64(channel_id as u64);
-                uart::println(") OK");
+                #[cfg(feature = "trace")]
+                {
+                    uart::puts("[SYS] ipc_recv(ch=");
+                    print_u64(channel_id as u64);
+                    uart::println(") OK");
+                }
                 E_OK
             }
             None => {
-                uart::puts("[SYS] ipc_recv(ch=");
-                print_u64(channel_id as u64);
-                uart::println(") Empty");
+                #[cfg(feature = "trace")]
+                {
+                    uart::puts("[SYS] ipc_recv(ch=");
+                    print_u64(channel_id as u64);
+                    uart::println(") Empty");
+                }
                 E_IPC_EMPTY
             }
         }
@@ -353,6 +369,7 @@ fn sys_yield(_: usize, _: usize, _: usize, _: usize) -> usize {
     {
         // Watchdog kick — task yield etti, canlılık kanıtı
         crate::kernel::scheduler::watchdog_kick();
+        #[cfg(feature = "trace")]
         uart::println("[SYS] yield");
         crate::kernel::scheduler::schedule();
     }
@@ -366,11 +383,14 @@ fn sys_task_info(_task_id: usize, _: usize, _: usize, _: usize) -> usize {
     #[cfg(not(kani))]
     {
         let info = crate::kernel::scheduler::query_task_info(_task_id);
-        uart::puts("[SYS] task_info(id=");
-        print_u64(_task_id as u64);
-        uart::puts(") -> ");
-        print_u64(info as u64);
-        uart::println("");
+        #[cfg(feature = "trace")]
+        {
+            uart::puts("[SYS] task_info(id=");
+            print_u64(_task_id as u64);
+            uart::puts(") -> ");
+            print_u64(info as u64);
+            uart::println("");
+        }
         info
     }
     #[cfg(kani)]

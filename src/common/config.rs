@@ -70,11 +70,20 @@ pub const WCET_TRAP_ENTRY: u64 = 30; // ≤0.3μs @ 100MHz
 /// trap_handler WCET hedefi (cycle)
 pub const WCET_TRAP_HANDLER: u64 = 50; // ≤0.5μs @ 100MHz
 
-/// scheduler_tick WCET hedefi (cycle)
-pub const WCET_SCHEDULER_TICK: u64 = 80; // ≤0.8μs @ 100MHz
+/// Scheduler tick WCET — estimated at 350c, FPGA measurement pending.
+/// Components: PMP verify(~40c) + Phase1 period loop(~64c) +
+/// Phase1.5 watchdog reset(~80c) + Phase2 budget(~15c) +
+/// Phase3 priority select(~48c) + Phase4 context switch(~80c) = ~327c
+/// Rounded up for safety margin.
+pub const WCET_SCHEDULER_TICK: u64 = 350;
 
-/// cap_invoke WCET hedefi (cycle)
-pub const WCET_CAP_INVOKE: u64 = 120; // ≤1.2μs @ 100MHz
+/// Context switch WCET — estimated, FPGA measurement pending
+/// 14 callee-saved × 2 (save+restore) + 2 CSR × 2 + la + ld/sd = ~80c
+pub const WCET_CONTEXT_SWITCH: u64 = 80;
+
+/// Capability invoke (cache hit) WCET — estimated, FPGA pending
+/// validate_cached(15c) + current_task_id(3c) + overhead = ~25c
+pub const WCET_CAP_INVOKE: u64 = 25;
 
 /// ipc_send WCET hedefi (cycle)
 pub const WCET_IPC_SEND: u64 = 60; // ≤0.6μs @ 100MHz

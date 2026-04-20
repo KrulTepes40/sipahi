@@ -51,15 +51,20 @@ mod verification {
 
     // ═══════════════════════════════════════════════════════
     // PROOF 4: WCET hedefleri tutarlı sırada
+    // Sprint U-10: WCET_CAP_INVOKE 120→25 (cache hit), WCET_SCHEDULER_TICK
+    // 80→350 (context switch dahil). Yeni sıralama:
+    // YIELD(10) ≤ CAP_INVOKE(25) ≤ TRAP_ENTRY(30) ≤ IPC_RECV(40)
+    // ≤ TRAP_HANDLER(50) ≤ IPC_SEND(60) ≤ CONTEXT_SWITCH(80) ≤ SCHEDULER_TICK(350)
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn wcet_ordering_consistent() {
-        assert!(WCET_YIELD <= WCET_TRAP_ENTRY);
+        assert!(WCET_YIELD <= WCET_CAP_INVOKE);
+        assert!(WCET_CAP_INVOKE <= WCET_TRAP_ENTRY);
         assert!(WCET_TRAP_ENTRY <= WCET_IPC_RECV);
         assert!(WCET_IPC_RECV <= WCET_TRAP_HANDLER);
         assert!(WCET_TRAP_HANDLER <= WCET_IPC_SEND);
-        assert!(WCET_IPC_SEND <= WCET_SCHEDULER_TICK);
-        assert!(WCET_SCHEDULER_TICK <= WCET_CAP_INVOKE);
+        assert!(WCET_IPC_SEND <= WCET_CONTEXT_SWITCH);
+        assert!(WCET_CONTEXT_SWITCH <= WCET_SCHEDULER_TICK);
     }
 
     // ═══════════════════════════════════════════════════════

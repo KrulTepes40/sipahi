@@ -71,6 +71,8 @@ pub extern "C" fn trap_handler(
     if mcause & INTERRUPT_BIT != 0 {
         // ═══ Interrupt ═══
         let code = mcause & !INTERRUPT_BIT;
+        // debug-boot feature off iken _ arm boş — single_match uyarısını bastır
+        #[allow(clippy::single_match)]
         match code {
             7 => {
                 // Machine Timer Interrupt
@@ -96,9 +98,12 @@ pub extern "C" fn trap_handler(
                 scheduler::schedule();
             }
             _ => {
-                uart::puts("[TRAP] Unknown interrupt: ");
-                print_u64(code as u64);
-                uart::println("");
+                #[cfg(feature = "debug-boot")]
+                {
+                    uart::puts("[TRAP] Unknown interrupt: ");
+                    print_u64(code as u64);
+                    uart::println("");
+                }
             }
         }
         0 // interrupt: trap.S saved a0'a dokunmaz
@@ -119,9 +124,12 @@ pub extern "C" fn trap_handler(
             }
             2 => {
                 // Illegal instruction — task izole edilmeli
-                uart::puts("[TRAP] Illegal instruction at 0x");
-                print_hex(_mepc);
-                uart::println(" → policy");
+                #[cfg(feature = "debug-boot")]
+                {
+                    uart::puts("[TRAP] Illegal instruction at 0x");
+                    print_hex(_mepc);
+                    uart::println(" → policy");
+                }
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
                     0xFF, &[],
@@ -131,12 +139,15 @@ pub extern "C" fn trap_handler(
             }
             5 => {
                 // LoadAccessFault — PMP violation (U-mode, match yok veya izin yok)
-                let fault_addr = crate::arch::csr::read_mtval();
-                uart::puts("[TRAP] LoadAccessFault at 0x");
-                print_hex(fault_addr);
-                uart::puts(" mepc=0x");
-                print_hex(_mepc);
-                uart::println(" → ISOLATE");
+                #[cfg(feature = "debug-boot")]
+                {
+                    let fault_addr = crate::arch::csr::read_mtval();
+                    uart::puts("[TRAP] LoadAccessFault at 0x");
+                    print_hex(fault_addr);
+                    uart::puts(" mepc=0x");
+                    print_hex(_mepc);
+                    uart::println(" → ISOLATE");
+                }
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PmpFail,
                     crate::kernel::scheduler::current_task_id(),
@@ -147,12 +158,15 @@ pub extern "C" fn trap_handler(
             }
             7 => {
                 // StoreAccessFault — PMP violation (stack overflow veya cross-task yazma)
-                let fault_addr = crate::arch::csr::read_mtval();
-                uart::puts("[TRAP] StoreAccessFault at 0x");
-                print_hex(fault_addr);
-                uart::puts(" mepc=0x");
-                print_hex(_mepc);
-                uart::println(" → ISOLATE");
+                #[cfg(feature = "debug-boot")]
+                {
+                    let fault_addr = crate::arch::csr::read_mtval();
+                    uart::puts("[TRAP] StoreAccessFault at 0x");
+                    print_hex(fault_addr);
+                    uart::puts(" mepc=0x");
+                    print_hex(_mepc);
+                    uart::println(" → ISOLATE");
+                }
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PmpFail,
                     crate::kernel::scheduler::current_task_id(),
@@ -162,16 +176,19 @@ pub extern "C" fn trap_handler(
                 0
             }
             _ => {
-                uart::puts("[TRAP] Exception: cause=");
-                print_u64(mcause as u64);
-                uart::puts(" at 0x");
-                print_hex(_mepc);
-                uart::println("");
+                #[cfg(feature = "debug-boot")]
+                {
+                    uart::puts("[TRAP] Exception: cause=");
+                    print_u64(mcause as u64);
+                    uart::puts(" at 0x");
+                    print_hex(_mepc);
+                    uart::println("");
+                }
                 0
             }
         }
     }
 }
 
-#[cfg(not(kani))]
+#[cfg(all(not(kani), feature = "debug-boot"))]
 use crate::common::fmt::{print_u64, print_hex};
