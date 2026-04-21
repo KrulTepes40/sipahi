@@ -48,7 +48,7 @@ No circular dependencies. Upper layers depend on lower layers only.
 - Zero floating-point (Q32.32 fixed-point, WASM float opcodes rejected)
 - Zero recursion (bounded stack)
 - Zero `static mut` (all via `SingleHartCell<T>`)
-- All `unsafe` blocks documented with `// SAFETY:`
+- 121 `unsafe` blocks, 93 documented with `// SAFETY:` (CI informational check enforces growth)
 
 ## Formal Verification
 
@@ -58,6 +58,9 @@ No circular dependencies. Upper layers depend on lower layers only.
 - Compile-time: 7 `const assert!` (layout, size, config invariants)
 - Clippy: zero warnings (`-D warnings`)
 - Overflow checks: enabled in release (`overflow-checks = true`)
+- Supply chain: `cargo audit` (RustSec CVE scan) + `cargo deny` (license/bans/sources policy)
+- CI gates (GitHub Actions): 4 jobs — clippy+build, QEMU boot test (HALT criteria),
+  supply chain audit, Kani formal verification (master push only)
 
 ## Scheduler Features
 

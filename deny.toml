@@ -1,0 +1,39 @@
+# Sipahi Supply Chain Policy — cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+# RustSec advisory database kontrolü
+yanked = "warn"
+# Mevcut tüm transitive dep'ler için unmaintained uyarısı
+# Daha sonra ignore listesiyle ince ayar yapılabilir.
+
+[licenses]
+# Sipahi dep'leri için onaylı license listesi.
+# cargo license çıktısıyla karşılaştırılarak oluşturuldu.
+# Copyleft (GPL, MPL-2.0) dep'leri yasaklı — case-by-case değerlendirilmeli.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

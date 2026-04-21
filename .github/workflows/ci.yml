@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 env:
   CARGO_TERM_COLOR: always
@@ -50,3 +50,141 @@ jobs:
           -Z build-std=core,alloc
           -Z build-std-features=compiler-builtins-mem
           --target riscv64imac-unknown-none-elf
+
+      - name: Unsafe documentation check (informational)
+        run: cargo clippy
+          -Z build-std=core,alloc
+          -Z build-std-features=compiler-builtins-mem
+          --target riscv64imac-unknown-none-elf
+          --release
+          -- -W clippy::undocumented_unsafe_blocks 2>&1 | tee unsafe_check.log
+        continue-on-error: true
+
+  qemu-test:
+    name: QEMU Boot Test
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust nightly-2026-03-01
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          targets: riscv64imac-unknown-none-elf
+          components: rust-src
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install QEMU
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
+
+      - name: Build
+        run: cargo build
+          --release
+          -Z build-std=core,alloc
+          -Z build-std-features=compiler-builtins-mem
+          --target riscv64imac-unknown-none-elf
+
+      - name: QEMU boot + test suite
+        run: |
+          # QEMU'yu background'da başlat, output'u log'a yaz
+          timeout 45 qemu-system-riscv64 \
+            -machine virt \
+            -nographic \
+            -bios none \
+            -m 512M \
+            -smp 1 \
+            -kernel target/riscv64imac-unknown-none-elf/release/sipahi \
+            > boot.log 2>&1 &
+          QEMU_PID=$!
+
+          # 30 saniye boyunca "ALL TESTS PASSED" bekle (polling)
+          PASSED=0
+          for i in $(seq 1 30); do
+            if grep -q "ALL TESTS PASSED" boot.log 2>/dev/null; then
+              echo "Tests passed at ${i}s"
+              PASSED=1
+              kill $QEMU_PID 2>/dev/null || true
+              wait $QEMU_PID 2>/dev/null || true
+              break
+            fi
+            sleep 1
+          done
+
+          # Cleanup
+          kill $QEMU_PID 2>/dev/null || true
+          wait $QEMU_PID 2>/dev/null || true
+
+          echo "--- Boot log ---"
+          cat boot.log
+
+          # Final checks
+          if [ "$PASSED" -ne 1 ]; then
+            echo "FAIL: Tests did not pass within 30 seconds"
+            exit 1
+          fi
+
+          if grep -q "BOOT HALTED" boot.log; then
+            echo "FAIL: Boot halted"
+            exit 1
+          fi
+
+          echo "QEMU test passed"
+
+  audit:
+    name: Supply Chain Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install audit tools
+        run: |
+          cargo install cargo-audit --locked
+          cargo install cargo-deny --locked
+
+      - name: Cargo audit (RustSec advisories)
+        run: cargo audit
+
+      - name: Cargo deny (full policy check)
+        run: cargo deny check
+
+  kani:
+    name: Kani Formal Verification
+    runs-on: ubuntu-latest
+    # Sadece master push'unda çalışır — PR'larda 40 dk beklenmez
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Kani
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-kani
+            ~/.kani
+          key: kani-${{ runner.os }}-v1
+
+      - name: Install Kani (if not cached)
+        run: |
+          if ! command -v cargo-kani &> /dev/null; then
+            cargo install --locked kani-verifier
+            cargo kani setup
+          fi
+
+      - name: Run all Kani harnesses
+        run: cargo kani --all-harnesses

@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Teknik Özellik Dokümanı
 
 **Versiyon:** v1.5 · **Mimari:** RISC-V RV64IMAC · **Dil:** Rust no_std  
-**Toplam:** ~7,540 satır · 42 kaynak dosya · 177 Kani proof  
+**Toplam:** ~8,158 Rust + ~265 ASM satır · 42 kaynak dosya · 188 Kani harness · 7/7 TLA+ verified  
 **Felsefe:** Determinizm korunurken maksimum hız. Sıfır heap, sıfır panic, sıfır float.
 
 ---
@@ -22,7 +22,7 @@ IEEE 754 floating-point aritmetiği non-deterministic olabilir — farklı donan
 
 ### 1.4 Neden Microkernel?
 
-Monolitik kernel yerine microkernel çünkü saldırı yüzeyi küçük. Kernel sadece scheduler, IPC, capability, policy ve trap handler içerir. WASM sandbox, blackbox, secure boot kernel dışında çalışır. Bir bileşen çökerse kernel ayakta kalır. DO-178C DAL-A sertifikasyonu için küçük, doğrulanabilir kernel şart — 177 Kani proof ile kritik invariant'lar (scheduler seçim doğruluğu, policy escalation, IPC bütünlüğü, bellek güvenliği) formal olarak kanıtlanmış.
+Monolitik kernel yerine microkernel çünkü saldırı yüzeyi küçük. Kernel sadece scheduler, IPC, capability, policy ve trap handler içerir. WASM sandbox, blackbox, secure boot kernel dışında çalışır. Bir bileşen çökerse kernel ayakta kalır. DO-178C DAL-A sertifikasyonu için küçük, doğrulanabilir kernel şart — 188 Kani harness (88 symbolic proof + 100 concrete/compile-time) ve 7/7 TLA+ spec ile kritik invariant'lar (scheduler seçim doğruluğu, policy escalation, IPC bütünlüğü, bellek güvenliği) formal olarak kanıtlanmış.
 
 ---
 
@@ -346,7 +346,7 @@ Timer interrupt (code=7) → tick artır, scheduler çağır. ecall → syscall 
 
 ---
 
-## 15. Formal Doğrulama — 177 Kani Proof
+## 15. Formal Doğrulama — 188 Kani Harness + 7/7 TLA+
 
 ### 15.1 Proof Dağılımı
 
@@ -362,7 +362,7 @@ Timer interrupt (code=7) → tick artır, scheduler çağır. ecall → syscall 
 | blackbox | 14 | Record layout, CRC, wrap, tick monotonicity |
 | crypto | 2 | BLAKE3 API memory safety (Kani stub) — cryptographic correctness via external audit |
 | hal (iopmp+key+boot) | 2+1+1 | IOPMP boundary, key size, secure boot |
-| **Toplam** | **173** | |
+| **Toplam** | **188** | 88 symbolic proof (kani::any ile state space tarar) + 100 concrete/compile-time assertion |
 
 ### 15.2 Yüksek Değerli Proof'lar
 
@@ -421,7 +421,7 @@ NS16550A UART implementasyonu. `putc()` LSR (Line Status Register) bit 5 ile tra
 
 ### 17.3 Diagnosable Trait
 
-Her subsystem sağlık kontrolü ve istatistik raporlama trait'i: `health_check() -> bool`, `stats() -> DiagStats`. DiagStats: name, ok, counter, error_count. v1.5'te API'lere entegre edilecek.
+Her subsystem sağlık kontrolü ve istatistik raporlama trait'i: `health_check() -> bool`, `stats() -> DiagStats`. DiagStats: name, ok, counter, error_count. API entegrasyonu v2.0'da planlanıyor (scaffolding mevcut, implementation pending).
 
 ---
 
@@ -542,7 +542,9 @@ UART üzerinden debug çıktısı için heap-free format fonksiyonları: `print_
 - **Toolchain:** Rust nightly-2026-03-01, riscv64imac-unknown-none-elf target
 - **Build:** `make build` (build-std flags), `cargo clippy -- -D warnings` (target config.toml'da)
 - **Run:** `make run` (QEMU 8.2.2 virt machine, -bios none, 512MB RAM)
-- **Verify:** `cargo kani` (177 proof), const assert (7 derleme zamanı kontrol)
+- **Verify:** `cargo kani` (188 harness), const assert (7 derleme zamanı kontrol), TLC (7 TLA+ spec)
+- **Supply chain:** `cargo audit` (RustSec CVE scan, 0 CVE) + `cargo deny check` (license/bans/sources policy)
+- **CI:** GitHub Actions 4 job — clippy+build, QEMU boot test (HALT criteria), supply chain audit, Kani (master push only)
 - **WASM:** Wasmi 1.0.9, `default-features = false`, `prefer-btree-collections`
 - **Crypto:** BLAKE3 (`fast-crypto` feature), Ed25519 (`fast-sign` feature, `ed25519-dalek`)
 

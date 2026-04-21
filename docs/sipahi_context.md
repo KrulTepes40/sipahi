@@ -5,7 +5,8 @@
 
 **Proje:** Safety-critical RISC-V microkernel
 **Dil:** Rust `no_std` · **Hedef:** `riscv64imac-unknown-none-elf`
-**LOC:** ~7,360 · **Kani Proof:** 173 (all PASS) · **TLA+ Spec:** 3/7 verified
+**LOC:** ~8,158 Rust + ~265 ASM · **Kani Harness:** 188 (88 symbolic, 100 concrete) · **TLA+ Spec:** 7/7 verified
+**Sprint:** 14 core (0–14) + 9 security (U-3 → U-13) = 23 tamamlandı
 **Geliştirici:** Gazihan (GitHub: KrulTepes40)
 **Repo:** https://github.com/KrulTepes40/sipahi (master, tag v1.5)
 
@@ -32,7 +33,7 @@ make run                        # QEMU flags Makefile'da
 
 ### 2. MMU yok, sadece PMP
 
-**Bug değil.** S-mode + MMU kullanılmıyor çünkü sayfa tablosu overhead'i ve TLB flush non-determinism WCET'i tahmin edilemez kılar. M/U-mode ayrımı PMP ile fiziksel bellek koruması sağlar. Per-task PMP (pmpcfg2, entry 8-15) Sprint U-3'te planlanmış.
+**Bug değil.** S-mode + MMU kullanılmıyor çünkü sayfa tablosu overhead'i ve TLB flush non-determinism WCET'i tahmin edilemez kılar. M/U-mode ayrımı PMP ile fiziksel bellek koruması sağlar. Per-task PMP (pmpcfg2, entry 8) Sprint U-3'te aktif edildi — NAPOT encoding, context-switch'te reprogramming. Sprint U-5'te task stack'leri ve WASM arena Entry 5 kapsamı dışına (.task_stacks ve .wasm_arena linker section'ları) taşındı → M-mode PMP bypass'ı ile cross-task corruption imkansız.
 
 ### 3. Dinamik bellek tahsisatı yok (Vec, Box, HashMap yok)
 
@@ -142,14 +143,29 @@ make run                        # QEMU flags Makefile'da
 | Katman | Araç | Kapsam |
 |--------|------|--------|
 | Derleme zamanı | `const assert!`, `compile_error!`, Clippy | Yapı boyutları, feature çakışma, lint |
-| Fonksiyon seviyesi | Kani (173 proof) | Buffer bounds, overflow, invariant'lar |
-| Sistem seviyesi | TLA+ (3/7 verified) | FIFO ordering, eventual delivery, fault detection |
+| Fonksiyon seviyesi | Kani (188 harness) | Buffer bounds, overflow, invariant'lar |
+| Sistem seviyesi | TLA+ (7/7 verified) | FIFO ordering, eventual delivery, fault detection |
 | Runtime | POST, PMP shadow, watchdog, lockstep | Boot integrity, tamper detection |
+| Supply chain | `cargo audit` + `cargo deny` | CVE scan, license/bans/sources policy |
+| CI | GitHub Actions 4 job | build+clippy, qemu-test, audit, kani (master-only) |
 
-## Hardening Özet (12 özellik, ~25 cycle/tick overhead)
+## Hardening Özet (~25 cycle/tick overhead)
 
-PMP shadow register, mstatus.MPP doğrulama, syscall sayacı, IPC rate limiter, kernel pointer sanitize, argüman truncation kontrolü, timer drift-free, BB_TICK epoch, windowed watchdog, policy lockstep, graceful degradation + auto-recovery, POST.
+PMP shadow register + pmpaddr shadow (U-4), mstatus.MPP doğrulama, syscall sayacı, IPC rate limiter, kernel pointer sanitize, argüman truncation kontrolü, timer drift-free + overrun detect (U-11 DeadlineMiss), BB_TICK epoch + u32 seq (U-6), windowed watchdog, policy lockstep + LockstepFail forensics (U-12), CSE fence via black_box (U-4), graceful degradation + auto-recovery, POST (CRC/PMP/policy/mstatus/mtvec/BLAKE3/Ed25519), mscratch swap (U-9), CapViolation 3× fail counter (U-11), MultiModuleCrash ≥2 isolated threshold (U-11), UART putc bounded loop (U-10), MAC key test-keys gate (U-9).
+
+## PolicyEvent Tetikleme Kapsamı (U-11)
+
+8/9 PolicyEvent runtime'da tetiklenebilir:
+- **BudgetExhausted** — schedule() Phase 2
+- **WatchdogTimeout** — schedule() Phase 1.5 + windowed kick violation
+- **WasmTrap** — illegal instruction handler
+- **StackOverflow** — trap fault_addr task_stacks bölgesinde (U-11)
+- **CapViolation** — sys_cap_invoke 3× consecutive fail (U-11)
+- **PmpIntegrityFail** — schedule() PMP shadow mismatch (U-11 policy path)
+- **DeadlineMiss** — CLINT overrun detect + grace period (U-11)
+- **MultiModuleCrash** — isolate_task sonrası ≥2 isolated threshold (U-11)
+- **IopmpViolation** — IOPMP devre dışı (v1.0), v2.0'da aktif olacak
 
 ---
 
-*Sipahi v1.5 — 173 Kani · 3 TLA+ · 0 Clippy · 0 Panic · 0 Heap (kernel)*
+*Sipahi v1.5 — 188 Kani · 7 TLA+ · 0 Clippy · 0 Panic · 0 Heap (kernel) · 0 CVE*

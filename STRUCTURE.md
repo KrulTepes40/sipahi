@@ -3,13 +3,14 @@
 ```
 sipahi/
 ├── .cargo/config.toml           # riscv64imac-unknown-none-elf target + QEMU runner
-├── .github/workflows/ci.yml     # GitHub Actions: clippy + build
+├── .github/workflows/ci.yml     # GitHub Actions: build + qemu-test + audit + kani
+├── deny.toml                    # cargo-deny policy (licenses, bans, sources)
 ├── src/
-│   ├── main.rs                  # Entry point, task_a/task_b, panic handler (~110 lines)
-│   ├── boot.rs                  # Boot sequence: PMP, HAL, task creation, timer (~55 lines)
-│   ├── verify.rs                # Kani formal verification harnesses (~600 lines)
+│   ├── main.rs                  # Entry point, task_a/task_b, panic handler (~113 lines)
+│   ├── boot.rs                  # Boot sequence: PMP, HAL, task creation, timer (~85 lines)
+│   ├── verify.rs                # Kani formal verification harnesses (~923 lines)
 │   ├── tests/
-│   │   └── mod.rs               # POST + integration tests (~470 lines)
+│   │   └── mod.rs               # POST + integration + FI tests (~750 lines)
 │   ├── arch/                    # Layer 0: RISC-V hardware
 │   │   ├── boot.S               # _start → BSS clear → stack → rust_main
 │   │   ├── trap.S               # Trap frame save/restore (34 registers)
@@ -75,16 +76,17 @@ sipahi/
 │   ├── SipahiIPC.tla + .cfg
 │   └── SipahiScheduler.tla + .cfg
 └── docs/
-    ├── sipahi_v10_0.txt         # Architecture document
-    ├── sipahi_features_tr.md    # Technical features (Turkish)
-    └── sipahi_features_en.md    # Technical features (English)
+    ├── sipahi_context.md        # New-chat context doc (design rationale, build commands)
+    ├── sipahi_features_tr.md    # Technical features (Turkish, ~650 lines)
+    └── sipahi_features_en.md    # Technical features (English, ~650 lines)
 ```
 
 ## Stats
 
 | Metric | Value |
 |---|---|
-| Source lines (Rust + ASM) | ~7,540 |
+| Source lines (Rust) | ~8,158 |
+| Source lines (ASM) | ~265 |
 | `.rs` files | 39 |
 | `.S` files | 3 |
 | Kani harnesses | 188 (88 symbolic, 100 concrete/compile-time) |
@@ -93,3 +95,21 @@ sipahi/
 | `unsafe` blocks | 121 (93 documented with `// SAFETY:`) |
 | TLA+ specs | 7 (all verified — Sprint U-12: TLC 2026.04 compatibility fixes) |
 | TLA+ lines | ~1,030 |
+| Sprints completed | 14 core (0–14) + 9 security (U-3 … U-13) = 23 |
+| CI jobs | 4 (clippy+build, qemu-test, audit, kani) |
+| Supply chain | `cargo audit` (0 CVE) + `cargo deny` (license/bans/sources) |
+
+## Post-Sprint Checklist
+
+After each sprint, run the below and update the metrics in this file:
+
+- [ ] `find src/ -name '*.rs' \| xargs wc -l \| tail -1` → update Rust LOC
+- [ ] `grep -rc 'kani::proof' src/ \| awk -F: '{s+=$2} END {print s}'` → update Kani count
+- [ ] `grep -rc 'unsafe {' src/ \| awk -F: '{s+=$2} END {print s}'` → update unsafe count
+- [ ] `grep -rB3 'unsafe {' src/ \| grep -c 'SAFETY:'` → update SAFETY-documented count
+- [ ] `cd Tla+ && for s in *.tla; do java -jar tla2tools.jar -config ${s%.tla}.cfg $s; done` → update TLA+ status
+- [ ] `cargo clippy -- -D warnings` → 0 warnings
+- [ ] `cargo kani` → all harnesses PASS
+- [ ] `cargo audit && cargo deny check` → clean
+- [ ] Increment sprint count in this file
+- [ ] `git tag -a sprint-<N> -m "..."` → tag the release

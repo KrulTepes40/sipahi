@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Technical Feature Document
 
 **Version:** v1.5 · **Architecture:** RISC-V RV64IMAC · **Language:** Rust no_std  
-**Total:** ~7,540 lines · 42 source files · 177 Kani proofs  
+**Total:** ~8,158 Rust + ~265 ASM lines · 42 source files · 188 Kani harnesses · 7/7 TLA+ verified  
 **Philosophy:** Maximum speed while preserving determinism. Zero heap, zero panic, zero float.
 
 ---
@@ -22,7 +22,7 @@ IEEE 754 floating-point arithmetic can be non-deterministic — the same computa
 
 ### 1.4 Why Microkernel?
 
-Microkernel over monolithic because the attack surface is small. The kernel contains only the scheduler, IPC, capability, policy, and trap handler. WASM sandbox, blackbox, and secure boot run outside the kernel. If a component crashes, the kernel stays alive. A small, verifiable kernel is required for DO-178C DAL-A certification — 177 Kani proofs formally verify critical invariants (scheduler selection correctness, policy escalation, IPC integrity, memory safety).
+Microkernel over monolithic because the attack surface is small. The kernel contains only the scheduler, IPC, capability, policy, and trap handler. WASM sandbox, blackbox, and secure boot run outside the kernel. If a component crashes, the kernel stays alive. A small, verifiable kernel is required for DO-178C DAL-A certification — 188 Kani harnesses (88 symbolic proofs + 100 concrete/compile-time assertions) and 7/7 TLA+ specs formally verify critical invariants (scheduler selection correctness, policy escalation, IPC integrity, memory safety).
 
 ---
 
@@ -346,7 +346,7 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 
 ---
 
-## 15. Formal Verification — 177 Kani Proofs
+## 15. Formal Verification — 188 Kani Harnesses + 7/7 TLA+
 
 ### 15.1 Proof Distribution
 
@@ -362,7 +362,7 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 | blackbox | 14 | Record layout, CRC, wrap, tick monotonicity |
 | crypto | 2 | BLAKE3 API memory safety (Kani stub) — cryptographic correctness via external audit |
 | hal (iopmp+key+boot) | 2+1+1 | IOPMP boundary, key size, secure boot |
-| **Total** | **173** | |
+| **Total** | **188** | 88 symbolic proofs (explore state space via kani::any) + 100 concrete/compile-time assertions |
 
 ### 15.2 High-Value Proofs
 
@@ -421,7 +421,7 @@ NS16550A UART implementation. `putc()` checks LSR (Line Status Register) bit 5 f
 
 ### 17.3 Diagnosable Trait
 
-Health check and statistics reporting trait for each subsystem: `health_check() -> bool`, `stats() -> DiagStats`. DiagStats: name, ok, counter, error_count. To be integrated into APIs in v1.5+.
+Health check and statistics reporting trait for each subsystem: `health_check() -> bool`, `stats() -> DiagStats`. DiagStats: name, ok, counter, error_count. API integration planned for v2.0 (scaffolding in place, implementation pending).
 
 ---
 
@@ -542,7 +542,9 @@ Heap-free format functions for debug output over UART: `print_u32` (decimal), `p
 - **Toolchain:** Rust nightly-2026-03-01, riscv64imac-unknown-none-elf target
 - **Build:** `make build` (build-std flags), `cargo clippy -- -D warnings` (target in config.toml)
 - **Run:** `make run` (QEMU 8.2.2 virt machine, -bios none, 512MB RAM)
-- **Verify:** `cargo kani` (177 proofs), const assert (7 compile-time checks)
+- **Verify:** `cargo kani` (188 harnesses), const assert (7 compile-time checks), TLC (7 TLA+ specs)
+- **Supply chain:** `cargo audit` (RustSec CVE scan, 0 CVE) + `cargo deny check` (license/bans/sources policy)
+- **CI:** GitHub Actions 4 jobs — clippy+build, QEMU boot test (HALT criteria), supply chain audit, Kani (master push only)
 - **WASM:** Wasmi 1.0.9, `default-features = false`, `prefer-btree-collections`
 - **Crypto:** BLAKE3 (`fast-crypto` feature), Ed25519 (`fast-sign` feature, `ed25519-dalek`)
 
