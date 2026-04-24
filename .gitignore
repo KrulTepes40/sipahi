@@ -23,3 +23,5 @@ sipahi-src.tar.gz
 .claude/
 Tla+/states/
 Tla+/*_TTrace_*.tla
+docs/sipahi_context.md
+SIPAHI_KURS_v4.md
