@@ -78,8 +78,11 @@ impl TokenCache {
         self.next_slot = self.next_slot.wrapping_add(1);
     }
 
-    /// Token ID'ye göre invalidate — task exit veya token revocation
-    pub fn invalidate(&mut self, token_id: u8) {
+    /// Token ID'ye göre invalidate — token revocation
+    /// Sprint U-14: runtime'da şu an çağıran yok, Kani proof'larda kullanılıyor.
+    /// Future-proofing: explicit token revocation için API.
+    #[allow(dead_code)]
+    pub fn invalidate_by_token(&mut self, token_id: u8) {
         let mut i = 0;
         while i < CACHE_SLOTS {
             if self.entries[i].token_id == token_id {
@@ -87,5 +90,72 @@ impl TokenCache {
             }
             i += 1;
         }
+    }
+
+    /// Owner task_id'ye göre invalidate — task isolate/exit
+    /// Sprint U-14: Task izole edildiğinde o task'ın TÜM entry'leri temizlenir
+    pub fn invalidate_by_owner(&mut self, owner_task_id: u8) {
+        let mut i = 0;
+        while i < CACHE_SLOTS {
+            if self.entries[i].owner_task_id == owner_task_id {
+                self.entries[i] = CacheEntry::empty();
+            }
+            i += 1;
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// Sprint U-14: Kani test helper'lar
+// ═══════════════════════════════════════════════════════
+
+#[cfg(kani)]
+impl TokenCache {
+    /// Kani proof helper — test entry ekle (private field'lara erişim)
+    pub fn test_insert(&mut self, slot: usize, owner: u8, token: u8) {
+        if slot < CACHE_SLOTS {
+            self.entries[slot].valid = true;
+            self.entries[slot].owner_task_id = owner;
+            self.entries[slot].token_id = token;
+            self.entries[slot].resource = 0;
+            self.entries[slot].action = 0;
+            self.entries[slot].expires = 0;
+        }
+    }
+
+    pub fn test_is_valid(&self, slot: usize) -> bool {
+        slot < CACHE_SLOTS && self.entries[slot].valid
+    }
+}
+
+#[cfg(kani)]
+mod verification {
+    use super::TokenCache;
+
+    /// Sprint U-14: invalidate_by_owner tüm entry'leri temizler
+    #[kani::proof]
+    fn invalidate_by_owner_clears_all() {
+        let mut cache = TokenCache::new();
+        let task_id: u8 = kani::any();
+        kani::assume(task_id < 8);
+        cache.test_insert(0, task_id, 1);
+        cache.test_insert(1, task_id, 2);
+        cache.invalidate_by_owner(task_id);
+        assert!(!cache.test_is_valid(0));
+        assert!(!cache.test_is_valid(1));
+    }
+
+    /// Sprint U-14: invalidate_by_owner başka task'ı korur
+    #[kani::proof]
+    fn invalidate_by_owner_preserves_others() {
+        let mut cache = TokenCache::new();
+        let task_a: u8 = kani::any();
+        let task_b: u8 = kani::any();
+        kani::assume(task_a < 8 && task_b < 8 && task_a != task_b);
+        cache.test_insert(0, task_a, 1);
+        cache.test_insert(1, task_b, 2);
+        cache.invalidate_by_owner(task_a);
+        assert!(!cache.test_is_valid(0));  // A temizlendi
+        assert!(cache.test_is_valid(1));   // B korundu
     }
 }

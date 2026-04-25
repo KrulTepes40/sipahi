@@ -115,10 +115,10 @@ mod verification {
 
         let actual_pool = MAX_IPC_CHANNELS * actual_size;
 
-        // PMP R3 = 8KB — SORUN 1 fix sonrası bu assert aktif edilecek:
-        // assert!(actual_pool <= 8 * 1024); // TODO: Sprint 8 head/tail gömme fix'i
-
-        // RAM'e sığıyor (512KB >> 8KB)
+        // Sprint U-14: IPC pool boyut kontrolü — güncel mimariye uyarlanmış.
+        // SpscChannel = AtomicU16 head + AtomicU16 tail + 16 × 64B = 1028B.
+        // 8 × 1028 = 8224B (>8KB). PMP R3 artık 8KB değil — .data RW bölgesinde.
+        // RAM kontrolü yeterli.
         assert!(actual_pool < 512 * 1024);
     }
 

@@ -155,12 +155,14 @@ pub(crate) fn sign_token(token: &mut Token) {
     }
 }
 
-/// Cache invalidate — task exit veya token revocation
-pub(crate) fn invalidate_task(token_id: u8) {
-    // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
+/// Cache invalidate — task isolate edildiğinde o task'ın TÜM entry'leri temizlenir
+/// Sprint U-14: Eski invalidate_task(token_id) semantic bug'ıydı — task.id != token.id
+/// olduğunda yanlış entry silinebiliyordu. Artık owner_task_id ile arama yapılıyor.
+pub(crate) fn invalidate_task_capabilities(task_id: u8) {
+    // SAFETY: MIE=0 in trap context (isolate_task → trap handler), single-hart.
     unsafe {
         let cache_mut = TOKEN_CACHE.get_mut();
-        cache_mut.invalidate(token_id);
+        cache_mut.invalidate_by_owner(task_id);
     }
 }
 

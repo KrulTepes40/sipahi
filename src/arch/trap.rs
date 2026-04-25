@@ -38,7 +38,7 @@ static TICK_COUNT: SingleHartCell<u64> = SingleHartCell::new(0);
 #[cfg(not(kani))]
 #[allow(dead_code)]
 pub fn get_tick_count() -> u64 {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe { *TICK_COUNT.get() }
 }
 
@@ -76,7 +76,7 @@ pub extern "C" fn trap_handler(
         match code {
             7 => {
                 // Machine Timer Interrupt
-                // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+                // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
                 unsafe { *TICK_COUNT.get_mut() += 1 };
                 let ticks = unsafe { *TICK_COUNT.get() };
 
@@ -153,13 +153,13 @@ pub extern "C" fn trap_handler(
                     crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
                     0xFF, &[],
                 );
-                crate::kernel::scheduler::handle_illegal_instruction();
+                crate::kernel::scheduler::handle_task_fault();
                 0
             }
             5 | 7 => {
                 // Load/StoreAccessFault — PMP violation
                 // Fault adresi task stacks bölgesinde → StackOverflow (policy path)
-                // Dışında → genel PmpFail (WasmTrap via handle_illegal_instruction)
+                // Dışında → genel PmpFail (WasmTrap via handle_task_fault)
                 let fault_addr = crate::arch::csr::read_mtval();
                 let task_id = crate::kernel::scheduler::current_task_id();
 
@@ -206,7 +206,7 @@ pub extern "C" fn trap_handler(
                     );
                 } else {
                     // Genel PMP violation (WASM arena, kernel bölgesi vb.)
-                    crate::kernel::scheduler::handle_illegal_instruction();
+                    crate::kernel::scheduler::handle_task_fault();
                 }
                 0
             }

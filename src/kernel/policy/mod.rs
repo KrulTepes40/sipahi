@@ -73,7 +73,7 @@ static RESTART_COUNTS: SingleHartCell<[u8; MAX_TASKS]> = SingleHartCell::new([0u
 #[allow(dead_code)]
 pub fn reset_restart_count(task_id: u8) {
     if (task_id as usize) < MAX_TASKS {
-        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+        // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
         unsafe { (*RESTART_COUNTS.get_mut())[task_id as usize] = 0; }
     }
 }
@@ -81,7 +81,7 @@ pub fn reset_restart_count(task_id: u8) {
 /// Restart sayacını oku (test/debug için)
 pub(crate) fn get_restart_count(task_id: u8) -> u8 {
     if (task_id as usize) < MAX_TASKS {
-        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+        // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
         unsafe { (*RESTART_COUNTS.get())[task_id as usize] }
     } else {
         0
@@ -148,7 +148,7 @@ fn decide_action_fenced(event: u8, rc: u8, dal: u8) -> FailureMode {
 pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureMode {
     let id    = task_id as usize;
     let count = if id < MAX_TASKS {
-        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+        // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
         unsafe { (*RESTART_COUNTS.get())[id] }
     } else {
         0
@@ -172,7 +172,7 @@ pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureM
 
     // RESTART → sayacı artır (doygun — eskalasyon için MAX tutulur)
     if action == FailureMode::Restart && id < MAX_TASKS {
-        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+        // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
         unsafe {
             (*RESTART_COUNTS.get_mut())[id] = (*RESTART_COUNTS.get())[id].saturating_add(1);
         }

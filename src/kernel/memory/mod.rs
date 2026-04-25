@@ -33,8 +33,9 @@ static PMP_SHADOW: SingleHartCell<u64> = SingleHartCell::new(0);
 static PMP_SHADOW_ADDRS: SingleHartCell<[usize; 8]> = SingleHartCell::new([0; 8]);
 
 /// PMP entry 8 shadow — per-task NAPOT stack region
-pub(crate) static PMP_SHADOW_ADDR8: SingleHartCell<usize> = SingleHartCell::new(0);
-pub(crate) static PMP_SHADOW_CFG2: SingleHartCell<usize> = SingleHartCell::new(0);
+// Sprint U-14: pub(crate) → private (scheduler wrapper üzerinden erişir)
+static PMP_SHADOW_ADDR8: SingleHartCell<usize> = SingleHartCell::new(0);
+static PMP_SHADOW_CFG2: SingleHartCell<usize> = SingleHartCell::new(0);
 
 // Linker script'ten gelen semboller
 extern "C" {
@@ -172,6 +173,18 @@ pub(crate) fn task_stacks_range() -> (usize, usize) {
     let start = unsafe { &__task_stacks_start as *const u8 as usize };
     let end   = unsafe { &__task_stacks_end   as *const u8 as usize };
     (start, end)
+}
+
+/// Sprint U-14: PMP shadow wrapper — scheduler direct access yerine
+/// Entry 8 per-task NAPOT config için. Scheduler bu wrapper üzerinden
+/// shadow'u güncelliyor — memory modülü sınırları korunuyor.
+#[cfg(not(kani))]
+pub(crate) fn update_task_pmp_shadow(addr: usize, cfg: usize) {
+    // SAFETY: MIE=0 in trap context (called from schedule/start_first_task), single-hart.
+    unsafe {
+        *PMP_SHADOW_ADDR8.get_mut() = addr;
+        *PMP_SHADOW_CFG2.get_mut() = cfg;
+    }
 }
 
 /// PMP bütünlük doğrulama — shadow ile karşılaştır

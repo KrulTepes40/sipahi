@@ -154,9 +154,12 @@ extern "C" {
 
 /// Create a new task with the given configuration.
 pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> {
-    // SAFETY: Single-hart, interrupts disabled during boot.
+    // SAFETY: Boot sequence, interrupts not yet enabled.
     let count = unsafe { *TASK_COUNT.get() };
     if count >= MAX_TASKS { return None; }
+
+    // Sprint U-14: budget=0 task ilk tick'te Suspended'a düşer, asla çalışmaz → silent dead task
+    if cfg.budget_cycles == 0 { return None; }
 
     // SAFETY: count < MAX_TASKS — index in bounds.
     let stack_base = unsafe {
@@ -203,7 +206,7 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
 /// Scheduler tick — timer interrupt'tan çağrılır
 /// WCET: ≤0.8μs @ 100MHz (doküman hedef)
 pub(crate) fn schedule() {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         if *TASK_COUNT.get() < 2 {
             return;
@@ -344,9 +347,10 @@ pub(crate) fn schedule() {
         {
             let napot_addr = TASKS.get()[next].pmp_addr_napot;
             crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
-            // Shadow güncelle
-            *crate::kernel::memory::PMP_SHADOW_ADDR8.get_mut() = napot_addr;
-            *crate::kernel::memory::PMP_SHADOW_CFG2.get_mut() = crate::arch::pmp::PMP_NAPOT_RW;
+            // Sprint U-14: shadow wrapper — memory modül sınırları korunur
+            crate::kernel::memory::update_task_pmp_shadow(
+                napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
+            );
         }
 
         let old_ctx = &mut TASKS.get_mut()[old].context as *mut TaskContext;
@@ -398,8 +402,10 @@ pub(crate) fn start_first_task() -> ! {
         {
             let napot_addr = TASKS.get()[0].pmp_addr_napot;
             crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
-            *crate::kernel::memory::PMP_SHADOW_ADDR8.get_mut() = napot_addr;
-            *crate::kernel::memory::PMP_SHADOW_CFG2.get_mut() = crate::arch::pmp::PMP_NAPOT_RW;
+            // Sprint U-14: shadow wrapper
+            crate::kernel::memory::update_task_pmp_shadow(
+                napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
+            );
         }
 
         let ctx     = &TASKS.get_mut()[0].context;
@@ -445,7 +451,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             // Spam önleme: sadece ilk restart'ta yazdır (count artırılmış, 1 == ilk kez)
             #[cfg(not(kani))]
             {
-                // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+                // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
                 let tid = unsafe { TASKS.get_mut()[task_id].id };
                 if crate::kernel::policy::get_restart_count(tid) == 1 {
                     crate::arch::uart::println("[POLICY] RESTART (1) — periyot sonunda READY");
@@ -463,7 +469,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
                 crate::arch::uart::println("[POLICY] ISOLATE — task durduruldu");
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
-                    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+                    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
                     unsafe { TASKS.get_mut()[task_id].id },
                     &[],
                 );
@@ -472,7 +478,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
         }
         FailureMode::Degrade => {
             #[cfg(not(kani))]
-            // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+            // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
             unsafe {
                 if !*DEGRADE_LOGGED.get() {
                     *DEGRADE_LOGGED.get_mut() = true;
@@ -496,7 +502,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
                 crate::arch::uart::println("[POLICY] FAILOVER → DEGRADE (stub)");
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyFailover,
-                    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+                    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
                     unsafe { TASKS.get_mut()[task_id].id },
                     &[],
                 );
@@ -511,7 +517,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             #[cfg(not(kani))]
             crate::ipc::blackbox::log(
                 crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
-                // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+                // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
                 unsafe { TASKS.get_mut()[task_id].id },
                 &[],
             );
@@ -526,7 +532,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
 /// Budget ve period_counter burada sıfırlanmaz — Faz 1 halleder.
 /// restart_count burada sıfırlanmaz — apply_policy'de artırılır, birikir.
 fn restart_task(id: usize) {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         if id >= *TASK_COUNT.get() { return; }
 
@@ -548,7 +554,7 @@ fn restart_task(id: usize) {
 /// Degrade — dal >= 2 (DAL-C/D) taskları askıya al
 /// Not: Isolated task'lar bu işlemde değiştirilmez — zaten daha kısıtlı.
 fn degrade_system() {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         *DEGRADED.get_mut() = true;
         let mut i: usize = 0;
@@ -611,9 +617,12 @@ fn try_recover_from_degrade() {
     }
 }
 
-/// Illegal instruction veya fault — trap handler'dan çağrılır
-pub(crate) fn handle_illegal_instruction() {
-    // SAFETY: Single-hart, called from trap context.
+/// Task fault handler — trap handler'dan çağrılır
+/// Sprint U-14: handle_illegal_instruction → handle_task_fault (rename)
+/// Kapsam: illegal instruction (mcause=2), PMP violation (mcause=5|7, non-stack),
+/// genel WASM trap. Stack overflow ayrı path'te (StackOverflow event'i kullanıyor).
+pub(crate) fn handle_task_fault() {
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         let current = *CURRENT_TASK.get();
         if current < *TASK_COUNT.get() {
@@ -631,11 +640,11 @@ pub(crate) fn handle_illegal_instruction() {
 /// İzole — task durdur + token revoke
 /// Isolated: Suspended'dan farklı, periyot reset ile READY'ye dönmez.
 fn isolate_task(id: usize) {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         if id < *TASK_COUNT.get() {
             TASKS.get_mut()[id].state = TaskState::Isolated;
-            crate::kernel::capability::broker::invalidate_task(TASKS.get_mut()[id].id);
+            crate::kernel::capability::broker::invalidate_task_capabilities(TASKS.get_mut()[id].id);
         }
     }
 

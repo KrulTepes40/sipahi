@@ -34,7 +34,7 @@ static ARENA_OFFSET: AtomicUsize = AtomicUsize::new(0);
 /// Sıfır boyutlu tip — GlobalAlloc impl için yeterli
 pub struct BumpAllocator;
 
-// SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+// SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
 unsafe impl GlobalAlloc for BumpAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let size  = layout.size();

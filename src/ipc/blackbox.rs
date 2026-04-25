@@ -58,13 +58,13 @@ pub enum BlackboxEvent {
 // Kayıt yapısı — 64B sabit
 // ═══════════════════════════════════════════════════════
 
-/// Blackbox kaydı — 64B, repr(C) (padding dahil boyut kanıtlandı)
+/// Blackbox kaydı — 64B, repr(C) (padding EXPLICIT — Sprint U-14)
 ///
 /// Byte layout (Proof 52 ile doğrulandı):
 ///   [0..4]   magic:     [u8;4]   → "SPHI"
 ///   [4..6]   version:   u16      → 1
-///   [6..8]   (padding)  2B       → repr(C) u32 alignment
-///   [8..12]  seq:       u32      → monoton, u32 wrap (~900K yıl)
+///   [6..8]   _pad:      [u8;2]   → EXPLICIT padding (u32 alignment için)
+///   [8..12]  seq:       u32      → monoton, u32 wrap (~23 yıl @ 6 rec/sec)
 ///   [12..16] timestamp: u32      → boot'tan tick sayısı
 ///   [16]     task_id:   u8       → tetikleyen task (0xFF=kernel)
 ///   [17]     event:     u8       → BlackboxEvent as u8
@@ -75,6 +75,7 @@ pub enum BlackboxEvent {
 pub struct BlackboxRecord {
     pub magic:     [u8; 4],
     pub version:   u16,
+    pub _pad:      [u8; 2],   // Sprint U-14: explicit padding — UB-free, serileştirme güvenli
     pub seq:       u32,
     pub timestamp: u32,
     pub task_id:   u8,
@@ -92,6 +93,7 @@ impl BlackboxRecord {
         BlackboxRecord {
             magic:     [0u8; 4],
             version:   0,
+            _pad:      [0u8; 2],
             seq:       0,
             timestamp: 0,
             task_id:   0,
@@ -136,7 +138,7 @@ static BB_BUFFER: SingleHartCell<[BlackboxRecord; BLACKBOX_MAX_RECORDS]> =
 /// Sonraki yazma konumu [0, BLACKBOX_MAX_RECORDS)
 static BB_WRITE_POS: SingleHartCell<u8> = SingleHartCell::new(0);
 
-/// Sonraki sıra numarası (u32, ~900K yıl wrap-free @ 6 kayıt/saniye)
+/// Sonraki sıra numarası (u32, ~23 yıl wrap-free @ 6 kayıt/saniye)
 static BB_NEXT_SEQ: SingleHartCell<u32> = SingleHartCell::new(0);
 
 /// Boot'tan bu yana geçen tick — schedule() her çağrısında advance_tick() artırır
@@ -176,7 +178,7 @@ macro_rules! vol_write {
 /// BSS clearing'e güvenilmez (binary layout değişince semboller kayar).
 /// Tüm static'ler explicit sıfırlanır — her koşulda çalışır.
 pub(crate) fn init() {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         // Buffer'ı explicit sıfırla — BSS clearing'e güvenme
         let ptr = BB_BUFFER.as_ptr() as *mut u8;
@@ -213,7 +215,7 @@ pub(crate) fn advance_tick() {
 /// task_id: Tetikleyen task ID (0xFF = kernel dahili olay)
 /// data:    En fazla BLACKBOX_DATA_SIZE(42) byte olay verisi (kısa girişler sıfır doldurulur)
 pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         let pos = vol_read!(BB_WRITE_POS -> u8) as usize;
         let seq = vol_read!(BB_NEXT_SEQ -> u32);
@@ -258,7 +260,7 @@ pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 /// Kayıt oku — 0 = en eski, count()-1 = en yeni
 /// Dönüş: Some(record) — CRC geçerli; None — index aşımı veya bozuk kayıt
 pub(crate) fn read(index: usize) -> Option<BlackboxRecord> {
-    // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         let c = vol_read!(BB_COUNT -> u8) as usize;
         if index >= c {

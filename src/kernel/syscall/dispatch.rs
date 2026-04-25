@@ -116,7 +116,7 @@ static WCET_LAST: SingleHartCell<[u64; SYSCALL_COUNT]> = SingleHartCell::new([0;
 #[inline(always)]
 fn wcet_update(id: usize, cycles: u64) {
     if id < SYSCALL_COUNT {
-        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+        // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
         unsafe {
             (*WCET_LAST.get_mut())[id] = cycles;
             if cycles > (*WCET_MAX.get())[id] {
@@ -136,7 +136,7 @@ pub fn print_wcet_stats() {
         uart::puts("  ");
         uart::puts(names[i]);
         uart::puts(": last=");
-        // SAFETY: Single-hart system, interrupts disabled during boot — no concurrent access.
+        // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
         let (last, max) = unsafe { ((*WCET_LAST.get())[i], (*WCET_MAX.get())[i]) };
         print_u64(last);
         uart::puts(" max=");

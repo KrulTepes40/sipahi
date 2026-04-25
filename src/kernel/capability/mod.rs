@@ -11,7 +11,7 @@ pub mod broker;
 #[allow(unused_imports)]
 pub use token::{Token, ACTION_READ, ACTION_WRITE, ACTION_EXECUTE, ACTION_ALL};
 #[allow(unused_imports)]
-pub(crate) use broker::{provision_key, validate_cached, invalidate_task};
+pub(crate) use broker::{provision_key, validate_cached, invalidate_task_capabilities};
 #[cfg(feature = "fast-crypto")]
 #[allow(unused_imports)]
 pub(crate) use broker::{validate_full, sign_token};
@@ -146,7 +146,7 @@ mod verification {
         let act: u8 = kani::any();
         cache.insert(0, tid, res, act, 0);
         assert!(cache.lookup(0, tid, res, act));
-        cache.invalidate(tid);
+        cache.invalidate_by_token(tid);
         assert!(!cache.lookup(0, tid, res, act));
     }
 
@@ -191,7 +191,7 @@ mod verification {
         let resource: u16 = kani::any();
         let action: u8 = kani::any();
         cache.insert(0, tid, resource, action, 0);
-        cache.invalidate(tid);
+        cache.invalidate_by_token(tid);
         let search_resource: u16 = kani::any();
         let search_action: u8 = kani::any();
         assert!(!cache.lookup(0, tid, search_resource, search_action));

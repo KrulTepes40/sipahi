@@ -187,4 +187,4 @@ jobs:
           fi
 
       - name: Run all Kani harnesses
-        run: cargo kani --all-harnesses
+        run: cargo kani

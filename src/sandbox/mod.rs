@@ -107,7 +107,10 @@ pub fn find_code_section(bytes: &[u8]) -> Option<&[u8]> {
 #[inline]
 pub fn is_float_opcode(b: u8) -> bool {
     matches!(b,
+        0x2a | 0x2b |       // f32.load, f64.load
+        0x38 | 0x39 |       // f32.store, f64.store
         0x43 | 0x44 |       // f32.const, f64.const
+        0x5b..=0x66 |       // f32/f64 comparisons (eq, ne, lt, gt, le, ge)
         0x8b..=0xa6 |       // f32/f64 aritmetik
         0xb2..=0xbf         // float dönüşümleri
     )
@@ -219,24 +222,12 @@ pub fn dispatch_compute(service: u8, data: &[u8]) -> i32 {
     }
 }
 
-/// COMPUTE_COPY — Bellek bloğu kopyala (sabit zaman, WCET ~80c)
-/// Giriş: [src_offset:4][dst_offset:4][len:4][payload:len]
-/// Dönüş: kopyalanan byte sayısı, veya negatif hata kodu
-fn compute_copy(data: &[u8]) -> i32 {
-    if data.len() < 12 { return -1; }
-    let src_off = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    let dst_off = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
-    let len     = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
-
-    // Bounded: max 256B
-    if len > 256 { return -2; }
-    // Payload mevcut mu?
-    if data.len() < 12 + len { return -1; }
-
-    // v1.0: payload varlığını doğrula, uzunluğu dön.
-    // Gerçek WASM linear memory kopyası wasmi Store/Memory API'si gerektirir — v1.5.
-    let _ = (src_off, dst_off);
-    len as i32
+/// COMPUTE_COPY — v1.0 stub, v2.0'da aktif edilecek
+/// Gerçek WASM linear memory kopyası wasmi Store/Memory API'si gerektirir.
+/// Sprint U-14: Önceden len döndürüyordu (yanıltıcı), artık dürüst -3 döner.
+/// Dönüş: -3 = NotImplemented
+fn compute_copy(_data: &[u8]) -> i32 {
+    -3_i32
 }
 
 /// COMPUTE_CRC — CRC32 bütünlük (sabit zaman, WCET ~120c)
@@ -440,11 +431,14 @@ mod verification {
         assert!(detected); // 0x92 tespit edilmeli
     }
 
-    /// Proof 61: Float tarayıcı i32.const 42 (0x41 0x2a) içeren kodu kabul eder
+    /// Proof 61: Float tarayıcı i32.const 10 içeren kodu kabul eder
+    /// Sprint U-14: WASM_SIMPLE 0x2a (i32.const 42) içeriyordu — 0x2a artık
+    /// f32.load olarak tespit ediliyor (opcode collision, v1 scanner limitation).
+    /// Proof güncellendi: 0x0a (10) kullanıldı — float opcode listesine girmiyor.
     #[kani::proof]
     fn float_scan_passes_integer_code() {
-        // WASM_SIMPLE kod bölümü gövdesi: count=1, body=[local=0, i32.const 42, end]
-        let code_section = [0x01u8, 0x04, 0x00, 0x41, 0x2a, 0x0b];
+        // body: count=1, body=[local=0, i32.const 10, end]
+        let code_section = [0x01u8, 0x04, 0x00, 0x41, 0x0a, 0x0b];
         let detected = {
             let mut found = false;
             let mut i = 0;
@@ -492,6 +486,17 @@ mod verification {
         assert!(is_float_opcode(0x93)); // f32.sub
         assert!(is_float_opcode(0x43)); // f32.const
         assert!(is_float_opcode(0x44)); // f64.const
+    }
+
+    /// Sprint U-14: Float load/store/compare opcode tespit edilir
+    #[kani::proof]
+    fn float_scan_detects_load_store_compare() {
+        assert!(is_float_opcode(0x2a)); // f32.load
+        assert!(is_float_opcode(0x2b)); // f64.load
+        assert!(is_float_opcode(0x38)); // f32.store
+        assert!(is_float_opcode(0x39)); // f64.store
+        assert!(is_float_opcode(0x5b)); // f32.eq
+        assert!(is_float_opcode(0x66)); // f64.ge
     }
 
     /// Proof 121: LEB128 tek byte doğru decode (0-127)
@@ -546,19 +551,24 @@ mod verification {
         assert!(result.is_err());
     }
 
-    /// Proof 145: dispatch_compute: service=0 (COPY), boş data → -1
+    /// Proof 145: dispatch_compute: service=0 (COPY) → -3 (Sprint U-14 stub)
+    /// Sprint U-14: compute_copy artık dürüst stub (wasmi Store/Memory API v2.0).
     #[kani::proof]
     fn dispatch_compute_empty_data() {
         let data: [u8; 0] = [];
         let result = dispatch_compute(0, &data);
-        assert!(result == -1);
+        assert!(result == -3);
     }
 
-    /// Proof 146: 0x00-0x42 arası opcode float değil
+    /// Proof 146: 0x00-0x29 ve 0x2c-0x37 ve 0x3a-0x42 aralığında opcode float değil
+    /// Sprint U-14: 0x2a/0x2b (f32/f64.load) ve 0x38/0x39 (f32/f64.store)
+    /// float listesine eklendi — proof range daraltıldı.
     #[kani::proof]
     fn opcodes_below_0x43_not_float() {
         let op: u8 = kani::any();
         kani::assume(op < 0x43);
+        // Float load/store opcode'ları hariç tut
+        kani::assume(op != 0x2a && op != 0x2b && op != 0x38 && op != 0x39);
         assert!(!is_float_opcode(op));
     }
 
