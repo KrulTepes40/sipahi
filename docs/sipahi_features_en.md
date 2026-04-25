@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Technical Feature Document
 
 **Version:** v1.5 · **Architecture:** RISC-V RV64IMAC · **Language:** Rust no_std  
-**Total:** ~8,158 Rust + ~265 ASM lines · 42 source files · 188 Kani harnesses · 7/7 TLA+ verified  
+**Total:** ~8,321 Rust + ~265 ASM lines · 42 source files · 191 Kani harnesses · 7/7 TLA+ verified  
 **Philosophy:** Maximum speed while preserving determinism. Zero heap, zero panic, zero float.
 
 ---
@@ -22,7 +22,7 @@ IEEE 754 floating-point arithmetic can be non-deterministic — the same computa
 
 ### 1.4 Why Microkernel?
 
-Microkernel over monolithic because the attack surface is small. The kernel contains only the scheduler, IPC, capability, policy, and trap handler. WASM sandbox, blackbox, and secure boot run outside the kernel. If a component crashes, the kernel stays alive. A small, verifiable kernel is required for DO-178C DAL-A certification — 188 Kani harnesses (88 symbolic proofs + 100 concrete/compile-time assertions) and 7/7 TLA+ specs formally verify critical invariants (scheduler selection correctness, policy escalation, IPC integrity, memory safety).
+Microkernel over monolithic because the attack surface is small. The kernel contains only the scheduler, IPC, capability, policy, and trap handler. WASM sandbox, blackbox, and secure boot run outside the kernel. If a component crashes, the kernel stays alive. A small, verifiable kernel is required for DO-178C DAL-A certification — 191 Kani harnesses (90 symbolic proofs + 101 concrete/compile-time assertions) and 7/7 TLA+ specs formally verify critical invariants (scheduler selection correctness, policy escalation, IPC integrity, memory safety).
 
 ---
 
@@ -246,9 +246,11 @@ When `degrade_system()` is triggered, DAL-C/D tasks are Suspended and their budg
 
 **Why AtomicU16?** u16 → 65,536 head/tail space. With 16 slots, `% 16` modulo is used. When u16 wraps, modulo still works correctly (Kani proof: `ipc_ring_buffer_wrap_never_exceeds_slots`).
 
-### 8.2 CRC32 Integrity Check
+### 8.2 CRC32 Integrity Check (Opt-in)
 
-The last 4 bytes of each message are CRC32. `set_crc()` computes the CRC of the payload, `verify_crc()` validates it. CRC32 is computed bit-by-bit — no lookup table.
+IPC provides CRC32 helper methods: `set_crc()` computes payload CRC, `verify_crc()` validates it. **CRC usage is application-level — the kernel does not enforce CRC on send/recv.** `send()` and `recv()` do not auto-CRC; the sender computes if it calls `set_crc()`, the receiver validates if it calls `verify_crc()`.
+
+CRC32 is computed bit-by-bit — no lookup table. Kernel-enforced auto-CRC planned for v2.0 (requires WCET budget revision: IPC_SEND 60c → ~1600c).
 
 **Why no lookup table?** A 256-entry LUT = 1KB. If not in L1 cache, a cache miss → non-deterministic latency. Bit-by-bit: 8 iterations per byte, deterministic. 60-byte payload × 8 = 480 iterations — constant WCET.
 
@@ -346,7 +348,7 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 
 ---
 
-## 15. Formal Verification — 188 Kani Harnesses + 7/7 TLA+
+## 15. Formal Verification — 191 Kani Harnesses + 7/7 TLA+
 
 ### 15.1 Proof Distribution
 
@@ -362,7 +364,7 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 | blackbox | 14 | Record layout, CRC, wrap, tick monotonicity |
 | crypto | 2 | BLAKE3 API memory safety (Kani stub) — cryptographic correctness via external audit |
 | hal (iopmp+key+boot) | 2+1+1 | IOPMP boundary, key size, secure boot |
-| **Total** | **188** | 88 symbolic proofs (explore state space via kani::any) + 100 concrete/compile-time assertions |
+| **Total** | **188** | 90 symbolic proofs (explore state space via kani::any) + 101 concrete/compile-time assertions |
 
 ### 15.2 High-Value Proofs
 
@@ -655,4 +657,4 @@ When a U-mode task executes an illegal instruction, the trap handler sends a `Wa
 
 Kani verifies at function level, TLA+ at system level. They answer different questions and complement each other. In Sprint U-12 all specs were brought to TLC 2026.04 compatibility (tick bound → StateConstraint, bounded message IDs, WF→SF fairness adjustments).
 
-*Sipahi Microkernel v1.5 — 188 Kani Harnesses · 7/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 5/7 Security Walls Active*
+*Sipahi Microkernel v1.5 — 191 Kani Harnesses · 7/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 5/7 Security Walls Active*

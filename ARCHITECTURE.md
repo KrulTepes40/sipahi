@@ -21,7 +21,10 @@ arch <- hal <- kernel <- sandbox
              ipc --------+
 ```
 
-No circular dependencies. Upper layers depend on lower layers only.
+**Exception:** `arch/trap.rs` calls `kernel::syscall::dispatch()` and
+`kernel::scheduler::schedule()`. This is an intentional upward call from
+the hardware trap entry point — trap dispatch requires kernel services.
+No other circular dependencies exist.
 
 ## Privilege Model
 
@@ -48,12 +51,12 @@ No circular dependencies. Upper layers depend on lower layers only.
 - Zero floating-point (Q32.32 fixed-point, WASM float opcodes rejected)
 - Zero recursion (bounded stack)
 - Zero `static mut` (all via `SingleHartCell<T>`)
-- 121 `unsafe` blocks, 93 documented with `// SAFETY:` (CI informational check enforces growth)
+- 123 `unsafe` blocks, 95 documented with `// SAFETY:` (CI informational check enforces growth)
 
 ## Formal Verification
 
-- Kani: 188 bounded model checking harnesses
-  (88 symbolic proofs, 100 concrete/compile-time assertions)
+- Kani: 191 bounded model checking harnesses
+  (90 symbolic proofs, 101 concrete/compile-time assertions)
 - TLA+: 7 specifications, all verified (Sprint U-12: TLC 2026.04 compatibility)
 - Compile-time: 7 `const assert!` (layout, size, config invariants)
 - Clippy: zero warnings (`-D warnings`)

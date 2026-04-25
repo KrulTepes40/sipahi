@@ -85,14 +85,14 @@ sipahi/
 
 | Metric | Value |
 |---|---|
-| Source lines (Rust) | ~8,158 |
+| Source lines (Rust) | ~8,321 |
 | Source lines (ASM) | ~265 |
 | `.rs` files | 39 |
 | `.S` files | 3 |
-| Kani harnesses | 188 (88 symbolic, 100 concrete/compile-time) |
+| Kani harnesses | 191 (90 symbolic, 101 concrete/compile-time) |
 | Compile-time asserts | 7 |
 | `static mut` count | 0 |
-| `unsafe` blocks | 121 (93 documented with `// SAFETY:`) |
+| `unsafe` blocks | 123 (95 documented with `// SAFETY:`) |
 | TLA+ specs | 7 (all verified — Sprint U-12: TLC 2026.04 compatibility fixes) |
 | TLA+ lines | ~1,030 |
 | Sprints completed | 14 core (0–14) + 9 security (U-3 … U-13) = 23 |

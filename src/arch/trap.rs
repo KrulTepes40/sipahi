@@ -130,16 +130,16 @@ pub extern "C" fn trap_handler(
         // ═══ Exception ═══
         match mcause {
             ECALL_U | ECALL_M => {
-                // ecall → syscall dispatch
-                // mepc+4 trap.S'de yapıldı, burada yapılmaz
-                let r = crate::kernel::syscall::dispatch(
-                    syscall_id, arg0, arg1, arg2, arg3,
-                );
-                // MPP kontrolü sadece U-mode ecall'da — M-mode ecall'da MPP=3 doğru
+                // Sprint U-15: MPP kontrolü dispatch ÖNCESİNE alındı.
+                // Önceden dispatch sonrası kontrol ediliyordu — kötü niyetli
+                // ecall yine de dispatch ediliyordu. Şimdi privilege escalation
+                // tespiti syscall hiç çalışmadan yapılıyor.
                 if mcause == ECALL_U {
                     verify_mpp_is_user_mode();
                 }
-                r
+                // ecall → syscall dispatch
+                // mepc+4 trap.S'de yapıldı, burada yapılmaz
+                crate::kernel::syscall::dispatch(syscall_id, arg0, arg1, arg2, arg3)
             }
             2 => {
                 // Illegal instruction — task izole edilmeli

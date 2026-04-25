@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Teknik Özellik Dokümanı
 
 **Versiyon:** v1.5 · **Mimari:** RISC-V RV64IMAC · **Dil:** Rust no_std  
-**Toplam:** ~8,158 Rust + ~265 ASM satır · 42 kaynak dosya · 188 Kani harness · 7/7 TLA+ verified  
+**Toplam:** ~8,321 Rust + ~265 ASM satır · 42 kaynak dosya · 191 Kani harness · 7/7 TLA+ verified  
 **Felsefe:** Determinizm korunurken maksimum hız. Sıfır heap, sıfır panic, sıfır float.
 
 ---
@@ -22,7 +22,7 @@ IEEE 754 floating-point aritmetiği non-deterministic olabilir — farklı donan
 
 ### 1.4 Neden Microkernel?
 
-Monolitik kernel yerine microkernel çünkü saldırı yüzeyi küçük. Kernel sadece scheduler, IPC, capability, policy ve trap handler içerir. WASM sandbox, blackbox, secure boot kernel dışında çalışır. Bir bileşen çökerse kernel ayakta kalır. DO-178C DAL-A sertifikasyonu için küçük, doğrulanabilir kernel şart — 188 Kani harness (88 symbolic proof + 100 concrete/compile-time) ve 7/7 TLA+ spec ile kritik invariant'lar (scheduler seçim doğruluğu, policy escalation, IPC bütünlüğü, bellek güvenliği) formal olarak kanıtlanmış.
+Monolitik kernel yerine microkernel çünkü saldırı yüzeyi küçük. Kernel sadece scheduler, IPC, capability, policy ve trap handler içerir. WASM sandbox, blackbox, secure boot kernel dışında çalışır. Bir bileşen çökerse kernel ayakta kalır. DO-178C DAL-A sertifikasyonu için küçük, doğrulanabilir kernel şart — 191 Kani harness (90 symbolic proof + 101 concrete/compile-time) ve 7/7 TLA+ spec ile kritik invariant'lar (scheduler seçim doğruluğu, policy escalation, IPC bütünlüğü, bellek güvenliği) formal olarak kanıtlanmış.
 
 ---
 
@@ -246,9 +246,11 @@ Her cache entry'nin `expires` alanı var. `lookup()` sırasında `get_tick() <= 
 
 **Neden AtomicU16?** u16 → 65,536 head/tail alanı. 16 slot ile `% 16` modulo kullanılır. u16 wrap olduğunda modulo hâlâ doğru çalışır (Kani proof: `ipc_ring_buffer_wrap_never_exceeds_slots`).
 
-### 8.2 CRC32 Bütünlük Kontrolü
+### 8.2 CRC32 Bütünlük Kontrolü (Opt-in)
 
-Her mesajın son 4 byte'ı CRC32. `set_crc()` payload'un CRC'sini hesaplar, `verify_crc()` doğrular. CRC32 bit-by-bit hesaplanır — lookup table yok.
+IPC mesajlarına CRC32 helper method'ları sağlanır: `set_crc()` payload'un CRC'sini hesaplar, `verify_crc()` doğrular. **CRC kullanımı uygulama (application) sorumluluğundadır — kernel CRC'yi zorunlu kılmaz.** `send()` veya `recv()` CRC'yi otomatik kontrol etmiyor; sender çağırırsa hesaplanır, receiver çağırırsa doğrulanır.
+
+CRC32 bit-by-bit hesaplanır — lookup table yok. Kernel-enforced auto-CRC v2.0'da planlanıyor (WCET bütçe revizyonu gerektirir: IPC_SEND 60c → ~1600c).
 
 **Neden lookup table yok?** 256-entry LUT = 1KB. L1 cache'te yoksa cache miss → non-deterministic latency. Bit-by-bit: her byte 8 iterasyon, deterministic. 60 byte payload × 8 = 480 iterasyon — sabit WCET.
 
@@ -346,7 +348,7 @@ Timer interrupt (code=7) → tick artır, scheduler çağır. ecall → syscall 
 
 ---
 
-## 15. Formal Doğrulama — 188 Kani Harness + 7/7 TLA+
+## 15. Formal Doğrulama — 191 Kani Harness + 7/7 TLA+
 
 ### 15.1 Proof Dağılımı
 
@@ -362,7 +364,7 @@ Timer interrupt (code=7) → tick artır, scheduler çağır. ecall → syscall 
 | blackbox | 14 | Record layout, CRC, wrap, tick monotonicity |
 | crypto | 2 | BLAKE3 API memory safety (Kani stub) — cryptographic correctness via external audit |
 | hal (iopmp+key+boot) | 2+1+1 | IOPMP boundary, key size, secure boot |
-| **Toplam** | **188** | 88 symbolic proof (kani::any ile state space tarar) + 100 concrete/compile-time assertion |
+| **Toplam** | **188** | 90 symbolic proof (kani::any ile state space tarar) + 101 concrete/compile-time assertion |
 
 ### 15.2 Yüksek Değerli Proof'lar
 
@@ -653,4 +655,4 @@ U-mode task illegal instruction çalıştırınca trap handler `WasmTrap` event 
 
 Kani fonksiyon seviyesinde, TLA+ sistem seviyesinde doğrulama yapar. İkisi farklı soruları cevaplar ve birbirini tamamlar. Sprint U-12'de tüm spec'ler TLC 2026.04 uyumluluğuna getirildi (tick bound → StateConstraint, bounded message ID, WF→SF fairness ayarlamaları).
 
-*Sipahi Microkernel v1.5 — 188 Kani Harness · 7/7 TLA+ Verified · 12 Hardening · 0 Clippy Warning · 0 Runtime Panic · 0 Heap Allocation (kernel) · 5/7 Security Wall Active*
+*Sipahi Microkernel v1.5 — 191 Kani Harness · 7/7 TLA+ Verified · 12 Hardening · 0 Clippy Warning · 0 Runtime Panic · 0 Heap Allocation (kernel) · 5/7 Security Wall Active*

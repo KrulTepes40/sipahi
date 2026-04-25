@@ -60,15 +60,20 @@ pub const CPU_FREQ_HZ: u64 = 10_000_000; // 10MHz (QEMU)
 // kullanılabilir. Kesin WCET ölçümü → FPGA'da (v1.5).
 
 // ═══════════════════════════════════════════════════════
-// WCET hedefleri (cycle cinsinden, CPU_FREQ_HZ'e göre)
-// v10.0 dokümanından — FPGA'da yeniden ölçülecek
+// WCET hedefleri (cycle, @100MHz)
+// DURUM: Tümü estimated — FPGA ölçümü pending.
+// QEMU instruction count cycle doğruluğu vermez.
+// Kesin ölçüm: CVA6 FPGA + mtime counter.
+// Sprint U-15: U-9 mscratch swap + U-10 UART gate sonrası recalibrated.
 // ═══════════════════════════════════════════════════════
 
-/// trap_entry WCET hedefi (cycle)
-pub const WCET_TRAP_ENTRY: u64 = 30; // ≤0.3μs @ 100MHz
+/// trap_entry WCET — estimated at 80c, FPGA measurement pending.
+/// U-9 sonrası: ~33c entry (mscratch swap + 16 register save + CSR read + ecall check) plus ~30c exit. Rounded up for safety margin.
+pub const WCET_TRAP_ENTRY: u64 = 80;
 
-/// trap_handler WCET hedefi (cycle)
-pub const WCET_TRAP_HANDLER: u64 = 50; // ≤0.5μs @ 100MHz
+/// trap_handler Rust dispatch WCET — estimated at 80c, FPGA pending.
+/// Timer path ~33c (tick increment, schedule_next_tick, overrun check, schedule call). Ecall path 40-80c (dispatch overhead, syscall function). Rounded up for worst-case.
+pub const WCET_TRAP_HANDLER: u64 = 80;
 
 /// Scheduler tick WCET — estimated at 350c, FPGA measurement pending.
 /// Components: PMP verify(~40c) + Phase1 period loop(~64c) +
@@ -77,22 +82,29 @@ pub const WCET_TRAP_HANDLER: u64 = 50; // ≤0.5μs @ 100MHz
 /// Rounded up for safety margin.
 pub const WCET_SCHEDULER_TICK: u64 = 350;
 
-/// Context switch WCET — estimated, FPGA measurement pending
-/// 14 callee-saved × 2 (save+restore) + 2 CSR × 2 + la + ld/sd = ~80c
+/// Context switch WCET — estimated at 80c, FPGA measurement pending.
+/// 14 callee-saved save(14c) + 2 CSR save(4c) + la+ld user_sp(4c)
+/// + 14 callee-saved restore(14c) + 2 CSR restore(4c) + la+sd user_sp(4c)
+/// + ret(1c) ≈ 45c. Rounded up for pipeline/cache effects.
 pub const WCET_CONTEXT_SWITCH: u64 = 80;
 
-/// Capability invoke (cache hit) WCET — estimated, FPGA pending
-/// validate_cached(15c) + current_task_id(3c) + overhead = ~25c
+/// Capability invoke cache hit WCET — estimated at 25c, FPGA pending.
+/// validate_cached: 4-slot scan(12c) + ct_eq_16(8c) + tick check(3c) = ~23c
 pub const WCET_CAP_INVOKE: u64 = 25;
 
-/// ipc_send WCET hedefi (cycle)
-pub const WCET_IPC_SEND: u64 = 60; // ≤0.6μs @ 100MHz
+/// IPC send WCET — estimated at 60c, FPGA pending.
+/// channel bounds(3c) + ptr validate(5c) + rate limit(5c) +
+/// ring buffer write(20c) + CRC optional(0c production) ≈ 33c
+/// Rounded up.
+pub const WCET_IPC_SEND: u64 = 60;
 
-/// ipc_recv WCET hedefi (cycle)
-pub const WCET_IPC_RECV: u64 = 40; // ≤0.4μs @ 100MHz
+/// IPC recv WCET — estimated at 40c, FPGA pending.
+/// channel bounds(3c) + ring buffer read(15c) + ptr write(5c) ≈ 23c
+/// Rounded up.
+pub const WCET_IPC_RECV: u64 = 40;
 
-/// yield / task_info WCET hedefi (cycle)
-pub const WCET_YIELD: u64 = 10; // ≤0.1μs @ 100MHz
+/// yield / task_info WCET — estimated at 10c, FPGA pending.
+pub const WCET_YIELD: u64 = 10;
 
 // ═══════════════════════════════════════════════════════
 // Syscall ID'leri (Sprint 7'de kullanılacak)
@@ -109,8 +121,8 @@ pub const SYSCALL_COUNT: usize = 5;
 // Compute service ID'leri (Sprint 12'de kullanılacak)
 // ═══════════════════════════════════════════════════════
 
-pub const COMPUTE_COPY: u8 = 0; // Bellek kopyala, WCET ~80c
-pub const COMPUTE_CRC: u8 = 1; // CRC32 bütünlük, WCET ~120c
+pub const COMPUTE_COPY: u8 = 0; // Bellek kopyala, WCET ~80c (U-14: stub)
+pub const COMPUTE_CRC: u8 = 1; // CRC32 bütünlük, WCET ~1500c (bit-by-bit)
 pub const COMPUTE_MAC: u8 = 2; // BLAKE3 keyed hash, WCET ~350c
 pub const COMPUTE_MATH: u8 = 3; // Q32.32 vektör dot, WCET ~200c
 
@@ -118,12 +130,13 @@ pub const COMPUTE_MATH: u8 = 3; // Q32.32 vektör dot, WCET ~200c
 // Capability WCET hedefleri (Sprint 9)
 // ═══════════════════════════════════════════════════════
 
-/// Token cache hit WCET (cycle) — 4-slot sabit zamanlı tarama
-pub const WCET_TOKEN_CACHE_HIT: u64 = 10; // ≤0.1μs @ 100MHz
+/// Token cache hit WCET — estimated at 10c, FPGA pending.
+pub const WCET_TOKEN_CACHE_HIT: u64 = 10;
 
-/// Token full validation WCET (cycle) — SipahiMAC + ct_eq + cache insert
-/// Sprint 13'te BLAKE3 (~350c) ile güncellenecek — gerçek ölçüm FPGA'da
-pub const WCET_TOKEN_VALIDATE: u64 = 400; // ≤4μs @ 100MHz
+/// Token full validation WCET — estimated at 400c, FPGA pending.
+/// BLAKE3 keyed hash(~350c) + ct_eq_16(8c) + cache insert(10c) ≈ 368c
+/// Rounded up.
+pub const WCET_TOKEN_VALIDATE: u64 = 400;
 
 // ═══════════════════════════════════════════════════════
 // Budget sabitleri (Sprint 10)
@@ -168,8 +181,10 @@ pub const WATCHDOG_LIMIT: u32 = 100;
 /// COMPUTE_COPY WCET hedefi (cycle) — 64B bellek bloğu kopyalama
 pub const WCET_COMPUTE_COPY: u64 = 80;
 
-/// COMPUTE_CRC WCET hedefi (cycle) — CRC32 hesaplama (64B input)
-pub const WCET_COMPUTE_CRC: u64 = 120;
+/// COMPUTE_CRC WCET — estimated at 1500c, FPGA pending.
+/// CRC32 bit-by-bit: 64B × 8 bits × ~3c/bit ≈ 1536c.
+/// Sprint U-15: önceki 120c değeri 12× düşüktü.
+pub const WCET_COMPUTE_CRC: u64 = 1500;
 
 /// COMPUTE_MAC WCET hedefi (cycle) — BLAKE3 keyed hash (32B token input)
 pub const WCET_COMPUTE_MAC: u64 = 350;

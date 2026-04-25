@@ -14,7 +14,7 @@ Sipahi is a bare-metal microkernel designed for DO-178C DAL-A avionics workloads
 
 - **U-mode task isolation** — tasks run in User mode, kernel in Machine mode (mret transition, mscratch swap)
 - **Zero heap in kernel** — bump allocator confined to WASM sandbox only
-- **Formal verification** — 188 Kani harnesses + 7/7 TLA+ specs verified + 7 compile-time const asserts
+- **Formal verification** — 191 Kani harnesses + 7/7 TLA+ specs verified + 7 compile-time const asserts
 - **PMP hardware protection** — 4 L-bit locked kernel regions (text RX, rodata R, data RW, UART RW) + per-task NAPOT stack isolation (Entry 8)
 - **Task memory isolation** — task stacks and WASM arena outside Entry 5 PMP coverage (Sprint U-5)
 - **Capability-based access control** — BLAKE3-keyed tokens with per-task nonce, cache TTL, replay guard, task-id isolated cache
@@ -81,7 +81,7 @@ make kani           # Formal verification (requires Kani)
 | Check | Status |
 |---|---|
 | `cargo clippy -- -D warnings` | 0 warnings |
-| Kani harnesses | 188 (88 symbolic, 100 concrete/compile-time) |
+| Kani harnesses | 191 (90 symbolic, 101 concrete/compile-time) |
 | TLA+ specifications | 7/7 verified (TLC 2026.04 compatible) |
 | Compile-time asserts | 7 const asserts |
 | `no_std` + `no alloc` in kernel | enforced |

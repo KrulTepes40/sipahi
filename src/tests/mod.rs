@@ -564,6 +564,40 @@ pub fn post() {
     #[cfg(not(feature = "test-keys"))]
     arch::uart::println("[POST] Ed25519 SKIP (no test-keys)");
 
+    // Sprint U-15: CLINT timer ilerliyor mu?
+    {
+        let t1 = crate::arch::clint::read_mtime();
+        // Birkaç NOP — mtime'ın ilerlemesine zaman ver
+        let mut _dummy: u64 = 0;
+        let mut k = 0u32;
+        while k < 100 { _dummy = _dummy.wrapping_add(1); k += 1; }
+        let t2 = crate::arch::clint::read_mtime();
+        if t2 <= t1 {
+            arch::uart::println("[POST] WARN: mtime not advancing (CLINT issue)");
+        } else {
+            arch::uart::println("[POST] CLINT timer ✓");
+        }
+    }
+
+    // Sprint U-15: misa CSR — ISA identity doğrulama
+    // RISC-V misa register: bit 8='I', bit 12='M', bit 0='A', bit 2='C'
+    // MXL field (bit 63:62) = 2 (64-bit)
+    {
+        let misa: usize;
+        // SAFETY: M-mode CSR access, always valid in M-mode.
+        unsafe { core::arch::asm!("csrr {}, misa", out(reg) misa); }
+        let mxl = (misa >> 62) & 0x3;
+        let has_i = (misa >> 8)  & 1;
+        let has_m = (misa >> 12) & 1;
+        let has_a = misa & 1;          // bit 0 = 'A'
+        let has_c = (misa >> 2)  & 1;
+        if mxl != 2 || has_i == 0 || has_m == 0 || has_a == 0 || has_c == 0 {
+            arch::uart::println("[POST] WARN: misa does not match riscv64imac");
+        } else {
+            arch::uart::println("[POST] misa ISA identity ✓");
+        }
+    }
+
     arch::uart::println("[POST] ★ All self-tests PASSED ★");
 }
 

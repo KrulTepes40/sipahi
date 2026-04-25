@@ -51,19 +51,19 @@ mod verification {
 
     // ═══════════════════════════════════════════════════════
     // PROOF 4: WCET hedefleri tutarlı sırada
-    // Sprint U-10: WCET_CAP_INVOKE 120→25 (cache hit), WCET_SCHEDULER_TICK
-    // 80→350 (context switch dahil). Yeni sıralama:
-    // YIELD(10) ≤ CAP_INVOKE(25) ≤ TRAP_ENTRY(30) ≤ IPC_RECV(40)
-    // ≤ TRAP_HANDLER(50) ≤ IPC_SEND(60) ≤ CONTEXT_SWITCH(80) ≤ SCHEDULER_TICK(350)
+    // Sprint U-15: U-9 mscratch swap + U-10 UART gate sonrası recalibrated.
+    // Yeni sıralama:
+    // YIELD(10) ≤ CAP_INVOKE(25) ≤ IPC_RECV(40) ≤ IPC_SEND(60) ≤
+    // TRAP_ENTRY(80) ≤ TRAP_HANDLER(80) ≤ CONTEXT_SWITCH(80) ≤ SCHEDULER_TICK(350)
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn wcet_ordering_consistent() {
         assert!(WCET_YIELD <= WCET_CAP_INVOKE);
-        assert!(WCET_CAP_INVOKE <= WCET_TRAP_ENTRY);
-        assert!(WCET_TRAP_ENTRY <= WCET_IPC_RECV);
-        assert!(WCET_IPC_RECV <= WCET_TRAP_HANDLER);
-        assert!(WCET_TRAP_HANDLER <= WCET_IPC_SEND);
-        assert!(WCET_IPC_SEND <= WCET_CONTEXT_SWITCH);
+        assert!(WCET_CAP_INVOKE <= WCET_IPC_RECV);
+        assert!(WCET_IPC_RECV <= WCET_IPC_SEND);
+        assert!(WCET_IPC_SEND <= WCET_TRAP_ENTRY);
+        assert!(WCET_TRAP_ENTRY <= WCET_TRAP_HANDLER);
+        assert!(WCET_TRAP_HANDLER <= WCET_CONTEXT_SWITCH);
         assert!(WCET_CONTEXT_SWITCH <= WCET_SCHEDULER_TICK);
     }
 
@@ -187,7 +187,7 @@ mod verification {
     // ═══════════════════════════════════════════════════════
     // PROOF 12: Host call overhead bounded
     // Sprint 13'te aktif edildi — WCET_COMPUTE_* config.rs'e eklendi.
-    // Doğru metrik: HOST_CALL_LIMIT × max(WCET_COMPUTE_COPY..WCET_COMPUTE_MAC)
+    // Doğru metrik: HOST_CALL_LIMIT × max(WCET_COMPUTE_COPY..WCET_COMPUTE_CRC)
     //   = 16 × 350c (COMPUTE_MAC) = 5,600c < 10,000c ✓
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
@@ -196,14 +196,16 @@ mod verification {
         let cap_overhead = (HOST_CALL_LIMIT as u64) * (WCET_CAP_INVOKE as u64);
         assert!(cap_overhead < 100_000); // 16 × 120 = 1,920c ✓
 
-        // Compute service overhead (WCET_COMPUTE_MAC = worst-case service)
-        let compute_overhead = (HOST_CALL_LIMIT as u64) * WCET_COMPUTE_MAC;
-        assert!(compute_overhead < 10_000); // 16 × 350 = 5,600c < 10,000 ✓
+        // Compute service overhead — Sprint U-15: WCET_COMPUTE_CRC artık worst-case
+        // (1500c, bit-by-bit CRC32). Önceden COMPUTE_MAC=350c worst-case sayılıyordu
+        // ama CRC 12× daha pahalı.
+        let compute_overhead = (HOST_CALL_LIMIT as u64) * WCET_COMPUTE_CRC;
+        assert!(compute_overhead < 30_000); // 16 × 1500 = 24,000c < 30,000 ✓
 
-        // COMPUTE_MAC her zaman en pahalı servis
-        assert!(WCET_COMPUTE_MAC >= WCET_COMPUTE_COPY);
-        assert!(WCET_COMPUTE_MAC >= WCET_COMPUTE_CRC);
-        assert!(WCET_COMPUTE_MAC >= WCET_COMPUTE_MATH);
+        // COMPUTE_CRC her zaman en pahalı servis (Sprint U-15)
+        assert!(WCET_COMPUTE_CRC >= WCET_COMPUTE_COPY);
+        assert!(WCET_COMPUTE_CRC >= WCET_COMPUTE_MAC);
+        assert!(WCET_COMPUTE_CRC >= WCET_COMPUTE_MATH);
     }
 
     // ═══════════════════════════════════════════════════════
