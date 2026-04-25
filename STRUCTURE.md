@@ -8,9 +8,9 @@ sipahi/
 ├── src/
 │   ├── main.rs                  # Entry point, task_a/task_b, panic handler (~113 lines)
 │   ├── boot.rs                  # Boot sequence: PMP, HAL, task creation, timer (~85 lines)
-│   ├── verify.rs                # Kani formal verification harnesses (~923 lines)
+│   ├── verify.rs                # Kani formal verification harnesses (~925 lines)
 │   ├── tests/
-│   │   └── mod.rs               # POST + integration + FI tests (~750 lines)
+│   │   └── mod.rs               # POST + integration + FI tests (~785 lines)
 │   ├── arch/                    # Layer 0: RISC-V hardware
 │   │   ├── boot.S               # _start → BSS clear → stack → rust_main
 │   │   ├── trap.S               # Trap frame save/restore (34 registers)
@@ -85,17 +85,17 @@ sipahi/
 
 | Metric | Value |
 |---|---|
-| Source lines (Rust) | ~8,321 |
+| Source lines (Rust) | ~8,315 |
 | Source lines (ASM) | ~265 |
 | `.rs` files | 39 |
 | `.S` files | 3 |
 | Kani harnesses | 191 (90 symbolic, 101 concrete/compile-time) |
-| Compile-time asserts | 7 |
+| Compile-time asserts | 8 |
 | `static mut` count | 0 |
 | `unsafe` blocks | 123 (95 documented with `// SAFETY:`) |
 | TLA+ specs | 7 (all verified — Sprint U-12: TLC 2026.04 compatibility fixes) |
 | TLA+ lines | ~1,030 |
-| Sprints completed | 14 core (0–14) + 9 security (U-3 … U-13) = 23 |
+| Sprints completed | 16 core (0–14 + 1.5) + 12 security (U-3 … U-15, U-7 skipped) = 28 |
 | CI jobs | 4 (clippy+build, qemu-test, audit, kani) |
 | Supply chain | `cargo audit` (0 CVE) + `cargo deny` (license/bans/sources) |
 

@@ -14,7 +14,7 @@ Sipahi is a bare-metal microkernel designed for DO-178C DAL-A avionics workloads
 
 - **U-mode task isolation** — tasks run in User mode, kernel in Machine mode (mret transition, mscratch swap)
 - **Zero heap in kernel** — bump allocator confined to WASM sandbox only
-- **Formal verification** — 191 Kani harnesses + 7/7 TLA+ specs verified + 7 compile-time const asserts
+- **Formal verification** — 191 Kani harnesses + 7/7 TLA+ specs verified + 8 compile-time const asserts
 - **PMP hardware protection** — 4 L-bit locked kernel regions (text RX, rodata R, data RW, UART RW) + per-task NAPOT stack isolation (Entry 8)
 - **Task memory isolation** — task stacks and WASM arena outside Entry 5 PMP coverage (Sprint U-5)
 - **Capability-based access control** — BLAKE3-keyed tokens with per-task nonce, cache TTL, replay guard, task-id isolated cache
@@ -22,8 +22,8 @@ Sipahi is a bare-metal microkernel designed for DO-178C DAL-A avionics workloads
 - **WASM sandbox** — wasmi 1.0.9, float-opcode rejection (instruction-level v2), fuel metering, 4 MB bump arena
 - **Secure boot** — Ed25519 signature verification (RFC 8032, RUSTSEC-2022-0093 patched), key provisioning, MAC key test-keys gate
 - **5+1-mode failure policy engine** — RESTART/ISOLATE/DEGRADE/FAILOVER(=Degrade stub)/ALERT/SHUTDOWN with lockstep verification + LockstepFail forensics event
-- **Blackbox flight recorder** — 8 KB CRC32-protected circular buffer, u32 seq (~900K years wrap-free), u64 monotonic tick (epoch + u32)
-- **Power-On Self Test** — CRC32 engine, PMP integrity, policy engine, mstatus, mtvec, BLAKE3 determinism, Ed25519 known-vector
+- **Blackbox flight recorder** — 8 KB CRC32-protected circular buffer, u32 seq (decades at typical event rates), u64 monotonic tick (u16 epoch + u32 tick → ~89K years @ 10ms tick)
+- **Power-On Self Test** — CRC32 engine, PMP integrity, policy engine, mstatus, mtvec, BLAKE3 determinism, Ed25519 known-vector, CLINT timer advance, misa ISA identity
 - **QEMU fault injection tests** — IPC CRC corruption (FI-3), MAC forgery (FI-4), budget exhaustion escalation (FI-7)
 - **IPC rate limiting** — per-task send quota, pointer validation, alignment check
 - **Kernel pointer sanitization** — syscall return values scrubbed for kernel address leaks
@@ -83,7 +83,7 @@ make kani           # Formal verification (requires Kani)
 | `cargo clippy -- -D warnings` | 0 warnings |
 | Kani harnesses | 191 (90 symbolic, 101 concrete/compile-time) |
 | TLA+ specifications | 7/7 verified (TLC 2026.04 compatible) |
-| Compile-time asserts | 7 const asserts |
+| Compile-time asserts | 8 const asserts |
 | `no_std` + `no alloc` in kernel | enforced |
 | Panic-free kernel | enforced (`overflow-checks = true`, no `unwrap`) |
 | `static mut` | 0 (all via `SingleHartCell<T>`) |
@@ -114,7 +114,7 @@ make kani           # Formal verification (requires Kani)
 | 12 | WASM sandbox: wasmi 1.0.9, float-opcode rejection v2, fuel limit, bump allocator |
 | 13 | Secure boot: Ed25519 (RFC 8032), real BLAKE3 MAC (no-std), key provisioning |
 | 14 | `TaskState::Isolated`, GitHub Actions CI, debug-boot feature |
-| 1.5 | U-mode tasks, per-task PMP (NAPOT), windowed watchdog, policy lockstep, graceful degradation, POST, 177 Kani proofs (historical — post-U sprints: 188) |
+| 1.5 | U-mode tasks, per-task PMP (NAPOT), windowed watchdog, policy lockstep, graceful degradation, POST, 177 Kani proofs (historical — post-U sprints: 191) |
 | U-3 | Per-task PMP NAPOT activation, context-switch reprogramming |
 | U-4 | Lockstep CSE fix (black_box fence), boot capability, cache owner_task_id, pmpaddr shadow |
 | U-5 | PMP Entry 5 narrowing, `.task_stacks` + `.wasm_arena` sections, trap handler fault arms |
@@ -126,6 +126,8 @@ make kani           # Formal verification (requires Kani)
 | U-11 | 5+1-mode failure policy (Failover honesty), 8/9 PolicyEvent triggerable (StackOverflow/CapViolation/PmpIntegrity/DeadlineMiss/MultiModuleCrash) |
 | U-12 | 7/7 TLA+ verified (TLC 2026.04 compat: tick bound→StateConstraint, integer sentinel, NoLivelock via `terminated`), PolicyLockstepFail blackbox event |
 | U-13 | CI 4-job (clippy+build, qemu-test, audit, kani), `deny.toml`, Post-Sprint Checklist, branch fix (main→master) |
+| U-14 | WASM float scanner v2 (load/store + comparisons), `compute_copy` stub guard, capability cache split (`invalidate_by_token` / `invalidate_by_owner`), blackbox `_pad` field, ct-eq audit script |
+| U-15 | WCET recalibration (TRAP 30→80, SCHED 80→350, CRC 120→1500), POST CLINT timer + misa, MPP verify before dispatch, IPC CRC opt-in clarification, metric sweep |
 
 ---
 

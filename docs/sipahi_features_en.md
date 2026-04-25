@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Technical Feature Document
 
 **Version:** v1.5 · **Architecture:** RISC-V RV64IMAC · **Language:** Rust no_std  
-**Total:** ~8,321 Rust + ~265 ASM lines · 42 source files · 191 Kani harnesses · 7/7 TLA+ verified  
+**Total:** ~8,315 Rust + ~265 ASM lines · 42 source files · 191 Kani harnesses · 7/7 TLA+ verified  
 **Philosophy:** Maximum speed while preserving determinism. Zero heap, zero panic, zero float.
 
 ---
@@ -270,7 +270,7 @@ CRC32 detects partially written records. Power cut → record incomplete → CRC
 
 ### 9.3 Monotonic Tick
 
-`BB_TICK` u32 increments every scheduler tick via `wrapping_add(1)`. Wrap detection: `next < t` → `BB_BOOT_EPOCH` u16 is incremented. `get_tick()` → `(epoch << 32) | tick` = effective u48 range = ~900,000 years wrap-free.
+`BB_TICK` u32 increments every scheduler tick via `wrapping_add(1)`. Wrap detection: `next < t` → `BB_BOOT_EPOCH` u16 is incremented. `get_tick()` → `(epoch << 32) | tick` = effective u48 range. Assuming a 10ms tick, u32 alone wraps in ~497 days; combined with the u16 epoch, the counter stays monotonic for ~89,000 years — far enough for token expiry checks.
 
 ### 9.4 Event Types
 
@@ -300,7 +300,7 @@ Each WASM instruction consumes 1 fuel. When fuel is exhausted, execution stops. 
 
 ### 10.5 Compute Services
 
-4 fixed services: COPY (memory copy, ~80c), CRC (CRC32 computation, ~120c), MAC (BLAKE3 keyed hash, ~350c), MATH (Q32.32 vector dot product, ~200c). WCET targets are fixed, every service is bounded.
+4 fixed services: COPY (memory copy, ~80c — Sprint U-14: stub, returns NotImplemented), CRC (CRC32 bit-by-bit, ~1500c — Sprint U-15 estimate: 64B × 8 bits × ~3c), MAC (BLAKE3 keyed hash, ~350c), MATH (Q32.32 vector dot product, ~200c). WCET targets are estimated; FPGA measurement pending.
 
 ---
 
@@ -354,17 +354,16 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 
 | Module | Proofs | Coverage |
 |--------|--------|----------|
-| verify.rs (global) | 57 | DAL, PMP, memory, cross-module invariants |
-| sandbox (mod+allocator) | 19+1 | LEB128, float scanning, bounds safety, allocator overlap |
+| verify.rs (global) | 67 | DAL, PMP, memory, cross-module invariants |
+| sandbox (mod+allocator) | 20+1 | LEB128, float scanning (U-14: load/store + comparisons), bounds safety, allocator overlap |
 | dispatch | 18 | Syscall table, pointer rejection, dispatch fuzzing |
 | scheduler | 17 | Selection correctness, Isolated/Dead never selected, watchdog, priority |
-| ipc | 15 | CRC roundtrip, channel bounds, ring buffer wrap |
+| ipc (mod+blackbox) | 15+14 | CRC roundtrip, channel bounds, ring buffer wrap, blackbox record/CRC/wrap |
 | policy | 14 | Escalation chains, PMP→Shutdown, livelock freedom |
-| capability (mod+broker) | 14+2 | Token encoding, cache, invalidation, nonce, ct_eq_16 |
-| blackbox | 14 | Record layout, CRC, wrap, tick monotonicity |
+| capability (mod+broker+cache) | 15+2+2 | Token encoding, cache, invalidation by token/owner (U-14), nonce, ct_eq_16 |
 | crypto | 2 | BLAKE3 API memory safety (Kani stub) — cryptographic correctness via external audit |
 | hal (iopmp+key+boot) | 2+1+1 | IOPMP boundary, key size, secure boot |
-| **Total** | **188** | 90 symbolic proofs (explore state space via kani::any) + 101 concrete/compile-time assertions |
+| **Total** | **191** | 90 symbolic proofs (explore state space via kani::any) + 101 concrete/compile-time assertions |
 
 ### 15.2 High-Value Proofs
 
@@ -380,7 +379,7 @@ These proofs symbolically explore the entire input space using `kani::any()` —
 
 ### 15.3 Const Asserts (Compile-Time)
 
-Constant checks were moved from Kani to `const _: () = assert!(...)` at compile time — zero runtime cost; if the condition is not met, the code does not compile: Token == 32B, IpcMessage == 64B, SYSCALL_COUNT == 5, OTP_KEY_SIZE == 32, BLACKBOX_MAX_RECORDS <= 255, SIGNATURE_SIZE == 2 × OTP_KEY_SIZE.
+Constant checks were moved from Kani to `const _: () = assert!(...)` at compile time — zero runtime cost; if the condition is not met, the code does not compile: Token == 32B, IpcMessage == 64B, IPC_CHANNEL_SLOTS > 0, BlackboxRecord == BLACKBOX_RECORD_SIZE, BLACKBOX_MAX_RECORDS <= 255, SYSCALL_COUNT == 5, OTP_KEY_SIZE == 32, SIGNATURE_SIZE == 2 × OTP_KEY_SIZE (8 const asserts total).
 
 ---
 
@@ -459,9 +458,15 @@ All tests print results via UART: `✓` passed, `✗` failed.
 
 Runs before the test suite. If any single test fails, the scheduler does not start — halts with `wfi` loop. PBIT (Power-on Built-In Test) is mandatory for DO-178C DAL-A.
 
-- **CRC32 engine**: Known vector "123456789" → `0xCBF43926` (IEEE 802.3). If mismatch, the CRC engine is corrupted — all integrity checks are unreliable.
-- **PMP integrity**: The actual register is read via `read_pmpcfg0()` and compared with the shadow saved at boot. Mismatch = register corruption.
-- **Policy engine sanity**: `decide_action(PmpFail, 0, 0)` → must return Shutdown. If not, the policy engine is corrupted — risk of incorrect safety decisions.
+- **CRC32 engine**: Known vector "123456789" → `0xCBF43926` (IEEE 802.3). If mismatch, the CRC engine is corrupted — all integrity checks are unreliable. HALT.
+- **PMP integrity**: The actual register is read via `read_pmpcfg0()` and compared with the shadow saved at boot. Mismatch = register corruption. HALT.
+- **Policy engine sanity**: `decide_action(PmpFail, 0, 0)` → must return Shutdown. If not, the policy engine is corrupted — risk of incorrect safety decisions. HALT.
+- **mstatus M-mode CSR access**: mstatus readable, MPP bits not in reserved value. HALT on fail.
+- **mtvec set**: Trap handler installed (`mtvec != 0`). HALT on fail.
+- **BLAKE3 self-test**: Determinism (same input → same output) + non-zero output check. HALT on fail.
+- **Ed25519 RFC 8032 TV1** (with test-keys feature): Signature verification against known test vector. HALT on fail.
+- **CLINT timer advance** (Sprint U-15): Does mtime register advance (hardware timer alive)? WARN level (QEMU TCG compatibility).
+- **misa ISA identity** (Sprint U-15): MXL=2 (RV64) + bits I/M/A/C set. WARN level.
 
 Cost: boot-time only, zero runtime overhead. Adds ~1ms to boot time.
 
@@ -529,7 +534,7 @@ All fields are statically allocated — no heap. `Task::empty()` provides zeroed
 | Graceful degradation | 0 (O(N) when triggered) | DAL-C/D automatic recovery, budget protection |
 | POST (boot-time) | 0 (no runtime cost) | Booting with corrupted RAM/CRC/PMP/policy |
 
-Total hardening overhead: ~25 cycles/tick — less than 1.5% of Sipahi's 1.5μs WCET budget.
+Hardening items run at different points (per tick / per syscall / per ecall), so summarising them as a single "per-tick cost" is misleading. The items active during a single scheduler tick (PMP shadow ~5c + policy lockstep ~5c + watchdog ~1c + drift-free timer 0c ≈ ~11c) fit inside the `WCET_SCHEDULER_TICK = 350c` budget. Per-syscall costs (kernel pointer sanitization, MPP verification, syscall counter) are accounted for in the relevant syscall WCET targets.
 
 ---
 
@@ -544,7 +549,7 @@ Heap-free format functions for debug output over UART: `print_u32` (decimal), `p
 - **Toolchain:** Rust nightly-2026-03-01, riscv64imac-unknown-none-elf target
 - **Build:** `make build` (build-std flags), `cargo clippy -- -D warnings` (target in config.toml)
 - **Run:** `make run` (QEMU 8.2.2 virt machine, -bios none, 512MB RAM)
-- **Verify:** `cargo kani` (188 harnesses), const assert (7 compile-time checks), TLC (7 TLA+ specs)
+- **Verify:** `cargo kani` (191 harnesses), const assert (8 compile-time checks), TLC (7 TLA+ specs)
 - **Supply chain:** `cargo audit` (RustSec CVE scan, 0 CVE) + `cargo deny check` (license/bans/sources policy)
 - **CI:** GitHub Actions 4 jobs — clippy+build, QEMU boot test (HALT criteria), supply chain audit, Kani (master push only)
 - **WASM:** Wasmi 1.0.9, `default-features = false`, `prefer-btree-collections`
@@ -552,20 +557,26 @@ Heap-free format functions for debug output over UART: `print_u32` (decimal), `p
 
 ---
 
-## 26. Performance Targets (100MHz CVA6)
+## 26. Performance Targets (100MHz CVA6 — estimated, FPGA pending)
 
-| Operation | Target | Equivalent |
-|-----------|--------|------------|
-| trap_entry | ≤30 cycles | ≤0.30μs |
+Recalibrated in Sprint U-15. All values are kept in sync with the constants in `src/common/config.rs` — that is the single source of truth.
+
+| Operation | Target | Equivalent @100MHz |
+|-----------|--------|--------------------|
+| trap_entry | ≤80 cycles | ≤0.80μs |
+| trap_handler (Rust dispatch) | ≤80 cycles | ≤0.80μs |
+| context_switch | ≤80 cycles | ≤0.80μs |
+| scheduler_tick | ≤350 cycles | ≤3.50μs |
 | sys_yield | ≤10 cycles | ≤0.10μs |
 | ipc_recv | ≤40 cycles | ≤0.40μs |
 | ipc_send | ≤60 cycles | ≤0.60μs |
-| scheduler_tick | ≤80 cycles | ≤0.80μs |
-| cap_invoke (cache hit) | ≤10 cycles | ≤0.10μs |
-| token_validate (BLAKE3) | ≤400 cycles | ≤4.00μs |
-| Total syscall (worst case) | ≤1.5μs | — |
+| cap_invoke (cache-hit path) | ≤25 cycles | ≤0.25μs |
+| token_cache_hit | ≤10 cycles | ≤0.10μs |
+| token_validate (BLAKE3 full) | ≤400 cycles | ≤4.00μs |
+| compute_mac (BLAKE3) | ≤350 cycles | ≤3.50μs |
+| compute_crc (CRC32 bit-by-bit) | ≤1500 cycles | ≤15.00μs |
 
-Precise measurements to be done on FPGA. In QEMU TCG, rdcycle returns instruction count, not real cycles.
+Precise measurements to be done on FPGA. In QEMU TCG, rdcycle returns instruction count, not real cycles — WCET regressions are used only for relative comparison.
 
 ---
 

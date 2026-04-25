@@ -58,7 +58,7 @@ No other circular dependencies exist.
 - Kani: 191 bounded model checking harnesses
   (90 symbolic proofs, 101 concrete/compile-time assertions)
 - TLA+: 7 specifications, all verified (Sprint U-12: TLC 2026.04 compatibility)
-- Compile-time: 7 `const assert!` (layout, size, config invariants)
+- Compile-time: 8 `const assert!` (layout, size, config invariants)
 - Clippy: zero warnings (`-D warnings`)
 - Overflow checks: enabled in release (`overflow-checks = true`)
 - Supply chain: `cargo audit` (RustSec CVE scan) + `cargo deny` (license/bans/sources policy)
