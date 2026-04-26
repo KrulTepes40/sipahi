@@ -508,7 +508,7 @@ All fields are statically allocated — no heap. `Task::empty()` provides zeroed
 | 1 | WASM Sandbox | ✅ Complete | Fuel metering + float rejection + isolated memory |
 | 2 | Capability Token | ✅ Complete | BLAKE3 MAC + nonce + expiry + constant-time cache |
 | 3 | PMP (kernel) | ✅ Complete | 4 TOR regions, L-bit locking + shadow register |
-| 4 | PMP (per-task) | ✅ Complete | Task stacks outside Entry 5, NAPOT entry 8, WASM arena M-mode only |
+| 4 | PMP (per-task) | ⚠️ Vanilla | Task stacks outside Entry 5, NAPOT entry 8, WASM arena M-mode only. **Vanilla PMP weakness:** L-bit does not block U-mode read/write — kernel data such as `MAC_KEY`/`PMP_SHADOW` can be read from U-mode. Smepmp or `.secure_data` carve-out v1.5 |
 | 5 | IOPMP | ⚠️ Stub | Requires real hardware (DMA controller) — FPGA |
 | 6 | M/U-mode separation | ✅ Complete | Kernel in M-mode, tasks in U-mode, mret transition |
 | 7 | Physical | ❌ None | JTAG/OTP/tamper — FPGA+production level |

@@ -71,6 +71,27 @@ pub fn init() {
     print_u32(id_b.unwrap_or(255) as u32);
     arch::uart::puts(" prio=8 dal=C budget=200K/period");
     arch::uart::println("");
+
+    // ─── Sprint U-16: IPC Channel ownership assignment ───
+    // Channel 0: A → B (producer=A, consumer=B)
+    // Channel 1: B → A (producer=B, consumer=A)
+    // Diğer kanallar (2-7) atanmamış kalır → default deny.
+    if let (Some(a), Some(b)) = (id_a, id_b) {
+        let ok_0 = ipc::assign_channel(0, a, b);
+        let ok_1 = ipc::assign_channel(1, b, a);
+        if !ok_0 || !ok_1 {
+            arch::uart::println("[BOOT] FATAL: IPC channel assignment failed — HALT");
+            // SAFETY: WFI halt — boot invariant broken.
+            loop { unsafe { core::arch::asm!("wfi"); } }
+        }
+        arch::uart::println("[BOOT] IPC ch0: A→B, ch1: B→A");
+    } else {
+        arch::uart::println("[BOOT] FATAL: task creation failed — HALT");
+        // SAFETY: WFI halt — boot invariant broken.
+        loop { unsafe { core::arch::asm!("wfi"); } }
+    }
+    ipc::seal_channels();
+    arch::uart::println("[BOOT] IPC channels sealed");
 }
 
 /// Final boot — timer arm + scheduler start (diverges, never returns)

@@ -508,7 +508,7 @@ Tüm alanlar statik tahsis — heap yok. `Task::empty()` ile sıfırlanmış var
 | 1 | WASM Sandbox | ✅ Tam | Fuel metering + float reddi + izole bellek |
 | 2 | Capability Token | ✅ Tam | BLAKE3 MAC + nonce + expiry + constant-time cache |
 | 3 | PMP (kernel) | ✅ Tam | 4 TOR bölge, L-bit kilitleme + shadow register |
-| 4 | PMP (per-task) | ✅ Tam | Task stacks Entry 5 dışı, NAPOT entry 8, WASM arena M-mode only |
+| 4 | PMP (per-task) | ⚠️ Vanilla | Task stacks Entry 5 dışı, NAPOT entry 8, WASM arena M-mode only. **Vanilla PMP zayıflığı:** L-bit U-mode read/write engellemez — `MAC_KEY`/`PMP_SHADOW` gibi kernel data U-mode'dan okunabilir. Smepmp veya `.secure_data` carve-out v1.5 |
 | 5 | IOPMP | ⚠️ Stub | Gerçek donanım (DMA controller) gerektirir — FPGA |
 | 6 | M/U-mode ayrımı | ✅ Tam | Kernel M-mode, task'lar U-mode, mret geçişi |
 | 7 | Fiziksel | ❌ Yok | JTAG/OTP/tamper — FPGA+üretim seviyesi |

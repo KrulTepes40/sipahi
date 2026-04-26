@@ -16,6 +16,7 @@
 use crate::common::types::{TaskId, ResourceId};
 
 /// Capability action bitleri
+#[allow(dead_code)]
 pub const ACTION_READ:    u8 = 0x01;
 #[allow(dead_code)]
 pub const ACTION_WRITE:   u8 = 0x02;

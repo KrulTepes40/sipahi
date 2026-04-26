@@ -18,11 +18,19 @@ use crate::common::sync::SingleHartCell;
 #[cfg(feature = "fast-crypto")]
 use crate::common::crypto::Crypto;
 
+// Sprint U-16: Production binary'de bu state ve API'ler self-test/test-keys
+// feature olmadan çağrılmaz. v2.0 HSM provisioning yolu eklendiğinde tekrar
+// kullanılacak. `#[allow(dead_code)]` ile kernel API'sinin parçası olduğu
+// belirtilir; clippy `dead_code` hatasını bastırır.
+
 /// MAC key — boot'ta provision_key() ile bir kez yazılır
+#[allow(dead_code)]
 static MAC_KEY: SingleHartCell<[u8; 32]> = SingleHartCell::new([0u8; 32]);
+#[allow(dead_code)]
 static KEY_READY: SingleHartCell<bool> = SingleHartCell::new(false);
 
 /// Per-task nonce — replay guard (her task bağımsız monoton artan)
+#[allow(dead_code)]
 static LAST_NONCE: SingleHartCell<[u32; MAX_TASKS]> = SingleHartCell::new([0u32; MAX_TASKS]);
 
 /// Token cache — statik, heap yok
@@ -30,6 +38,7 @@ static TOKEN_CACHE: SingleHartCell<TokenCache> = SingleHartCell::new(TokenCache:
 
 /// MAC key provisioning — boot sequence'de BİR KEZ çağrılır
 /// Tekrar çağrı yoksayılır (key rotation Sprint 13)
+#[allow(dead_code)] // Sprint U-16: production'da HSM yolu eklenince tekrar canlı
 pub(crate) fn provision_key(key: &[u8; 32]) {
     // Sıfır key → güvenli varsayılan: KEY_READY false kalır
     let mut all_zero = true;
@@ -82,6 +91,14 @@ pub(crate) const fn is_task_id_valid(task_id: u8, max_tasks: usize) -> bool {
     (task_id as usize) < max_tasks
 }
 
+/// Sprint U-16: Token owner match — capability impersonation engellenmesi.
+/// validate_full bu helper'ı kullanır. Token sahibi != caller → reddedilmeli.
+#[allow(dead_code)] // self-test build dışında validate_full çağrılmaz
+#[inline(always)]
+pub(crate) const fn token_owner_matches(token_task: u8, caller: u8) -> bool {
+    token_task == caller
+}
+
 /// Cache-only lookup — sys_cap_invoke fast path (~10c)
 /// validate_full ile cache'e eklenmemiş token → false döner
 #[must_use = "cache lookup result must be checked"]
@@ -96,6 +113,7 @@ pub(crate) fn validate_cached(caller_task_id: u8, token_id: u8, resource: u16, a
 /// Full token validation — MAC hesapla, nonce kontrol, cache'e ekle (~400c)
 /// Returns: true = geçerli + cache'e eklendi, false = RED (MAC/nonce/key fail)
 #[cfg(feature = "fast-crypto")]
+#[allow(dead_code)] // Sprint U-16: production'da HSM token enroll yolu eklenince çağrılacak
 #[must_use = "validation result must be checked"]
 pub(crate) fn validate_full(token: &Token, caller_task_id: u8) -> bool {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
@@ -105,6 +123,11 @@ pub(crate) fn validate_full(token: &Token, caller_task_id: u8) -> bool {
             return true;
         }
         if !*KEY_READY.get() {
+            return false;
+        }
+        // Sprint U-16: Token owner enforcement — capability impersonation guard.
+        // Token başka task'a aitse caller asla kullanamaz; MAC valid olsa bile reddet.
+        if !token_owner_matches(token.task_id, caller_task_id) {
             return false;
         }
         // Replay guard: per-task nonce, kesinlikle monoton artan
@@ -143,6 +166,7 @@ pub(crate) fn validate_full(token: &Token, caller_task_id: u8) -> bool {
 /// Token MAC hesapla ve token.mac alanına yaz
 /// Kullanım: boot test, token üretimi (gerçek sistemde HSM yapar)
 #[cfg(feature = "fast-crypto")]
+#[allow(dead_code)] // self-test feature dışında çağrılmaz; HSM yapısı v2.0'da
 pub(crate) fn sign_token(token: &mut Token) {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
@@ -168,6 +192,7 @@ pub(crate) fn invalidate_task_capabilities(task_id: u8) {
 
 /// Constant-time 16-byte compare — timing attack önlemi
 /// Tüm 16 byte her zaman karşılaştırılır, erken çıkış YOK
+#[allow(dead_code)] // validate_full'un parçası — production HSM yolu ile canlı
 #[inline(always)]
 fn ct_eq_16(a: &[u8; 16], b: &[u8; 16]) -> bool {
     let mut diff: u8 = 0;
@@ -206,5 +231,17 @@ mod verification {
         kani::assume(idx < 16);
         b[idx] = b[idx].wrapping_add(1);
         assert!(!ct_eq_16(&a, &b));
+    }
+
+    /// Sprint U-16 Proof: Token owner mismatch her zaman reject.
+    /// Caller ile token.task_id farklıysa validate_full reddetmek zorunda
+    /// (capability impersonation guard).
+    #[kani::proof]
+    fn token_owner_mismatch_always_rejected() {
+        let owner: u8 = kani::any();
+        let attacker: u8 = kani::any();
+        kani::assume(owner < 8 && attacker < 8 && owner != attacker);
+        assert!(!token_owner_matches(owner, attacker));
+        assert!(token_owner_matches(owner, owner));
     }
 }

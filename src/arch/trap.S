@@ -129,9 +129,20 @@ trap_entry:
 
 # ─── Nested fault handler ───
 # mscratch 0 idi → trap handler içinde tekrar trap geldi
-# sp = 0 (swap sonucu). Stack yok, UART bile çağırma.
-# Direkt park — production'da watchdog timer reset yapacak.
+# sp = 0 (swap sonucu). Stack yok — sadece register kullan.
+#
+# Sprint U-16: Sessiz halt yerine UART'a "NF" yazıp park et.
+# UART MMIO PMP Entry 6-7 (RW + Lock) — M-mode dahil tüm modlarda erişilebilir.
+# Stack veya Rust state YOK; sadece t0/t1 (caller-saved, restore yapılmayacak).
+# Forensik: dış gözlemci (post-mortem log analiz) "NF" görür → nested trap.
 .nested_fault:
+    li      t0, 0x10000000      # UART_BASE (NS16550A THR)
+    li      t1, 0x4E            # 'N'
+    sb      t1, 0(t0)
+    li      t1, 0x46            # 'F'
+    sb      t1, 0(t0)
+    li      t1, 0x0A            # '\n'
+    sb      t1, 0(t0)
     j       .park_nested
 
 .park_nested:

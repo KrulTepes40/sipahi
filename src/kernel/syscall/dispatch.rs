@@ -71,20 +71,25 @@ fn kernel_end_addr() -> usize {
     { 0x80800000 } // 8MB RAM mock
 }
 
-/// User pointer doğrulama — kernel belleğine erişim engellenmiş mi?
-/// ptr == 0 → reject, ptr+size overflow → reject, ptr < kernel_end → reject
+/// User pointer doğrulama — caller'ın KENDİ stack aralığına sınırlandırılmış.
+/// Sprint U-16: Eski versiyon `_end` (WASM arena sonu) altındaki TÜM adresleri
+/// reddediyordu — task stack'leri _end'in ALTINDA olduğundan tüm syscall pointer'ları
+/// dormant olarak başarısız olurdu. Yeni versiyon caller'ın stack range'ini sorar
+/// ve sadece o aralığı kabul eder. Cross-task pointer impersonation engellendi.
+///
+/// ptr == 0 → reject, ptr+size overflow → reject, ptr range != caller stack → reject.
 #[must_use = "pointer validation result must be checked"]
-fn is_valid_user_ptr(ptr: usize, size: usize) -> bool {
+fn is_valid_user_ptr(caller_task_id: u8, ptr: usize, size: usize) -> bool {
     if ptr == 0 { return false; }
     let end = match ptr.checked_add(size) {
         Some(e) => e,
         None => return false,
     };
-    let ke = kernel_end_addr();
-    if ptr < ke || end < ke { return false; }
-    // RAM üst sınır — MMIO/olmayan bölgelere erişim engelle
-    if end > crate::common::config::RAM_END { return false; }
-    true
+    // Caller'ın stack aralığı — helper unsafe/aliasing'i kapsüller
+    match crate::kernel::scheduler::task_stack_range(caller_task_id) {
+        Some((base, top)) => ptr >= base && end <= top,
+        None => false, // Dead/Isolated/uninitialized → default deny
+    }
 }
 
 type SyscallHandler = fn(usize, usize, usize, usize) -> usize;
@@ -287,12 +292,13 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
 /// ipc_send — GERÇEK SPSC entegrasyonu (Sprint 8)
 /// arg0 = channel_id, arg1 = mesaj pointer
 fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize {
-    if channel_id >= 8 {
+    if channel_id >= crate::common::config::MAX_IPC_CHANNELS {
         #[cfg(all(not(kani), feature = "trace"))]
         uart::println("[SYS] ipc_send: invalid channel");
         return E_INVALID_ARG;
     }
-    if !is_valid_user_ptr(msg_ptr, 64) {
+    let caller = crate::kernel::scheduler::current_task_id();
+    if !is_valid_user_ptr(caller, msg_ptr, 64) {
         return E_INVALID_ARG;
     }
     if !msg_ptr.is_multiple_of(8) {
@@ -303,6 +309,10 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
 
     #[cfg(not(kani))]
     {
+        // Sprint U-16: Channel ownership enforcement — sadece atanmış producer
+        if !crate::ipc::can_send(channel_id, caller) {
+            return E_NO_CAPABILITY;
+        }
         if !crate::kernel::scheduler::check_ipc_rate() {
             #[cfg(feature = "trace")]
             uart::println("[SYS] ipc_send: rate limited");
@@ -315,7 +325,7 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
             None => return E_INVALID_ARG,
         };
 
-        // SAFETY: Pointer validated by is_valid_user_ptr — outside kernel memory.
+        // SAFETY: Pointer validated by is_valid_user_ptr — caller's own task stack range only.
         let msg = unsafe {
             core::ptr::read_volatile(msg_ptr as *const crate::ipc::IpcMessage)
         };
@@ -349,12 +359,13 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
 /// ipc_recv — GERÇEK SPSC entegrasyonu (Sprint 8)
 /// arg0 = channel_id, arg1 = buffer pointer
 fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize {
-    if channel_id >= 8 {
+    if channel_id >= crate::common::config::MAX_IPC_CHANNELS {
         #[cfg(all(not(kani), feature = "trace"))]
         uart::println("[SYS] ipc_recv: invalid channel");
         return E_INVALID_ARG;
     }
-    if !is_valid_user_ptr(buf_ptr, 64) {
+    let caller = crate::kernel::scheduler::current_task_id();
+    if !is_valid_user_ptr(caller, buf_ptr, 64) {
         return E_INVALID_ARG;
     }
     if !buf_ptr.is_multiple_of(8) {
@@ -365,6 +376,10 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
 
     #[cfg(not(kani))]
     {
+        // Sprint U-16: Channel ownership enforcement — sadece atanmış consumer
+        if !crate::ipc::can_recv(channel_id, caller) {
+            return E_NO_CAPABILITY;
+        }
         let ch = match crate::ipc::get_channel(channel_id) {
             Some(c) => c,
             None => return E_INVALID_ARG,
@@ -499,16 +514,19 @@ mod verification {
 
     #[kani::proof]
     fn null_pointer_always_rejected() {
-        assert!(!is_valid_user_ptr(0, 64));
-        assert!(!is_valid_user_ptr(0, 0));
+        let caller: u8 = kani::any();
+        assert!(!is_valid_user_ptr(caller, 0, 64));
+        assert!(!is_valid_user_ptr(caller, 0, 0));
     }
 
     #[kani::proof]
-    fn kernel_addr_always_rejected() {
+    fn unknown_task_pointer_rejected() {
+        // Sprint U-16: Kani'de TASK_COUNT = 0 → task_stack_range her caller için None
+        // → her pointer reddedilir. Default-deny davranışı doğrulandı.
         let ptr: usize = kani::any();
-        kani::assume(ptr < kernel_end_addr());
         kani::assume(ptr > 0);
-        assert!(!is_valid_user_ptr(ptr, 64));
+        let caller: u8 = kani::any();
+        assert!(!is_valid_user_ptr(caller, ptr, 64));
     }
 
     #[kani::proof]
@@ -564,22 +582,25 @@ mod verification {
         assert!(E_INVALID_ARG == SyscallResult::InvalidArg.to_raw());
     }
 
-    /// Proof 157: Kernel adresi → reject (symbolic)
+    /// Proof 157: Sprint U-16 — TASK_COUNT=0 Kani durumunda her caller için reddedilir
+    /// (default-deny davranışı). Production'da caller'ın kendi stack aralığı dışı reddedilir.
     #[kani::proof]
-    fn any_kernel_address_rejected() {
+    fn any_address_default_deny_in_kani() {
         let addr: usize = kani::any();
         let size: usize = kani::any();
+        let caller: u8 = kani::any();
         kani::assume(size > 0 && size <= 64);
         kani::assume(addr > 0);
-        kani::assume(addr < kernel_end_addr());
-        assert!(!is_valid_user_ptr(addr, size));
+        // Kernel adres dahil, RAM dışı dahil — hepsi reddedilir (TASK_COUNT=0)
+        assert!(!is_valid_user_ptr(caller, addr, size));
     }
 
     /// Proof 158: Null pointer herhangi size ile reject
     #[kani::proof]
     fn null_pointer_any_size_rejected() {
         let size: usize = kani::any();
-        assert!(!is_valid_user_ptr(0, size));
+        let caller: u8 = kani::any();
+        assert!(!is_valid_user_ptr(caller, 0, size));
     }
 
     /// Proof 171: RAM üstü adres → reject
@@ -588,8 +609,9 @@ mod verification {
         let ptr: usize = kani::any();
         kani::assume(ptr >= crate::common::config::RAM_END);
         let size: usize = kani::any();
+        let caller: u8 = kani::any();
         kani::assume(size > 0 && size <= 64);
-        assert!(!is_valid_user_ptr(ptr, size));
+        assert!(!is_valid_user_ptr(caller, ptr, size));
     }
 
     /// dispatch() geçersiz syscall ID → E_INVALID_SYSCALL

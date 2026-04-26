@@ -1,0 +1,52 @@
+thread 'rustc' panicked at /rustc-dev/38c0de8dcb14d42290042521be9958d37f3fa390/library/core/src/slice/index.rs:1031:55:
+slice index starts at 15 but ends at 13
+stack backtrace:
+   0:     0x79dd7577d6bb - <std[228bdc9d2b636708]::backtrace::Backtrace>::create
+   1:     0x79dd7577d605 - <std[228bdc9d2b636708]::backtrace::Backtrace>::force_capture
+   2:     0x79dd7476f3c4 - std[228bdc9d2b636708]::panicking::update_hook::<alloc[da121800ca3a425d]::boxed::Box<rustc_driver_impl[b079875acc15f158]::install_ice_hook::{closure#1}>>::{closure#0}
+   3:     0x79dd757901b2 - std[228bdc9d2b636708]::panicking::panic_with_hook
+   4:     0x79dd75772c08 - std[228bdc9d2b636708]::panicking::panic_handler::{closure#0}
+   5:     0x79dd75767159 - std[228bdc9d2b636708]::sys::backtrace::__rust_end_short_backtrace::<std[228bdc9d2b636708]::panicking::panic_handler::{closure#0}, !>
+   6:     0x79dd7577466d - __rustc[b663e34d21a9b5dc]::rust_begin_unwind
+   7:     0x79dd7232025c - core[ca6b92032f8209e6]::panicking::panic_fmt
+   8:     0x79dd7355173d - core[ca6b92032f8209e6]::slice::index::slice_index_fail
+   9:     0x79dd74090e15 - <annotate_snippets[520067a3651290cb]::renderer::styled_buffer::StyledBuffer>::replace
+  10:     0x79dd770c5682 - annotate_snippets[520067a3651290cb]::renderer::render::render
+  11:     0x79dd770aa912 - <rustc_errors[69c49868cc53aaf3]::annotate_snippet_emitter_writer::AnnotateSnippetEmitter>::emit_messages_default
+  12:     0x79dd772f5b2b - <rustc_errors[69c49868cc53aaf3]::annotate_snippet_emitter_writer::AnnotateSnippetEmitter as rustc_errors[69c49868cc53aaf3]::emitter::Emitter>::emit_diagnostic
+  13:     0x79dd772f4bca - <rustc_errors[69c49868cc53aaf3]::json::Diagnostic>::from_errors_diagnostic
+  14:     0x79dd772f4363 - <rustc_errors[69c49868cc53aaf3]::json::JsonEmitter as rustc_errors[69c49868cc53aaf3]::emitter::Emitter>::emit_diagnostic
+  15:     0x79dd772ee8ec - <rustc_errors[69c49868cc53aaf3]::DiagCtxtInner>::emit_diagnostic::{closure#3}
+  16:     0x79dd772ec6d2 - rustc_interface[d301261baebd53ed]::callbacks::track_diagnostic::<core[ca6b92032f8209e6]::option::Option<rustc_span[9fc5ff705eb51a66]::ErrorGuaranteed>>
+  17:     0x79dd772eb7ae - <rustc_errors[69c49868cc53aaf3]::DiagCtxtInner>::emit_diagnostic
+  18:     0x79dd772eb661 - <rustc_errors[69c49868cc53aaf3]::DiagCtxtHandle>::emit_diagnostic
+  19:     0x79dd772eb51b - <() as rustc_errors[69c49868cc53aaf3]::diagnostic::EmissionGuarantee>::emit_producing_guarantee
+  20:     0x79dd7666af52 - rustc_middle[ed586653b79aa9c2]::lint::diag_lint_level::diag_lint_level_impl
+  21:     0x79dd7686a2e2 - <rustc_passes[49d6441ca85512f4]::dead::DeadVisitor>::lint_at_single_level
+  22:     0x79dd76869d35 - <rustc_passes[49d6441ca85512f4]::dead::DeadVisitor>::warn_dead_code
+  23:     0x79dd76428fea - rustc_passes[49d6441ca85512f4]::dead::check_mod_deathness
+  24:     0x79dd76cfa40e - rustc_query_impl[dbc59653980c8cc8]::execution::try_execute_query::<rustc_middle[ed586653b79aa9c2]::query::caches::DefaultCache<rustc_span[9fc5ff705eb51a66]::def_id::LocalModDefId, rustc_middle[ed586653b79aa9c2]::query::erase::ErasedData<[u8; 0usize]>>, true>
+  25:     0x79dd76cf61fd - rustc_query_impl[dbc59653980c8cc8]::query_impl::check_mod_deathness::execute_query_incr::__rust_end_short_backtrace
+  26:     0x79dd76cf66e4 - rustc_interface[d301261baebd53ed]::passes::analysis::{closure#0}::{closure#0}::{closure#1}
+  27:     0x79dd76cf63df - rustc_data_structures[f1cf9eee3997a387]::sync::parallel::par_fns
+  28:     0x79dd76cf637c - rustc_interface[d301261baebd53ed]::passes::analysis::{closure#0}::{closure#0}
+  29:     0x79dd76cf63df - rustc_data_structures[f1cf9eee3997a387]::sync::parallel::par_fns
+  30:     0x79dd75f69797 - rustc_interface[d301261baebd53ed]::passes::analysis
+  31:     0x79dd77098eef - rustc_query_impl[dbc59653980c8cc8]::execution::try_execute_query::<rustc_middle[ed586653b79aa9c2]::query::caches::SingleCache<rustc_middle[ed586653b79aa9c2]::query::erase::ErasedData<[u8; 0usize]>>, true>
+  32:     0x79dd77098864 - rustc_query_impl[dbc59653980c8cc8]::query_impl::analysis::execute_query_incr::__rust_end_short_backtrace
+  33:     0x79dd77069fad - rustc_interface[d301261baebd53ed]::interface::run_compiler::<(), rustc_driver_impl[b079875acc15f158]::run_compiler::{closure#0}>::{closure#1}
+  34:     0x79dd76fe4f7e - std[228bdc9d2b636708]::sys::backtrace::__rust_begin_short_backtrace::<rustc_interface[d301261baebd53ed]::util::run_in_thread_with_globals<rustc_interface[d301261baebd53ed]::util::run_in_thread_pool_with_globals<rustc_interface[d301261baebd53ed]::interface::run_compiler<(), rustc_driver_impl[b079875acc15f158]::run_compiler::{closure#0}>::{closure#1}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>
+  35:     0x79dd76fe55e0 - <std[228bdc9d2b636708]::thread::lifecycle::spawn_unchecked<rustc_interface[d301261baebd53ed]::util::run_in_thread_with_globals<rustc_interface[d301261baebd53ed]::util::run_in_thread_pool_with_globals<rustc_interface[d301261baebd53ed]::interface::run_compiler<(), rustc_driver_impl[b079875acc15f158]::run_compiler::{closure#0}>::{closure#1}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>::{closure#1} as core[ca6b92032f8209e6]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  36:     0x79dd76fe646c - <std[228bdc9d2b636708]::sys::thread::unix::Thread>::new::thread_start
+  37:     0x79dd7089caa4 - <unknown>
+  38:     0x79dd70929c6c - <unknown>
+  39:                0x0 - <unknown>
+
+
+rustc version: 1.96.0-nightly (38c0de8dc 2026-02-28)
+platform: x86_64-unknown-linux-gnu
+
+query stack during panic:
+#0 [check_mod_deathness] checking deathness of variables in module `kernel::capability::token`
+#1 [analysis] running analysis passes on crate `sipahi`
+end of query stack

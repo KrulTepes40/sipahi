@@ -218,6 +218,14 @@ pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
     // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         let pos = vol_read!(BB_WRITE_POS -> u8) as usize;
+        // Sprint U-16: Defense-in-depth — Proof 54 BB_WRITE_POS < BLACKBOX_MAX_RECORDS
+        // garantisi veriyor, ama runtime corruption (cosmic ray, fault injection)
+        // pos'u yine de BLACKBOX_MAX_RECORDS üstüne çıkarabilir. Reset + drop record
+        // → OOB write engellendi, sistem ayakta kalır.
+        if pos >= BLACKBOX_MAX_RECORDS {
+            vol_write!(BB_WRITE_POS, 0u8);
+            return; // bu kayıt düşürüldü; gelecek kayıtlar düzgün yazılacak
+        }
         let seq = vol_read!(BB_NEXT_SEQ -> u32);
         let tick = vol_read!(BB_TICK -> u32);
 
@@ -259,6 +267,7 @@ pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
 
 /// Kayıt oku — 0 = en eski, count()-1 = en yeni
 /// Dönüş: Some(record) — CRC geçerli; None — index aşımı veya bozuk kayıt
+#[allow(dead_code)] // Sprint U-16: post-mortem analiz API'si — production debug yolu eklenince kullanılır
 pub(crate) fn read(index: usize) -> Option<BlackboxRecord> {
     // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {

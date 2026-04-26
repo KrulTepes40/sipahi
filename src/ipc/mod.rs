@@ -16,7 +16,8 @@ pub mod blackbox; // Sprint 11: flight recorder
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU16, Ordering};
-use crate::common::config::{IPC_MSG_SIZE, IPC_CHANNEL_SLOTS, MAX_IPC_CHANNELS};
+use crate::common::config::{IPC_MSG_SIZE, IPC_CHANNEL_SLOTS, MAX_IPC_CHANNELS, MAX_TASKS};
+use crate::common::sync::SingleHartCell;
 
 // ═══════════════════════════════════════════════════════
 // IPC Mesaj yapısı — 64 byte sabit
@@ -168,6 +169,87 @@ pub fn get_channel(id: usize) -> Option<&'static SpscChannel> {
         return None;
     }
     Some(&IPC_CHANNELS[id])
+}
+
+// ═══════════════════════════════════════════════════════
+// Sprint U-16: Channel ownership — SPSC garantisi tek üretici/tek tüketici
+// gerçekten zorlanır. Default deny: assign edilmemiş kanal hiç kimse erişemez.
+// Boot sequence sonrası seal_channels() çağrılır → reassign engellenir.
+// ═══════════════════════════════════════════════════════
+
+/// Channel sahipliği — (producer_task_id, consumer_task_id). 0xFF = unassigned.
+/// 0xFF asla geçerli task_id olamaz (MAX_TASKS = 8) → default deny.
+static CHANNEL_OWNERS: SingleHartCell<[(u8, u8); MAX_IPC_CHANNELS]> =
+    SingleHartCell::new([(0xFF, 0xFF); MAX_IPC_CHANNELS]);
+
+/// Seal flag — true olunca assign_channel reddeder (boot sonrası kilit).
+static CHANNELS_SEALED: SingleHartCell<bool> = SingleHartCell::new(false);
+
+/// Channel'a producer/consumer ata — sadece boot'ta, seal'den önce.
+/// True = atandı, false = sealed/oob/invalid id.
+pub fn assign_channel(channel_id: usize, producer: u8, consumer: u8) -> bool {
+    // SAFETY: Boot sequence, single-hart, MIE=0.
+    if unsafe { *CHANNELS_SEALED.get() } { return false; }
+    if channel_id >= MAX_IPC_CHANNELS { return false; }
+    if producer as usize >= MAX_TASKS || consumer as usize >= MAX_TASKS {
+        return false;
+    }
+    // SAFETY: Boot sequence, single-hart.
+    unsafe {
+        (*CHANNEL_OWNERS.get_mut())[channel_id] = (producer, consumer);
+    }
+    true
+}
+
+/// Channel atamalarını kilitle — boot sonrası bir kez çağrılır.
+pub fn seal_channels() {
+    // SAFETY: Boot sequence, single-hart.
+    unsafe { *CHANNELS_SEALED.get_mut() = true; }
+}
+
+/// Caller bu kanala SEND edebilir mi (atanmış producer mı)?
+/// Default deny: 0xFF != caller (caller her zaman < MAX_TASKS = 8).
+pub fn can_send(channel_id: usize, caller_task_id: u8) -> bool {
+    if channel_id >= MAX_IPC_CHANNELS { return false; }
+    // SAFETY: Single-hart, MIE=0 in trap context.
+    let (producer, _) = unsafe { (*CHANNEL_OWNERS.get())[channel_id] };
+    producer == caller_task_id
+}
+
+/// Caller bu kanala RECV edebilir mi (atanmış consumer mı)?
+pub fn can_recv(channel_id: usize, caller_task_id: u8) -> bool {
+    if channel_id >= MAX_IPC_CHANNELS { return false; }
+    // SAFETY: Single-hart, MIE=0 in trap context.
+    let (_, consumer) = unsafe { (*CHANNEL_OWNERS.get())[channel_id] };
+    consumer == caller_task_id
+}
+
+#[cfg(kani)]
+mod ownership_verify {
+    use super::*;
+
+    /// Sprint U-16 Proof: unassigned channel default-deny.
+    /// 0xFF != herhangi geçerli task_id (< MAX_TASKS=8).
+    #[kani::proof]
+    fn unassigned_channel_denies_any_caller() {
+        let caller: u8 = kani::any();
+        kani::assume((caller as usize) < MAX_TASKS);
+        let ch: usize = kani::any();
+        kani::assume(ch < MAX_IPC_CHANNELS);
+        // CHANNEL_OWNERS default = (0xFF, 0xFF) — assign çağrılmamış
+        assert!(!can_send(ch, caller));
+        assert!(!can_recv(ch, caller));
+    }
+
+    /// Channel id out-of-bounds → false.
+    #[kani::proof]
+    fn channel_id_oob_denies() {
+        let caller: u8 = kani::any();
+        let ch: usize = kani::any();
+        kani::assume(ch >= MAX_IPC_CHANNELS);
+        assert!(!can_send(ch, caller));
+        assert!(!can_recv(ch, caller));
+    }
 }
 
 // ═══════════════════════════════════════════════════════

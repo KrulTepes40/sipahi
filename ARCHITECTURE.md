@@ -76,3 +76,32 @@ No other circular dependencies exist.
 ## Memory Map
 
 See `sipahi.ld` header comment for full layout.
+
+## Known Limitations — v1.0
+
+### Vanilla PMP (no Smepmp)
+
+RISC-V vanilla PMP'de `L`-bit M-mode'un PMP entry'sini *değiştirmesini* kilitler;
+ancak U-mode izinleri R/W/X bit'leriyle belirlenir. Entry 5 (kernel data,
+`R+W+L`) U-mode task'larının kernel `.data` ve `.bss` bölgelerine read/write
+erişimini engellemez — yalnızca W^X garantisi (bu bölgeler X=0) korunur.
+Sonuç: `MAC_KEY`, `PMP_SHADOW`, `LAST_NONCE` gibi güvenlik-kritik veriler
+U-mode'dan okunabilir (write da mümkündür ama Rust bu yolla erişim üretmez).
+
+**Etki:**
+- Capability MAC key okunup token forge edilebilir.
+- PMP shadow okunup integrity check bypass tasarlanabilir.
+- Kernel kodu (Entry 0-1, RX+L) yazılamaz — W^X korunur, code injection yok.
+
+**Plan (v1.5):** Smepmp extension (RISC-V Trap and Memory Protection v1.0,
+`mseccfg.MML=1`) ya da `.secure_data` PMP carve-out (kernel-only entry)
+implementasyonu. Bu sprint *yalnızca dokümantasyondur*; kod değişikliği yok.
+
+### Mevcut izolasyon kuvvetleri (vanilla PMP ile bile geçerli)
+
+- W^X: kernel `.text` U-mode'dan write/execute ile yazılamaz.
+- Per-task stack izolasyonu: NAPOT Entry 8 + L-bit dışı dinamik reprogramming;
+  Task A, Task B'nin stack'ine yazamaz (sadece kendi stack range'i geçerli).
+- WASM arena: `.wasm_arena` Entry 5 dışı, U-mode default-deny.
+- Trap entry mscratch swap: cross-task corruption engellendi (U-9).
+- Capability owner check (U-16): impersonation engellendi.

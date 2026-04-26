@@ -208,8 +208,12 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
 pub(crate) fn schedule() {
     // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
-        if *TASK_COUNT.get() < 2 {
-            return;
+        // Sprint U-16: Early return Phase 2 SONRASINA taşındı — güvenlik
+        // mekanizmaları (PMP shadow, watchdog, budget, blackbox tick) tek task'lı
+        // boot/test senaryolarında da çalışmalı. Sadece Phase 3+4 (priority
+        // select + context switch) atlanır.
+        if *TASK_COUNT.get() == 0 {
+            return; // Hiç task yok → zarar verecek state yok
         }
 
         // Blackbox tick sayacını ilerlet (schedule() her çağrısında)
@@ -260,12 +264,22 @@ pub(crate) fn schedule() {
         try_recover_from_degrade();
 
         // ─── Faz 1.5: Watchdog + IPC rate reset ───
+        // Sprint U-16: Watchdog SADECE Running task için artırılır — Ready task
+        // CPU almaz, watchdog kick'i çağıramaz, dolayısıyla cezalandırılmamalı.
+        // IPC rate reset Ready dahil tutulur (rate limit tick bazlı; Ready burst
+        // tüketmemeli — kanal sıralı paylaşılan kaynak).
         let mut w: usize = 0;
         while w < *TASK_COUNT.get() {
-            let t = &mut TASKS.get_mut()[w];
-            let st = t.state;
+            let st = TASKS.get_mut()[w].state;
+
+            // IPC rate limit reset — Running ve Ready için tick başı sıfırlanır
             if st == TaskState::Running || st == TaskState::Ready {
-                t.ipc_send_count = 0;
+                TASKS.get_mut()[w].ipc_send_count = 0;
+            }
+
+            // Watchdog SADECE Running task için artırılır
+            if st == TaskState::Running {
+                let t = &mut TASKS.get_mut()[w];
                 t.watchdog_counter += 1;
                 if t.watchdog_limit > 0 && t.watchdog_counter >= t.watchdog_limit {
                     // Watchdog tetiklendi — t'yi drop et, apply_action aliasing safe
@@ -316,6 +330,11 @@ pub(crate) fn schedule() {
 
         // ─── Faz 3: En yüksek öncelikli Ready task ───
         // select_highest_priority() Kani ile kanıtlanmış (Proof 79-81)
+        // Sprint U-16: Tek task'ta context switch gereksiz — Phase 1/1.5/2
+        // güvenlik kontrolleri yukarıda zaten çalıştı.
+        if *TASK_COUNT.get() < 2 {
+            return;
+        }
         let count = *TASK_COUNT.get();
         let mut states = [TaskState::Dead; MAX_TASKS];
         let mut priorities = [15u8; MAX_TASKS];
@@ -394,13 +413,39 @@ pub(crate) fn start_first_task() -> ! {
             }
         }
 
-        TASKS.get_mut()[0].state = TaskState::Running;
-        *CURRENT_TASK.get_mut()  = 0;
+        // Sprint U-16: En yüksek öncelikli Ready task'ı seç — TASKS[0] sabit varsayımı
+        // (priority inversion riski). Eşitlikte düşük indeks tie-break (deterministic).
+        let count = *TASK_COUNT.get();
+        let mut best: usize = 0;
+        let mut best_prio: u8 = 255;
+        let mut i: usize = 0;
+        while i < count && i < MAX_TASKS {
+            let t = &TASKS.get()[i];
+            if t.state == TaskState::Ready && t.priority < best_prio {
+                best = i;
+                best_prio = t.priority;
+            }
+            i += 1;
+        }
+        if best_prio == 255 {
+            // Hiç Ready task yok — sistem boot sonrası ölü
+            #[cfg(not(kani))]
+            {
+                crate::arch::uart::println("[POLICY] SHUTDOWN — no Ready task at boot");
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyShutdown, 0xFF, &[],
+                );
+                loop { core::arch::asm!("wfi"); }
+            }
+        }
 
-        // PMP entry 8: ilk task'ın stack bölgesi
+        TASKS.get_mut()[best].state = TaskState::Running;
+        *CURRENT_TASK.get_mut()     = best;
+
+        // PMP entry 8: seçili task'ın stack bölgesi
         #[cfg(not(kani))]
         {
-            let napot_addr = TASKS.get()[0].pmp_addr_napot;
+            let napot_addr = TASKS.get()[best].pmp_addr_napot;
             crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
             // Sprint U-14: shadow wrapper
             crate::kernel::memory::update_task_pmp_shadow(
@@ -408,7 +453,7 @@ pub(crate) fn start_first_task() -> ! {
             );
         }
 
-        let ctx     = &TASKS.get_mut()[0].context;
+        let ctx     = &TASKS.get_mut()[best].context;
         let entry   = ctx.mepc;     // task entry point
         let sp_val  = ctx.sp;
         let mstatus = ctx.mstatus;  // MPP=U, MPIE=1
@@ -696,6 +741,24 @@ fn shutdown_system() -> ! {
 /// Mevcut çalışan task'ın ID'sini döndür
 pub(crate) fn current_task_id() -> u8 {
     unsafe { *CURRENT_TASK.get() as u8 }
+}
+
+/// Sprint U-16: Task stack aralığını döndür — is_valid_user_ptr için kapsüllenmiş
+/// erişim. Caller'ın sadece kendi stack'ine pointer vermesi zorunlu.
+/// Dead/Isolated/uninitialized task → None (default deny).
+pub(crate) fn task_stack_range(task_id: u8) -> Option<(usize, usize)> {
+    let idx = task_id as usize;
+    // SAFETY: MIE=0 in trap context, single-hart.
+    unsafe {
+        if idx >= *TASK_COUNT.get() { return None; }
+        let task = &TASKS.get()[idx];
+        if task.state == TaskState::Dead || task.state == TaskState::Isolated {
+            return None;
+        }
+        let top = task.stack_top;
+        if top < TASK_STACK_SIZE { return None; } // underflow guard
+        Some((top - TASK_STACK_SIZE, top))
+    }
 }
 
 /// Trap handler'dan policy action uygulama — apply_action wrapper

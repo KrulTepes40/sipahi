@@ -43,10 +43,15 @@ unsafe impl GlobalAlloc for BumpAllocator {
         // Mevcut ofseti oku
         let old = ARENA_OFFSET.load(Ordering::Relaxed);
 
-        // Hizalamayı yukarı yuvarlat: aligned = ceil(old / align) * align
-        let aligned = old.wrapping_add(align - 1) & !(align - 1);
+        // Sprint U-16: wrapping_add wrap riski — old yakın u64::MAX olursa
+        // aligned küçük bir değere wrap edip "geçerli" gibi geçebilir.
+        // checked_add ile overflow → erken OOM.
+        let aligned = match old.checked_add(align - 1) {
+            Some(a) => a & !(align - 1),
+            None => return core::ptr::null_mut(), // align hesabında overflow → OOM
+        };
 
-        // Hizalanmış başlangıç adresi arena içinde mi? (wrapping sonrası kontrol)
+        // Hizalanmış başlangıç adresi arena içinde mi?
         if aligned >= WASM_HEAP_SIZE {
             return core::ptr::null_mut(); // OOM
         }

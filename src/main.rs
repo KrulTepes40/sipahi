@@ -17,7 +17,9 @@ mod kernel;
 mod sandbox;
 #[cfg(not(kani))]
 mod boot;
-#[cfg(not(kani))]
+// Sprint U-16: Test suite sadece self-test build'de derlenir.
+// Production binary minimum yüzey alanı + minimum binary boyutu.
+#[cfg(all(not(kani), feature = "self-test"))]
 mod tests;
 #[cfg(kani)]
 mod verify;
@@ -86,6 +88,10 @@ pub extern "C" fn rust_main() -> ! {
     arch::uart::println("[BOOT] Stack initialized");
 
     boot::init();
+    // Sprint U-16: tests::run_all() sadece self-test feature build'de derlenir
+    // ve POST + integration + FI suite çalıştırır. Production build (no
+    // self-test) doğrudan scheduler'a geçer — minimal attack surface.
+    #[cfg(feature = "self-test")]
     tests::run_all();
     boot::start();
 }
