@@ -1,5 +1,5 @@
 //! IOPMP (I/O Physical Memory Protection) stub — software emulation for v1.0.
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket #![allow(dead_code)] kaldırıldı — tekil işaretlenir
 // Sipahi — IOPMP Stub (Sprint 6)
 //
 // IOPMP = I/O Physical Memory Protection
@@ -32,12 +32,14 @@ pub struct IopmpRegion {
 }
 
 impl IopmpRegion {
+    #[allow(dead_code)] // IOPMP v2.0 stub — gerçek silikonda kullanılacak
     pub const fn new(base: usize, size: usize, read: bool, write: bool) -> Self {
         IopmpRegion { base, size, read, write }
     }
 }
 
 /// Maksimum IOPMP bölge sayısı
+#[allow(dead_code)] // IOPMP v2.0 sabiti — Kani harness ve runtime'da v2.0'da kullanılır
 pub const IOPMP_MAX_REGIONS: usize = 4;
 
 /// IOPMP controller stub
@@ -50,6 +52,7 @@ impl Default for IopmpController {
     fn default() -> Self { Self::new() }
 }
 
+#[allow(dead_code)] // IOPMP v2.0 stub controller — gerçek silikonda runtime
 impl IopmpController {
     pub const fn new() -> Self {
         IopmpController {

@@ -1,4 +1,9 @@
 //! Compile-time constants: memory layout, WCET budgets, syscall IDs, tick periods.
+// U-19 GÖREV 3: blanket allow korundu — config.rs özel.
+// Sabitlerin çoğu (BUDGET_DAL_*, WCET_*, SYSCALL_*, COMPUTE_*) Kani harness'i,
+// linker (linker_section), veya v2.0 HSM/IOPMP/multi-hart için API yüzeyidir.
+// Production binary'de tüketilmeyenler 33 kadar — blanket alternatifi 33 tekil
+// allow noise'u; tek satır blanket netliği koruyor (rationale burada).
 #![allow(dead_code)]
 // Sipahi — Compile-time sabitleri
 // Bu dosyadaki her değer derleme zamanında sabit.
@@ -6,6 +11,18 @@
 
 /// Maksimum task sayısı (8 task × 24KB = 192KB)
 pub const MAX_TASKS: usize = 8;
+
+// U-19 GÖREV 1: Magic number'lar config sabiti.
+// MAX_TASKS=8 olduğundan task_id < 8 her zaman geçerli; >= 0xFE kernel sentinel.
+// Aynı 0xFF değeri farklı semantiğe sahip (task_id vs channel) — okuyucu için ayrılır.
+/// Kernel-level event blackbox kaydı — gerçek bir task'a ait değil
+pub const SYSTEM_TASK_ID: u8 = 0xFF;
+/// Kernel-level event apply_action() index — task_id >= MAX_TASKS dalı
+pub const SYSTEM_TASK_INDEX: usize = SYSTEM_TASK_ID as usize;
+/// Kernel boot/recover sentinel (KernelBoot blackbox event)
+pub const KERNEL_BOOT_ID: u8 = 0xFE;
+/// IPC channel atanmamış marker — assign_channel çağrılmamış slot
+pub const CHANNEL_UNASSIGNED: u8 = 0xFF;
 
 /// Scheduler tick periyodu (mikrosaniye)
 pub const TICK_PERIOD_US: u32 = 10_000; // 10ms

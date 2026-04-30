@@ -1,5 +1,8 @@
 //! WASM sandbox: Wasmi 1.0.9 runtime with fuel metering and float rejection.
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket allow korundu — sandbox.rs WASM ingestion API yüzeyi.
+// 19 öğe (parser helper'ları, opcode tarayıcılar, sub-opcode handler'lar)
+// gerçek WASM modülü yüklenince çağrılır. Test/Kani harness yokken cargo build
+// dead görür. Tekil işaretleme bu kadar fonksiyonda kod okurluğunu bozar.
 // Sipahi — WASM Sandbox (Sprint 12)
 // Katman 3: Mixed-Criticality WASM İzolasyon
 //
@@ -16,6 +19,7 @@
 //   5. Float opcode içeren modüller REJECT
 //   6. #[cfg(not(kani))] — wasmi Kani'de çalışmaz
 //   7. assert!/unwrap/panic yok — doktrin uyumlu
+#![allow(dead_code)]
 
 pub mod allocator;
 

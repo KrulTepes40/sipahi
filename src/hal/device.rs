@@ -1,5 +1,5 @@
 //! HAL device trait — static-dispatch hardware abstraction (no vtable).
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket #![allow(dead_code)] kaldırıldı — tekil işaretlenir
 // Sipahi — Device Access Trait (Sprint 6)
 //
 // Tüm donanım aygıtları bu trait'i implemente eder.
@@ -15,6 +15,7 @@ use crate::common::error::SipahiError;
 ///
 /// WCET garantisi: her operasyon bounded, blocking YOK.
 /// Hata durumunda SipahiError döner, panic OLMAZ.
+#[allow(dead_code)] // HAL trait yüzeyi — UART production'da uart.rs üzerinden, bu v2.0 abstraction
 pub trait DeviceAccess {
     /// Aygıtı başlat (bir kez, boot sırasında)
     fn init(&mut self) -> Result<(), SipahiError>;
@@ -43,6 +44,7 @@ pub struct UartDevice {
 
 impl UartDevice {
     /// Yeni UART device oluştur (const fn — statik init için)
+    #[allow(dead_code)] // HAL stub — production uart.rs direct, bu v2.0 trait abstraction
     pub const fn new(base_addr: usize) -> Self {
         UartDevice {
             base_addr,

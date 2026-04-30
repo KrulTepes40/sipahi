@@ -16,6 +16,9 @@ pub fn putc(c: u8) {
     // 1000 iter × ~3c = ~3000c = 30μs — CVA6 FPGA'da 115200 baud
     // UART FIFO (16B derinlik) drain için yeterli (~5.5μs/byte).
     // Tick period 10ms içinde %0.3 overhead — kabul edilebilir.
+    // SAFETY: Volatile MMIO access. UART_BASE PMP entry 6/7 (RW + Lock) ile
+    // M-mode dahil tüm modlardan erişilebilir. read_volatile/write_volatile
+    // hizalama gerektirmez (u8). Bounded loop (1000 iter) ile WCET garantili.
     unsafe {
         let lsr_addr = (UART_BASE + 5) as *const u8;
         let mut attempts: u32 = 0;

@@ -59,7 +59,9 @@ extern "C" {
 
 /// PMP bölgelerini ayarla
 pub(crate) fn init_pmp() {
-    // SAFETY: Linker-provided symbol address — valid for duration of program.
+    // SAFETY: Linker-provided symbols — taking address only (no deref). Linker
+    // guarantees these symbols exist at link time; their addresses are constants
+    // for the lifetime of the program.
     let text_start = unsafe { &__text_start as *const u8 as usize };
     let text_end = unsafe { &__text_end as *const u8 as usize };
     let rodata_start = unsafe { &__rodata_start as *const u8 as usize };
@@ -115,6 +117,7 @@ pub(crate) fn init_pmp() {
     pmp::write_pmpcfg0(packed);
 
     // Shadow kaydet — her tick'te doğrulama için
+    // SAFETY: Boot sequence, single-hart, no concurrent access. SingleHartCell write.
     unsafe {
         *PMP_SHADOW.get_mut() = packed;
         // pmpaddr0-7 shadow (write_pmpaddr >> 2 yapıyor, read_pmpaddr da >> 2 döner)
@@ -197,10 +200,12 @@ pub(crate) fn update_task_pmp_shadow(addr: usize, cfg: usize) {
 pub(crate) fn verify_pmp_integrity() -> bool {
     // pmpcfg0 shadow
     let current = pmp::read_pmpcfg0();
+    // SAFETY: Single-hart, MIE=0 in trap context. Shadow read for integrity check.
     let shadow = unsafe { *PMP_SHADOW.get() };
     if current != shadow { return false; }
 
     // pmpaddr0-7 shadow (defense-in-depth, L-bit kilitli)
+    // SAFETY: Single-hart, MIE=0 in trap context. Read-only access to shadow.
     let shadow_addrs = unsafe { PMP_SHADOW_ADDRS.get() };
     let mut i = 0;
     while i < 8 {
@@ -211,7 +216,9 @@ pub(crate) fn verify_pmp_integrity() -> bool {
     // Task PMP shadow (entry 8)
     let cfg2 = pmp::read_pmpcfg2();
     let addr8 = pmp::read_pmpaddr8();
+    // SAFETY: Single-hart, MIE=0 in trap context. Read-only shadow access.
     let shadow_cfg2 = unsafe { *PMP_SHADOW_CFG2.get() };
+    // SAFETY: Single-hart, MIE=0 in trap context. Read-only shadow access.
     let shadow_addr8 = unsafe { *PMP_SHADOW_ADDR8.get() };
     cfg2 == shadow_cfg2 && addr8 == shadow_addr8
 }

@@ -36,6 +36,7 @@ const RECORD_VERSION: u16 = 1;
 /// Blackbox olay türleri — 1 byte (doküman §BLACKBOX)
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[allow(dead_code)] // Blackbox API surface; enum variants logged at runtime
 pub enum BlackboxEvent {
     KernelBoot      = 0,  // Sistem başlangıcı (data[0..2] = boot_epoch LE)
     TaskStart       = 1,  // Task başlatıldı (data[0]=id, data[1]=prio, data[2]=dal)
@@ -190,7 +191,7 @@ pub(crate) fn init() {
         vol_write!(BB_TICK, 0u32);
         vol_write!(BB_BOOT_EPOCH, 0u16);
     }
-    log(BlackboxEvent::KernelBoot, 0xFF, &[]);
+    log(BlackboxEvent::KernelBoot, crate::common::config::SYSTEM_TASK_ID, &[]);
 }
 
 /// Tick sayacını ilerlet — schedule() her çağrısının başında çağrılır
@@ -284,6 +285,7 @@ pub(crate) fn read(index: usize) -> Option<BlackboxRecord> {
 }
 
 /// Tampondaki geçerli kayıt sayısı
+#[allow(dead_code)] // Blackbox inspection API; debug/test/external readout
 pub fn count() -> usize {
     // SAFETY: Volatile access prevents compiler from caching static mut in register.
     unsafe { vol_read!(BB_COUNT -> u8) as usize }
@@ -437,6 +439,7 @@ mod verification {
     fn get_tick_returns_current() {
         let tick: u32 = kani::any();
         let epoch: u16 = kani::any();
+        // SAFETY: Kani harness — single-threaded symbolic execution, no concurrent access.
         unsafe {
             *BB_TICK.get_mut() = tick;
             *BB_BOOT_EPOCH.get_mut() = epoch;

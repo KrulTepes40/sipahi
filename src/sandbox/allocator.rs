@@ -16,11 +16,12 @@ use crate::common::config::WASM_HEAP_SIZE;
 use crate::common::sync::SingleHartCell;
 
 // ═══════════════════════════════════════════════════════
-// Statik alan — 64KB sabit arena
+// Statik alan — WASM_HEAP_SIZE (config.rs) sabit arena
+// U-19 GÖREV 6: stale "64KB" yorum config sabitine güncellendi
 // ═══════════════════════════════════════════════════════
 
-/// WASM bellek arenası — 4MB, .wasm_arena section'da
-/// PMP Entry 5 dışında: U-mode DENY, M-mode erişir (Wasmi interpreter M-mode'da)
+/// WASM bellek arenası — config::WASM_HEAP_SIZE byte, .wasm_arena section'da.
+/// PMP Entry 5 dışında: U-mode DENY, M-mode erişir (Wasmi interpreter M-mode'da).
 #[link_section = ".wasm_arena"]
 static ARENA: SingleHartCell<[u8; WASM_HEAP_SIZE]> = SingleHartCell::new([0u8; WASM_HEAP_SIZE]);
 
@@ -34,7 +35,12 @@ static ARENA_OFFSET: AtomicUsize = AtomicUsize::new(0);
 /// Sıfır boyutlu tip — GlobalAlloc impl için yeterli
 pub struct BumpAllocator;
 
-// SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
+// SAFETY: Single-hart, AtomicUsize sequential consistency. Arena bounded:
+// ARENA[0..WASM_HEAP_SIZE]. alloc()'da checked_add + new_end > HEAP_SIZE
+// kontrolü ile out-of-bounds engellenir. Allocator yalnızca M-mode'da
+// (Wasmi interpreter) çağrılır; U-mode task'lardan erişim PMP entry 5 ile
+// reddedilir. (U-19 GÖREV 6: önceki "MIE=0" yorum yanıltıcıydı —
+// allocator trap context'inde değil, normal M-mode call path'inde çalışır.)
 unsafe impl GlobalAlloc for BumpAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let size  = layout.size();

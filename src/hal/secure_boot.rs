@@ -1,5 +1,5 @@
 //! Ed25519 signature verification for secure boot (RFC 8032).
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket #![allow(dead_code)] kaldırıldı — tekil işaretlenir
 
 #[cfg(all(feature = "fast-sign", feature = "cnsa-sign"))]
 compile_error!("fast-sign and cnsa-sign are mutually exclusive");
@@ -87,6 +87,7 @@ impl SignatureVerifier for Ed25519Provider {
 ///
 /// QEMU testi için: RFC 8032 Test Vector #1 (boş mesaj, bilinen imza)
 #[cfg(not(kani))]
+#[allow(dead_code)] // test-keys feature off iken çağrılmaz; production v2.0 OTP signature
 pub fn secure_boot_check(
     message: &[u8],
     public_key: &[u8; OTP_KEY_SIZE],

@@ -105,10 +105,12 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
    INVARIANTS
    ═══════════════════════════════════════════════════════ *)
 
-(* PROP1: Nonce is monotonically increasing per task — never decreases *)
+(* PROP1: Nonce is monotonically increasing per task — never decreases.
+   U-18 GÖREV 5: TLC v2.19 syntax — `\A t` action içinde olmalı (dışında değil),
+   aksi halde "Temporal formulas containing actions must be of forms <>[]A or []<>A"
+   hatası verir. *)
 NonceMonotonic ==
-    \A t \in TASKS :
-        [][lastNonce'[t] >= lastNonce[t]]_vars
+    [][\A t \in TASKS : lastNonce'[t] >= lastNonce[t]]_vars
 
 (* INV2: Invalidated token is never found in cache.
    U-18 GÖREV 5: Construction-by-design tautolojisi → cache tutarlılık iddiası

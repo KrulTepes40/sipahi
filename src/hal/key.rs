@@ -1,5 +1,5 @@
 //! Ed25519 key provisioning — OTP fuse (production) / compile-time (QEMU).
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket #![allow(dead_code)] kaldırıldı — tekil işaretlenir
 // Sipahi — HAL Key Provisioning (Sprint 13)
 // Doküman §SECURE_BOOT §KEY_PROVISIONING:
 //
@@ -57,10 +57,12 @@ pub const QEMU_TEST_SIGNATURE: [u8; SIGNATURE_SIZE] = [
 
 /// Production placeholder — OTP fuse'dan okunacak (v2.0)
 #[cfg(not(feature = "test-keys"))]
+#[allow(dead_code)] // OTP placeholder — production'da OTP read replace edecek
 pub const QEMU_TEST_PUBKEY: [u8; OTP_KEY_SIZE] = [0u8; OTP_KEY_SIZE];
 
 /// Production placeholder — HSM tarafından üretilecek (v2.0)
 #[cfg(not(feature = "test-keys"))]
+#[allow(dead_code)] // HSM placeholder — production'da HSM signature replace edecek
 pub const QEMU_TEST_SIGNATURE: [u8; SIGNATURE_SIZE] = [0u8; SIGNATURE_SIZE];
 
 /// Root public key'i döndür.
@@ -70,6 +72,7 @@ pub const QEMU_TEST_SIGNATURE: [u8; SIGNATURE_SIZE] = [0u8; SIGNATURE_SIZE];
 ///
 /// Dönüş: &'static [u8; 32] — sıfır kopya, sıfır tahsis
 #[inline]
+#[allow(dead_code)] // test-keys feature off iken çağrılmaz; production v2.0 OTP yolu
 pub fn get_root_public_key() -> &'static [u8; OTP_KEY_SIZE] {
     &QEMU_TEST_PUBKEY
 }

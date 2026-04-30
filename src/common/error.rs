@@ -1,11 +1,12 @@
 //! Kernel error types — every failure is explicit, no silent drops.
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket #![allow(dead_code)] kaldırıldı — tekil işaretlenir
 // Sipahi — Hata Tipleri
 // Safety-critical: her hata açık, sessiz başarısızlık YOK
 
 /// Sipahi kernel hata tipleri
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[allow(dead_code)] // Public error enum — v1.5 syscall API surface, runtime'da BufferFull aktif
 pub enum SipahiError {
     /// Capability token doğrulaması başarısız
     CapabilityDenied,
@@ -38,6 +39,8 @@ pub enum SipahiError {
 }
 
 impl SipahiError {
+    /// Error → human-readable string (Kani harness + production trace UART için)
+    #[allow(dead_code)] // Kani Proof 85 (sipahi_error_as_str_never_empty) çağırır
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::CapabilityDenied => "capability denied",

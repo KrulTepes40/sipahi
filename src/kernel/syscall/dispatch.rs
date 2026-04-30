@@ -161,6 +161,7 @@ pub fn print_wcet_stats() {
 /// WCET limit kontrolü — max cycle'lar hedefleri aşıyor mu?
 /// true = tüm syscall'lar limit altında, false = en az biri aşıyor
 #[cfg(not(kani))]
+#[allow(dead_code)] // WCET self-test API — FPGA ölçüm sonrası entegre edilecek
 pub fn check_wcet_limits() -> bool {
     use crate::common::config;
     let limits: [u64; SYSCALL_COUNT] = [

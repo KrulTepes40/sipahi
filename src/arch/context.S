@@ -86,13 +86,44 @@ switch_context:
 #     (PMP entry 4 .data RW → kernel veri yapıları yazılabilir)
 # Sprint U-18 GÖREV 1: task_trampoline mscratch=kernel_sp ve sp=user_sp
 # atayarak start_first_task ile aynı invariant'ı kurar.
+# Sprint U-19 GÖREV 11: caller-saved register'lar (ra, a0-a7, t0-t6)
+# kernel internal state taşıyor olabilir — switch_context callee-saved
+# yükledi ama caller-saved'leri temizlemedi. mret öncesi sıfırlama:
+#   - Defense-in-depth: U-mode task kernel pointer/değer "leak" görmez
+#   - Side-channel: Kernel branch state register'lara yansımış olsa bile
+#     U-mode'a sızmaz
+#   - Task entry sözleşmesi: `fn task_x() -> !` argüman almaz, fresh state
 # user_sp trap frame slot'undan (__stack_top - 16) okunur — switch_context
 # bu slotu yeni task'ın user_sp'siyle güncelledi.
 # mepc ve mstatus zaten CSR'a yüklendi (yukarıdaki csrw).
 .global task_trampoline
 task_trampoline:
+    # mscratch + sp restoration (U-18 — KORU, sıralama önemli)
     la      t0, __stack_top
     ld      t1, -16(t0)        # t1 = user_sp (switch_context update etti)
     csrw    mscratch, t0       # mscratch = kernel_sp (= __stack_top)
     mv      sp, t1             # sp = user_sp (kernel sp leak engellenir)
+
+    # U-19 GÖREV 11: Caller-saved register clear — kernel state info-leak engelleme
+    # ra: switch_context'tan gelen değer; tasks `-> !` döndüğünden anlamsız
+    # a0-a7: argüman/ret regs; task argümansız; kernel callsite'larından stale
+    # t0/t1 yukarıda kullanıldı — temizleme EN SON
+    # t2-t6: kernel scratch register'ları, U-mode'a leak edilmemeli
+    li      ra, 0
+    li      a0, 0
+    li      a1, 0
+    li      a2, 0
+    li      a3, 0
+    li      a4, 0
+    li      a5, 0
+    li      a6, 0
+    li      a7, 0
+    li      t2, 0
+    li      t3, 0
+    li      t4, 0
+    li      t5, 0
+    li      t6, 0
+    li      t0, 0       # mscratch setup'ında kullanılıyordu — şimdi temizle
+    li      t1, 0       # user_sp temp idi — sp'ye taşındı, temizle
+
     mret

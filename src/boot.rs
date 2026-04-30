@@ -54,10 +54,7 @@ pub fn init() {
             #[cfg(feature = "debug-boot")]
             arch::uart::println("[BOOT] Secure boot check OK");
         } else {
-            // HALT — terminal event, UART her zaman görünmeli
-            arch::uart::println("[BOOT] Secure boot FAIL — HALT");
-            // SAFETY: WFI halt on secure boot failure.
-            loop { unsafe { core::arch::asm!("wfi"); } }
+            crate::common::halt_system("[BOOT] Secure boot FAIL — HALT");
         }
     }
     #[cfg(all(not(feature = "test-keys"), feature = "debug-boot"))]
@@ -93,18 +90,12 @@ pub fn init() {
         let ok_0 = ipc::assign_channel(0, a, b);
         let ok_1 = ipc::assign_channel(1, b, a);
         if !ok_0 || !ok_1 {
-            // HALT — terminal event, UART her zaman görünmeli
-            arch::uart::println("[BOOT] FATAL: IPC channel assignment failed — HALT");
-            // SAFETY: WFI halt — boot invariant broken.
-            loop { unsafe { core::arch::asm!("wfi"); } }
+            crate::common::halt_system("[BOOT] FATAL: IPC channel assignment failed — HALT");
         }
         #[cfg(feature = "debug-boot")]
         arch::uart::println("[BOOT] IPC ch0: A→B, ch1: B→A");
     } else {
-        // HALT — terminal event, UART her zaman görünmeli
-        arch::uart::println("[BOOT] FATAL: task creation failed — HALT");
-        // SAFETY: WFI halt — boot invariant broken.
-        loop { unsafe { core::arch::asm!("wfi"); } }
+        crate::common::halt_system("[BOOT] FATAL: task creation failed — HALT");
     }
     ipc::seal_channels();
     #[cfg(feature = "debug-boot")]

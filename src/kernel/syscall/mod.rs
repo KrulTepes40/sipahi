@@ -1,5 +1,5 @@
 //! Syscall module: kernel dispatch + userspace ECALL wrappers.
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket #![allow(dead_code)] kaldırıldı — tekil işaretlenir
 // Sipahi — Syscall Modülü (Sprint 7)
 // 5 syscall: cap_invoke, ipc_send, ipc_recv, yield, task_info
 //
@@ -30,9 +30,12 @@ pub use dispatch::{
 // Wrapper'lar değişmez, trap.S ikisini de destekliyor.
 // ═══════════════════════════════════════════════════════
 
-/// cap_invoke — Capability korumalı kaynak erişimi
+/// cap_invoke — Capability korumalı kaynak erişimi.
+/// U-mode wrapper'ı: in-kernel Rust task'lar şu an direkt çağrı kullanmıyor;
+/// bu API U-mode dil binding'leri ve test harness için.
 #[cfg(not(kani))]
 #[inline(always)]
+#[allow(dead_code)]
 pub fn cap_invoke(cap: usize, resource: usize, action: usize, arg: usize) -> usize {
     let result: usize;
     // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
@@ -49,9 +52,10 @@ pub fn cap_invoke(cap: usize, resource: usize, action: usize, arg: usize) -> usi
     result
 }
 
-/// ipc_send — IPC kanalına mesaj gönder
+/// ipc_send — IPC kanalına mesaj gönder (U-mode wrapper)
 #[cfg(not(kani))]
 #[inline(always)]
+#[allow(dead_code)]
 pub fn ipc_send(channel_id: usize, msg_ptr: usize) -> usize {
     let result: usize;
     // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
@@ -66,9 +70,10 @@ pub fn ipc_send(channel_id: usize, msg_ptr: usize) -> usize {
     result
 }
 
-/// ipc_recv — IPC kanalından mesaj al
+/// ipc_recv — IPC kanalından mesaj al (U-mode wrapper)
 #[cfg(not(kani))]
 #[inline(always)]
+#[allow(dead_code)]
 pub fn ipc_recv(channel_id: usize, buf_ptr: usize) -> usize {
     let result: usize;
     // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
@@ -83,9 +88,10 @@ pub fn ipc_recv(channel_id: usize, buf_ptr: usize) -> usize {
     result
 }
 
-/// yield — Gönüllü CPU bırakma
+/// yield — Gönüllü CPU bırakma (U-mode wrapper)
 #[cfg(not(kani))]
 #[inline(always)]
+#[allow(dead_code)]
 pub fn yield_cpu() -> usize {
     let result: usize;
     // SAFETY: ECALL triggers trap — argument registers follow ABI convention.
@@ -99,9 +105,10 @@ pub fn yield_cpu() -> usize {
     result
 }
 
-/// task_info — Task bilgisi sorgula
+/// task_info — Task bilgisi sorgula (U-mode wrapper)
 #[cfg(not(kani))]
 #[inline(always)]
+#[allow(dead_code)]
 pub fn task_info(info_type: usize) -> usize {
     let result: usize;
     // SAFETY: ECALL triggers trap — argument registers follow ABI convention.

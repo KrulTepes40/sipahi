@@ -1,4 +1,8 @@
 //! RISC-V CSR (Control and Status Register) read/write helpers.
+// U-19 GÖREV 3: blanket allow korundu — csr.rs CSR helper API yüzeyi.
+// 11 fonksiyon production'da kullanılmıyor (read_mtvec, read_mcause, write_mepc,
+// enable/disable_machine_interrupts, MSTATUS_MPP_M/MASK/MIE) — multi-hart ve
+// trap handler genişlemesi için API yüzeyi. Tekil işaretleme noise'u arttırır.
 #![allow(dead_code)]
 // Sipahi — CSR (Control and Status Register) İşlemleri
 // Sprint 2-3: mtvec, mcause, mepc, mstatus, mie okuma/yazma

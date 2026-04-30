@@ -475,24 +475,20 @@ pub fn post() {
     let crc_data = [0x31u8, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39];
     let crc_result = ipc::crc32(&crc_data);
     if crc_result != 0xCBF4_3926 {
-        arch::uart::println("[POST] FAIL: CRC32 engine corrupted — HALT");
-        // SAFETY: WFI loop — halt on self-test failure.
-        loop { unsafe { core::arch::asm!("wfi"); } }
+        crate::common::halt_system("[POST] FAIL: CRC32 engine corrupted — HALT");
     }
     arch::uart::println("[POST] CRC32 engine ✓");
 
     // 2. PMP integrity
     if !kernel::memory::verify_pmp_integrity() {
-        arch::uart::println("[POST] FAIL: PMP registers corrupted — HALT");
-        loop { unsafe { core::arch::asm!("wfi"); } }
+        crate::common::halt_system("[POST] FAIL: PMP registers corrupted — HALT");
     }
     arch::uart::println("[POST] PMP integrity ✓");
 
     // 3. Policy engine — PMP fail her zaman Shutdown
     let action = kernel::policy::decide_action(5, 0, 0);
     if action != kernel::policy::FailureMode::Shutdown {
-        arch::uart::println("[POST] FAIL: Policy engine corrupted — HALT");
-        loop { unsafe { core::arch::asm!("wfi"); } }
+        crate::common::halt_system("[POST] FAIL: Policy engine corrupted — HALT");
     }
     arch::uart::println("[POST] Policy engine ✓");
 
@@ -505,8 +501,7 @@ pub fn post() {
         let mpp = (mstatus >> 11) & 0x3;
         // MPP=2 is reserved — if set, hardware corrupt
         if mpp == 2 {
-            arch::uart::println("[POST] FAIL: mstatus.MPP reserved value — HALT");
-            loop { unsafe { core::arch::asm!("wfi"); } }
+            crate::common::halt_system("[POST] FAIL: mstatus.MPP reserved value — HALT");
         }
         arch::uart::println("[POST] M-mode CSR access (mstatus) ✓");
     }
@@ -515,8 +510,7 @@ pub fn post() {
     {
         let mtvec = crate::arch::csr::read_mtvec();
         if mtvec == 0 {
-            arch::uart::println("[POST] FAIL: mtvec = 0 — trap handler not set — HALT");
-            loop { unsafe { core::arch::asm!("wfi"); } }
+            crate::common::halt_system("[POST] FAIL: mtvec = 0 — trap handler not set — HALT");
         }
         arch::uart::println("[POST] mtvec set ✓");
     }
@@ -535,16 +529,14 @@ pub fn post() {
         let mut i = 0;
         while i < 16 { if h1[i] != h2[i] { same = false; } i += 1; }
         if !same {
-            arch::uart::println("[POST] FAIL: BLAKE3 non-deterministic — HALT");
-            loop { unsafe { core::arch::asm!("wfi"); } }
+            crate::common::halt_system("[POST] FAIL: BLAKE3 non-deterministic — HALT");
         }
         // Non-zero: degenerate hash değil
         let mut all_zero = true;
         let mut j = 0;
         while j < 16 { if h1[j] != 0 { all_zero = false; } j += 1; }
         if all_zero {
-            arch::uart::println("[POST] FAIL: BLAKE3 zero output — HALT");
-            loop { unsafe { core::arch::asm!("wfi"); } }
+            crate::common::halt_system("[POST] FAIL: BLAKE3 zero output — HALT");
         }
         arch::uart::println("[POST] BLAKE3 self-test ✓");
     }
@@ -556,8 +548,7 @@ pub fn post() {
         use crate::hal::key::{QEMU_TEST_PUBKEY, QEMU_TEST_SIGNATURE};
         let valid = secure_boot_check(&[], &QEMU_TEST_PUBKEY, &QEMU_TEST_SIGNATURE);
         if !valid {
-            arch::uart::println("[POST] FAIL: Ed25519 RFC8032 TV1 — HALT");
-            loop { unsafe { core::arch::asm!("wfi"); } }
+            crate::common::halt_system("[POST] FAIL: Ed25519 RFC8032 TV1 — HALT");
         }
         arch::uart::println("[POST] Ed25519 self-test ✓");
     }
@@ -578,7 +569,7 @@ pub fn post() {
             // (CLINT bozuksa tüm timer/scheduler etkilenir, deadline kaçırılır)
             crate::ipc::blackbox::log(
                 crate::ipc::blackbox::BlackboxEvent::DeadlineMiss,
-                0xFF, // SYSTEM_TASK_ID
+                crate::common::config::SYSTEM_TASK_ID,
                 &[0x50, 0x4F, 0x53], // "POS" — POST marker
             );
         } else {
@@ -604,7 +595,7 @@ pub fn post() {
             // ISA identity bozulması (donanım tehdidi) sertifikasyon için kritik
             crate::ipc::blackbox::log(
                 crate::ipc::blackbox::BlackboxEvent::PmpFail,
-                0xFF, // SYSTEM_TASK_ID
+                crate::common::config::SYSTEM_TASK_ID,
                 &[0x49, 0x53, 0x41], // "ISA" marker
             );
         } else {
@@ -620,6 +611,7 @@ pub fn test_pmp_napot() {
     arch::uart::println("[TEST] Per-task PMP NAPOT...");
 
     // Task A (id=0) oluşturulmuş — pmp_addr_napot kontrol
+    // SAFETY: Single-hart, boot post-init, no concurrent task access. SingleHartCell read.
     let napot = unsafe { kernel::scheduler::TASKS.get()[0].pmp_addr_napot };
     if napot == 0 {
         test_fail("[TEST] PMP NAPOT: pmp_addr_napot = 0 FAIL ✗");
@@ -636,6 +628,7 @@ pub fn test_pmp_napot() {
     arch::uart::println("[TEST] PMP NAPOT: 8KB aligned ✓");
 
     // NAPOT decode == stack base?
+    // SAFETY: Single-hart, static address read of TASK_STACKS[0]. No deref of pointer.
     let stack_base = unsafe {
         &kernel::scheduler::TASK_STACKS.get()[0].0 as *const _ as usize
     };
@@ -886,12 +879,13 @@ pub fn run_all() {
         arch::uart::puts("[TEST] TOTAL FAILURES: ");
         print_u32(total_fail);
         arch::uart::println("");
-        arch::uart::println("[TEST] ✗✗✗ BOOT HALTED — fix failures before deployment ✗✗✗");
         crate::ipc::blackbox::log(
-            crate::ipc::blackbox::BlackboxEvent::PolicyShutdown, 0xFF, &[],
+            crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
+            crate::common::config::SYSTEM_TASK_ID, &[],
         );
-        // SAFETY: WFI loop — halt on test failure (DO-178C fail criteria).
-        loop { unsafe { core::arch::asm!("wfi"); } }
+        crate::common::halt_system(
+            "[TEST] ✗✗✗ BOOT HALTED — fix failures before deployment ✗✗✗"
+        );
     }
     arch::uart::println("[TEST] ★★★ ALL TESTS PASSED ★★★");
 }

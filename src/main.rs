@@ -12,7 +12,7 @@ extern crate alloc;
 mod arch;
 mod common;
 mod hal;
-pub mod ipc;
+mod ipc; // U-19 GÖREV 8: pub gereksiz (binary crate, external consumer yok)
 mod kernel;
 mod sandbox;
 #[cfg(not(kani))]
@@ -101,12 +101,11 @@ pub extern "C" fn rust_main() -> ! {
     boot::start();
 }
 
+// U-19 GÖREV 5: print_hex const _ hack silindi — boot.rs/scheduler tam path
+// (crate::common::fmt::print_hex) ile çağırıyor, bu modülde yalnızca print_u32
+// gerek (alloc_error içinde).
 #[cfg(not(kani))]
-use common::fmt::{print_u32, print_hex};
-
-// Suppress unused import warning — print_hex used by boot.rs via crate::common::fmt
-#[cfg(not(kani))]
-const _: () = { let _ = print_hex as fn(usize); };
+use common::fmt::print_u32;
 
 #[cfg(not(kani))]
 use core::panic::PanicInfo;

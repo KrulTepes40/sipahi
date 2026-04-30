@@ -463,21 +463,28 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
-    // PROOF 71: Isolated task asla Ready'ye dönmez
-    // Faz 1 mantığı: yalnızca Suspended → Ready (Isolated kapsam dışı)
+    // PROOF 71: Isolated task asla Ready'ye dönmez (production helper çağrılır)
+    // U-19 GÖREV 10: Tautoloji (kendi if-else simülasyonu) yerine production
+    // is_selectable_by_scheduler ve is_period_reset_eligible çağrılıyor.
+    // Phase 1 (period reset) Suspended dışı state'leri değiştirmez; Phase 3
+    // (selection) sadece Ready/Running seçer → Isolated her iki yolda da kapsam dışı.
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn isolated_task_never_becomes_ready() {
-        // Faz 1 periyot reset mantığını simüle et:
-        // sadece Suspended → Ready, diğer state'ler değişmez
-        let state = TaskState::Isolated;
-        let new_state = if state == TaskState::Suspended {
-            TaskState::Ready
-        } else {
-            state
-        };
-        assert!(new_state != TaskState::Ready);
-        assert!(new_state == TaskState::Isolated);
+        use crate::kernel::scheduler::{is_selectable_by_scheduler, is_period_reset_eligible};
+        // Isolated → ne seçilir ne periyot reset Ready yapar
+        assert!(!is_selectable_by_scheduler(TaskState::Isolated));
+        assert!(!is_period_reset_eligible(TaskState::Isolated));
+        // Karşılaştırma: Dead da seçilmez ama farklı sebeple (kalıcı ölü)
+        assert!(!is_selectable_by_scheduler(TaskState::Dead));
+        assert!(!is_period_reset_eligible(TaskState::Dead));
+        // Suspended periyot reset eligible (Ready'ye geçer); Ready/Running değil
+        assert!(is_period_reset_eligible(TaskState::Suspended));
+        assert!(!is_period_reset_eligible(TaskState::Ready));
+        assert!(!is_period_reset_eligible(TaskState::Running));
+        // Ready ve Running scheduler tarafından seçilebilir
+        assert!(is_selectable_by_scheduler(TaskState::Ready));
+        assert!(is_selectable_by_scheduler(TaskState::Running));
     }
 
     // ═══════════════════════════════════════════════════════
@@ -637,13 +644,27 @@ mod verification {
         assert!(dal_group <= 3);
     }
 
-    /// Proof 95: Watchdog limit=0 → asla tetiklenmez
+    /// Proof 95: Watchdog limit=0 → asla tetiklenmez (production helper)
+    /// U-19 GÖREV 10: Tautoloji yerine production should_watchdog_timeout çağrılıyor.
+    /// Phase 1.5'teki `if t.watchdog_limit > 0 && t.watchdog_counter >= t.watchdog_limit`
+    /// mantığı bu helper'da. Helper'ın production schedule()'da inline kullanımı +
+    /// Kani'de symbolic input ile doğrulanıyor — drift yoksa tek mantık.
     #[kani::proof]
     fn watchdog_limit_zero_disables() {
+        use crate::kernel::scheduler::should_watchdog_timeout;
         let counter: u32 = kani::any();
-        let limit: u32 = 0;
-        let triggered = limit > 0 && counter >= limit;
-        assert!(!triggered);
+        // limit=0 → her counter değeri için disabled
+        assert!(!should_watchdog_timeout(0, counter));
+        // limit > 0 ve counter >= limit → tetiklenir (boundary)
+        let limit: u32 = kani::any();
+        kani::assume(limit > 0);
+        kani::assume(counter >= limit);
+        assert!(should_watchdog_timeout(limit, counter));
+        // limit > 0 ve counter < limit → tetiklenmez
+        let counter2: u32 = kani::any();
+        kani::assume(limit > 0);
+        kani::assume(counter2 < limit);
+        assert!(!should_watchdog_timeout(limit, counter2));
     }
 
     // --- HAL ---

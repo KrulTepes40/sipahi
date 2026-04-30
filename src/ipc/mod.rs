@@ -40,6 +40,7 @@ impl IpcMessage {
     }
 
     /// Payload'a CRC32 hesapla ve son 4 byte'a yaz
+    #[allow(dead_code)] // Public IPC API; senders use this — runtime dispatch may bypass it
     pub fn set_crc(&mut self) {
         let crc = crc32(&self.data[..60]);
         self.data[60] = crc as u8;
@@ -49,6 +50,7 @@ impl IpcMessage {
     }
 
     /// CRC32 doğrula
+    #[allow(dead_code)] // Public IPC API; receivers use this externally
     pub fn verify_crc(&self) -> bool {
         let stored = u32::from_le_bytes([
             self.data[60], self.data[61],
@@ -126,12 +128,16 @@ impl SpscChannel {
         // SAFETY: Consumer owns tail index — no concurrent read from slots[tail].
         let msg = unsafe { (*self.slots.get())[tail as usize] };
 
-        let next_tail = (tail + 1) % (IPC_CHANNEL_SLOTS as u16);
+        // U-19 GÖREV 9: send'deki `head.wrapping_add(1)` ile tutarlı.
+        // u16 overflow-checks=true → düz `+` u16::MAX'ta panic atar; SPSC
+        // ring buffer head/tail u16 wrap'i normal davranış.
+        let next_tail = tail.wrapping_add(1) % (IPC_CHANNEL_SLOTS as u16);
         self.tail.store(next_tail, Ordering::Release);
         Some(msg)
     }
 
     /// Kanal dolu mu?
+    #[allow(dead_code)] // SPSC inspection API; debug/test only
     pub fn is_full(&self) -> bool {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
@@ -139,11 +145,13 @@ impl SpscChannel {
     }
 
     /// Kanal boş mu?
+    #[allow(dead_code)] // SPSC inspection API; debug/test only
     pub fn is_empty(&self) -> bool {
         self.tail.load(Ordering::Relaxed) == self.head.load(Ordering::Acquire)
     }
 
     /// Kaç mesaj var?
+    #[allow(dead_code)] // SPSC inspection API; debug/test only
     pub fn len(&self) -> usize {
         let head = self.head.load(Ordering::Acquire) as usize;
         let tail = self.tail.load(Ordering::Relaxed) as usize;
@@ -177,10 +185,14 @@ pub fn get_channel(id: usize) -> Option<&'static SpscChannel> {
 // Boot sequence sonrası seal_channels() çağrılır → reassign engellenir.
 // ═══════════════════════════════════════════════════════
 
-/// Channel sahipliği — (producer_task_id, consumer_task_id). 0xFF = unassigned.
-/// 0xFF asla geçerli task_id olamaz (MAX_TASKS = 8) → default deny.
+/// Channel sahipliği — (producer_task_id, consumer_task_id).
+/// CHANNEL_UNASSIGNED (0xFF) = atanmamış. CHANNEL_UNASSIGNED asla geçerli
+/// task_id olamaz (MAX_TASKS = 8) → default deny.
 static CHANNEL_OWNERS: SingleHartCell<[(u8, u8); MAX_IPC_CHANNELS]> =
-    SingleHartCell::new([(0xFF, 0xFF); MAX_IPC_CHANNELS]);
+    SingleHartCell::new([(
+        crate::common::config::CHANNEL_UNASSIGNED,
+        crate::common::config::CHANNEL_UNASSIGNED,
+    ); MAX_IPC_CHANNELS]);
 
 /// Seal flag — true olunca assign_channel reddeder (boot sonrası kilit).
 static CHANNELS_SEALED: SingleHartCell<bool> = SingleHartCell::new(false);
@@ -208,7 +220,7 @@ pub fn seal_channels() {
 }
 
 /// Caller bu kanala SEND edebilir mi (atanmış producer mı)?
-/// Default deny: 0xFF != caller (caller her zaman < MAX_TASKS = 8).
+/// Default deny: CHANNEL_UNASSIGNED (0xFF) != caller (caller < MAX_TASKS = 8).
 pub fn can_send(channel_id: usize, caller_task_id: u8) -> bool {
     if channel_id >= MAX_IPC_CHANNELS { return false; }
     // SAFETY: Single-hart, MIE=0 in trap context.
@@ -229,14 +241,14 @@ mod ownership_verify {
     use super::*;
 
     /// Sprint U-16 Proof: unassigned channel default-deny.
-    /// 0xFF != herhangi geçerli task_id (< MAX_TASKS=8).
+    /// CHANNEL_UNASSIGNED (0xFF) != herhangi geçerli task_id (< MAX_TASKS=8).
     #[kani::proof]
     fn unassigned_channel_denies_any_caller() {
         let caller: u8 = kani::any();
         kani::assume((caller as usize) < MAX_TASKS);
         let ch: usize = kani::any();
         kani::assume(ch < MAX_IPC_CHANNELS);
-        // CHANNEL_OWNERS default = (0xFF, 0xFF) — assign çağrılmamış
+        // CHANNEL_OWNERS default = (CHANNEL_UNASSIGNED, CHANNEL_UNASSIGNED)
         assert!(!can_send(ch, caller));
         assert!(!can_recv(ch, caller));
     }

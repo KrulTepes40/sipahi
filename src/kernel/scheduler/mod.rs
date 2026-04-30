@@ -13,7 +13,11 @@
 //
 // WCET: ≤0.8μs (doküman §SCHEDULER)
 
-use crate::common::config::{MAX_TASKS, TASK_STACK_SIZE, CYCLES_PER_TICK, WATCHDOG_LIMIT, WATCHDOG_WINDOW_MIN, MAX_SENDS_PER_TICK};
+use crate::common::config::{
+    MAX_TASKS, TASK_STACK_SIZE, CYCLES_PER_TICK, WATCHDOG_LIMIT, WATCHDOG_WINDOW_MIN,
+    MAX_SENDS_PER_TICK,
+    SYSTEM_TASK_ID, SYSTEM_TASK_INDEX, KERNEL_BOOT_ID, // U-19 GÖREV 1
+};
 use crate::common::sync::SingleHartCell;
 use crate::common::types::TaskState;
 use crate::kernel::policy::{FailureMode, PolicyEvent};
@@ -234,15 +238,15 @@ pub(crate) fn schedule() {
             #[cfg(feature = "debug-boot")]
             crate::arch::uart::println("[PMP] INTEGRITY FAIL — SHUTDOWN");
             crate::ipc::blackbox::log(
-                crate::ipc::blackbox::BlackboxEvent::PmpFail, 0xFF, &[],
+                crate::ipc::blackbox::BlackboxEvent::PmpFail, SYSTEM_TASK_ID, &[],
             );
             // Policy path — decide_action(PmpIntegrityFail, *, *) → Shutdown
             let action = crate::kernel::policy::apply_policy(
-                0xFF_u8, // kernel pseudo-task
+                SYSTEM_TASK_ID, // kernel pseudo-task
                 PolicyEvent::PmpIntegrityFail,
                 0_u8, // DAL-A
             );
-            apply_action(0xFF_usize, action);
+            apply_action(SYSTEM_TASK_INDEX, action);
         }
 
         // ─── Faz 1: Periyot ilerletme (tüm task'lar) ───
@@ -255,7 +259,8 @@ pub(crate) fn schedule() {
                 if t.period_counter >= t.period_ticks {
                     t.period_counter   = 0;
                     t.remaining_cycles = t.budget_cycles;
-                    if t.state == TaskState::Suspended {
+                    // U-19 GÖREV 10: helper inline kullanım (Kani Proof 71 ile aynı)
+                    if is_period_reset_eligible(t.state) {
                         t.state = TaskState::Ready;
                         // Not: Isolated task'lar bu blokta hiç eşleşmez —
                         // kasıtlı. Isolated → periyot reset ile READY yapılmaz.
@@ -287,7 +292,8 @@ pub(crate) fn schedule() {
             if st == TaskState::Running {
                 let t = &mut TASKS.get_mut()[w];
                 t.watchdog_counter += 1;
-                if t.watchdog_limit > 0 && t.watchdog_counter >= t.watchdog_limit {
+                // U-19 GÖREV 10: helper inline kullanım (Kani Proof 95 ile aynı)
+                if should_watchdog_timeout(t.watchdog_limit, t.watchdog_counter) {
                     // Watchdog tetiklendi — t'yi drop et, apply_action aliasing safe
                     let (id, dal) = (t.id, t.dal);
                     #[cfg(not(kani))]
@@ -411,11 +417,11 @@ pub(crate) fn start_first_task() -> ! {
         if *TASK_COUNT.get() == 0 {
             #[cfg(not(kani))]
             {
-                crate::arch::uart::println("[POLICY] SHUTDOWN — no tasks");
                 crate::ipc::blackbox::log(
-                    crate::ipc::blackbox::BlackboxEvent::PolicyShutdown, 0xFF, &[],
+                    crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
+                    SYSTEM_TASK_ID, &[],
                 );
-                loop { core::arch::asm!("wfi"); }
+                crate::common::halt_system("[POLICY] SHUTDOWN — no tasks");
             }
         }
 
@@ -437,11 +443,11 @@ pub(crate) fn start_first_task() -> ! {
             // Hiç Ready task yok — sistem boot sonrası ölü
             #[cfg(not(kani))]
             {
-                crate::arch::uart::println("[POLICY] SHUTDOWN — no Ready task at boot");
                 crate::ipc::blackbox::log(
-                    crate::ipc::blackbox::BlackboxEvent::PolicyShutdown, 0xFF, &[],
+                    crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
+                    SYSTEM_TASK_ID, &[],
                 );
-                loop { core::arch::asm!("wfi"); }
+                crate::common::halt_system("[POLICY] SHUTDOWN — no Ready task at boot");
             }
         }
 
@@ -682,7 +688,7 @@ fn try_recover_from_degrade() {
         *DEGRADE_LOGGED.get_mut() = false;
         #[cfg(not(kani))]
         crate::ipc::blackbox::log(
-            crate::ipc::blackbox::BlackboxEvent::KernelBoot, 0xFE, &[],
+            crate::ipc::blackbox::BlackboxEvent::KernelBoot, KERNEL_BOOT_ID, &[],
         );
     }
 }
@@ -737,14 +743,14 @@ fn isolate_task(id: usize) {
         if isolated_count >= 2 {
             crate::ipc::blackbox::log(
                 crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
-                0xFF, &[],
+                SYSTEM_TASK_ID, &[],
             );
             let action = crate::kernel::policy::apply_policy(
-                0xFF_u8,
+                SYSTEM_TASK_ID,
                 PolicyEvent::MultiModuleCrash,
                 0_u8, // DAL-A
             );
-            apply_action(0xFF_usize, action);
+            apply_action(SYSTEM_TASK_INDEX, action);
             // decide_action(MultiModuleCrash, *, *) → Shutdown
         }
     }
@@ -765,6 +771,7 @@ fn shutdown_system() -> ! {
 
 /// Mevcut çalışan task'ın ID'sini döndür
 pub(crate) fn current_task_id() -> u8 {
+    // SAFETY: Single-hart, MIE=0 in trap/scheduler context. SingleHartCell read.
     unsafe { *CURRENT_TASK.get() as u8 }
 }
 
@@ -835,6 +842,7 @@ pub(crate) fn watchdog_kick() {
 
 /// Syscall sayacı artır — anomali tespiti
 pub(crate) fn increment_syscall_count() {
+    // SAFETY: Single-hart, MIE=0 in trap context (called from dispatch). Bounds checked.
     unsafe {
         let current = *CURRENT_TASK.get();
         if current < *TASK_COUNT.get() {
@@ -846,6 +854,7 @@ pub(crate) fn increment_syscall_count() {
 
 /// IPC send rate kontrolü — tick başına MAX_SENDS_PER_TICK
 pub(crate) fn check_ipc_rate() -> bool {
+    // SAFETY: Single-hart, MIE=0 in trap context. Bounds checked before TASKS access.
     unsafe {
         let current = *CURRENT_TASK.get();
         if current < *TASK_COUNT.get() {
@@ -858,6 +867,7 @@ pub(crate) fn check_ipc_rate() -> bool {
 
 /// IPC send sayacı artır
 pub(crate) fn increment_ipc_send() {
+    // SAFETY: Single-hart, MIE=0 in trap context. Bounds checked.
     unsafe {
         let current = *CURRENT_TASK.get();
         if current < *TASK_COUNT.get() {
@@ -893,7 +903,7 @@ pub fn select_highest_priority(
     let mut best_prio: u8 = u8::MAX;
     let mut i = 0;
     while i < count && i < states.len() && i < priorities.len() {
-        if (states[i] == TaskState::Ready || states[i] == TaskState::Running)
+        if is_selectable_by_scheduler(states[i])
             && priorities[i] < best_prio
         {
             best = Some(i);
@@ -902,6 +912,34 @@ pub fn select_highest_priority(
         i += 1;
     }
     best
+}
+
+// ═══════════════════════════════════════════════════════
+// U-19 GÖREV 10: Pure helper'lar — inline scheduler logic Kani'de testable
+// Önceden Proof 71 (Isolated→Ready Phase 1 reset) ve Proof 95 (watchdog
+// limit=0) inline while-loop logic'i çağıramıyordu, tautoloji idi.
+// Bu helper'lar production'da inline kullanılıyor + Kani harness çağırabiliyor.
+// ═══════════════════════════════════════════════════════
+
+/// Scheduler bu state'teki bir task'ı seçer mi? (Phase 3)
+/// Sadece Ready ve Running uygun. Dead/Suspended/Isolated reddedilir.
+#[inline]
+pub(crate) fn is_selectable_by_scheduler(state: TaskState) -> bool {
+    matches!(state, TaskState::Ready | TaskState::Running)
+}
+
+/// Phase 1 periyot reset bu state'e uygulanır mı?
+/// Sadece Suspended → Ready geçişi. Isolated kasıtlı kapsam dışı (kalıcı izolasyon).
+#[inline]
+pub(crate) fn is_period_reset_eligible(state: TaskState) -> bool {
+    matches!(state, TaskState::Suspended)
+}
+
+/// Phase 1.5 watchdog timeout tetiklenmeli mi?
+/// limit=0 → watchdog devre dışı. Aksi halde counter >= limit ise tetikle.
+#[inline]
+pub(crate) fn should_watchdog_timeout(limit: u32, counter: u32) -> bool {
+    limit > 0 && counter >= limit
 }
 
 // ═══════════════════════════════════════════════════════

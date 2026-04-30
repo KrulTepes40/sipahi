@@ -13,7 +13,7 @@
 //   ecall → syscall sonucu (trap.S saved a0'a yazar)
 //   interrupt → 0 (trap.S saved a0'a dokunmaz)
 
-#[cfg(not(kani))]
+#[cfg(all(not(kani), feature = "debug-boot"))]
 use crate::arch::uart;
 #[cfg(not(kani))]
 use crate::arch::clint;
@@ -49,11 +49,11 @@ fn verify_mpp_is_user_mode() {
     let mstatus = crate::arch::csr::read_mstatus();
     let mpp = (mstatus >> 11) & 0x3;
     if mpp != 0 {
-        uart::println("[TRAP] PRIVILEGE ESCALATION DETECTED — SHUTDOWN");
         crate::ipc::blackbox::log(
-            crate::ipc::blackbox::BlackboxEvent::PolicyShutdown, 0xFF, &[],
+            crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
+            crate::common::config::SYSTEM_TASK_ID, &[],
         );
-        loop { unsafe { core::arch::asm!("wfi"); } }
+        crate::common::halt_system("[TRAP] PRIVILEGE ESCALATION DETECTED — SHUTDOWN");
     }
 }
 
@@ -78,6 +78,7 @@ pub extern "C" fn trap_handler(
                 // Machine Timer Interrupt
                 // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
                 unsafe { *TICK_COUNT.get_mut() += 1 };
+                // SAFETY: Read-only access to TICK_COUNT; MIE=0 in trap context.
                 let ticks = unsafe { *TICK_COUNT.get() };
 
                 #[cfg(feature = "debug-boot")]
@@ -151,7 +152,7 @@ pub extern "C" fn trap_handler(
                 }
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
-                    0xFF, &[],
+                    crate::common::config::SYSTEM_TASK_ID, &[],
                 );
                 crate::kernel::scheduler::handle_task_fault();
                 0

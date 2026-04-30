@@ -1,11 +1,12 @@
 //! Core type definitions: Q32.32 fixed-point, TaskState, DAL levels.
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket #![allow(dead_code)] kaldırıldı — tekil işaretlenir
 // Sipahi — Ortak tipler
 // Q32.32 fixed-point, task durumu, DAL seviyeleri
 
 /// Q32.32 fixed-point sayı
 /// ±2³¹ aralık, ~2.3×10⁻¹⁰ hassasiyet
 /// Float YASAK — Sipahi doktrini
+#[allow(dead_code)] // Q32.32 alias — WASM compute service v2.0 tarafından kullanılır
 pub type Q32 = i64;
 
 /// Task ID (0-7, MAX_TASKS = 8)
@@ -34,20 +35,24 @@ pub enum TaskState {
 /// Type-safe channel identifier (0-7)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
+#[allow(dead_code)] // v1.5 newtype API — Sprint genişlemesinde signature'lara entegre edilecek
 pub struct ChannelId(pub u8);
 
 /// Type-safe priority level (0=highest, 15=lowest)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
+#[allow(dead_code)] // v1.5 newtype API
 pub struct Priority(pub u8);
 
 /// Type-safe DAL level wrapper (0=A, 1=B, 2=C, 3=D)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
+#[allow(dead_code)] // v1.5 newtype API
 pub struct DalId(pub u8);
 
 /// DO-178C DAL seviyeleri
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // Public API — production'da `dal: u8` kullanılır, enum cert/doc için
 pub enum DalLevel {
     A, // Felaket (silah kontrolü) — %40 CPU, safety factor 1.5×
     B, // Tehlikeli (sensör)       — %30 CPU, safety factor 1.3×
@@ -57,6 +62,7 @@ pub enum DalLevel {
 
 impl DalLevel {
     /// DAL'a göre safety factor döner
+    #[allow(dead_code)] // Sertifikasyon dökümantasyonu — runtime'da apply_policy kullanır
     pub const fn safety_factor(&self) -> u32 {
         match self {
             DalLevel::A => 150, // 1.5× (×100 çarpanı, integer aritmetik)

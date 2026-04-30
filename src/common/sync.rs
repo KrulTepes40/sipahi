@@ -1,5 +1,5 @@
 //! Single-hart exclusive access wrapper — zero-cost, no synchronization.
-#![allow(dead_code)]
+// U-19 GÖREV 3: blanket #![allow(dead_code)] kaldırıldı — tekil işaretlenir
 
 use core::cell::UnsafeCell;
 
