@@ -58,6 +58,7 @@ mod verification {
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn wcet_ordering_consistent() {
+        // Hot path: trap-syscall-yield zinciri (≤ scheduler tick)
         assert!(WCET_YIELD <= WCET_CAP_INVOKE);
         assert!(WCET_CAP_INVOKE <= WCET_IPC_RECV);
         assert!(WCET_IPC_RECV <= WCET_IPC_SEND);
@@ -65,6 +66,21 @@ mod verification {
         assert!(WCET_TRAP_ENTRY <= WCET_TRAP_HANDLER);
         assert!(WCET_TRAP_HANDLER <= WCET_CONTEXT_SWITCH);
         assert!(WCET_CONTEXT_SWITCH <= WCET_SCHEDULER_TICK);
+
+        // U-18 GÖREV 4: Sıcak yol → kapasite zinciri.
+        // Token validate (cache miss) > scheduler tick — full broker validate
+        // pahalı (BLAKE3 MAC + nonce + expiry). Cache hit (10c) << validate (400c).
+        assert!(WCET_TOKEN_CACHE_HIT <= WCET_YIELD); // 10 ≤ 10 (sınır)
+        assert!(WCET_TOKEN_CACHE_HIT <= WCET_TOKEN_VALIDATE);
+        assert!(WCET_SCHEDULER_TICK <= WCET_TOKEN_VALIDATE);
+
+        // Compute servisi sıralama: copy < math < MAC < CRC (worst-case)
+        assert!(WCET_COMPUTE_COPY <= WCET_COMPUTE_MATH);
+        assert!(WCET_COMPUTE_MATH <= WCET_COMPUTE_MAC);
+        assert!(WCET_COMPUTE_MAC <= WCET_COMPUTE_CRC);
+        // Token validate hâlâ CRC'den ucuz (CRC bit-by-bit deterministik
+        // ama uzun; validate BLAKE3 hızlı + nonce/expiry sabit)
+        assert!(WCET_TOKEN_VALIDATE <= WCET_COMPUTE_CRC);
     }
 
     // ═══════════════════════════════════════════════════════
@@ -161,15 +177,28 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
-    // PROOF 10: DAL budget toplamı %100
+    // PROOF 10: DAL budget toplamı CYCLES_PER_TICK × DEFAULT_PERIOD_TICKS
+    // U-18 GÖREV 2: Tautoloji silindi — gerçek config sabitleri kullanılır
+    // (BUDGET_DAL_A/B/C/D toplamı periyot başına maksimum CPU bütçesini verir).
+    // 400K + 300K + 200K + 100K = 1,000,000 = CYCLES_PER_TICK × 10 (varsayılan periyot)
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
-    fn dal_budget_sum_100() {
-        let dal_a_pct: u32 = 40;
-        let dal_b_pct: u32 = 30;
-        let dal_c_pct: u32 = 20;
-        let dal_d_pct: u32 = 10;
-        assert!(dal_a_pct + dal_b_pct + dal_c_pct + dal_d_pct == 100);
+    fn dal_budget_sum_equals_period_capacity() {
+        use crate::common::config::{
+            BUDGET_DAL_A, BUDGET_DAL_B, BUDGET_DAL_C, BUDGET_DAL_D,
+            CYCLES_PER_TICK,
+        };
+        let total: u32 = BUDGET_DAL_A
+            .checked_add(BUDGET_DAL_B).unwrap()
+            .checked_add(BUDGET_DAL_C).unwrap()
+            .checked_add(BUDGET_DAL_D).unwrap();
+        assert!(total == 1_000_000);
+        // Toplam = 10 tick × CYCLES_PER_TICK (varsayılan periyot süresi)
+        assert!(total == CYCLES_PER_TICK.checked_mul(10).unwrap());
+        // Sıralama: DAL-A > DAL-B > DAL-C > DAL-D (kritiklik = bütçe önceliği)
+        assert!(BUDGET_DAL_A > BUDGET_DAL_B);
+        assert!(BUDGET_DAL_B > BUDGET_DAL_C);
+        assert!(BUDGET_DAL_C > BUDGET_DAL_D);
     }
 
     // ═══════════════════════════════════════════════════════
@@ -553,26 +582,48 @@ mod verification {
         assert!(v <= FailureMode::Shutdown as u8);
     }
 
+    /// U-18 GÖREV 3: Lockstep — pure fonksiyon kontratı.
+    /// apply_policy'nin lockstep doğrulaması (decide_action_fenced iki kez)
+    /// ancak decide_action pure ise anlamlıdır. Bu proof sembolik girdi için
+    /// iki çağrının bit-bit aynı sonuç verdiğini kanıtlar — eğer bu kırılırsa
+    /// runtime LockstepFail trigger'ı false-positive olur.
+    #[kani::proof]
+    fn decide_action_lockstep_pure() {
+        use crate::kernel::policy::decide_action;
+        let event: u8 = kani::any();
+        let rc: u8 = kani::any();
+        let dal: u8 = kani::any();
+        // Tüm input domain — pure fonksiyon: aynı (e, rc, dal) → aynı output
+        let a1 = decide_action(event, rc, dal);
+        let a2 = decide_action(event, rc, dal);
+        assert!(a1 as u8 == a2 as u8);
+    }
+
     // --- CAPABILITY ---
 
     /// Proof 92: Token expiry: expires=0 → asla expired olmaz
+    /// U-18 GÖREV 2: Tautoloji silindi — production fonksiyonu çağrılır
     #[kani::proof]
     fn token_expiry_zero_means_infinite() {
-        let expires: u32 = 0;
+        use crate::kernel::capability::broker::is_not_expired;
         let current_tick: u64 = kani::any();
-        let expired = expires > 0 && current_tick > expires as u64;
-        assert!(!expired);
+        // expires=0 → her zaman geçerli (sonsuz)
+        assert!(is_not_expired(0, current_tick));
     }
 
     /// Proof 93: Token expiry: expires > 0 ve tick > expires → expired
+    /// U-18 GÖREV 2: Tautoloji silindi — production fonksiyonu çağrılır
     #[kani::proof]
     fn token_expiry_detects_expired() {
+        use crate::kernel::capability::broker::is_not_expired;
         let expires: u32 = kani::any();
         kani::assume(expires > 0);
         let current_tick: u64 = kani::any();
         kani::assume(current_tick > expires as u64);
-        let expired = expires > 0 && current_tick > expires as u64;
-        assert!(expired);
+        // tick > expires → token expired (is_not_expired = false)
+        assert!(!is_not_expired(expires, current_tick));
+        // Boundary: tick == expires → hâlâ geçerli (<=)
+        assert!(is_not_expired(expires, expires as u64));
     }
 
     // --- SCHEDULER ---

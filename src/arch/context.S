@@ -76,9 +76,23 @@ switch_context:
     ret
 
 # ─── U-mode task trampoline ───
-# switch_context ret → buraya gelir (fresh task'larda ra = task_trampoline)
-# mepc ve mstatus zaten CSR'a yüklendi (yukarıdaki csrw)
-# mret → mepc (task entry), MPP=U → U-mode, MPIE→MIE
+# switch_context ret → buraya gelir (fresh task'larda ra = task_trampoline).
+# Bu yol trap.S `.restore_regs` exit sequence'ını ATLAR — dolayısıyla
+# mscratch ve sp burada manuel restore edilmeli, aksi halde:
+#   • mscratch = 0 (trap entry'de sıfırlandı, restore yok) → bir sonraki
+#     trap entry `csrrw sp, mscratch, sp` ile sp=0 yakalar → .nested_fault
+#   • sp = kernel_sp+offset (switch_context entry'sindeki kernel sp) →
+#     U-mode task kernel stack alanını "user stack" olarak kullanır
+#     (PMP entry 4 .data RW → kernel veri yapıları yazılabilir)
+# Sprint U-18 GÖREV 1: task_trampoline mscratch=kernel_sp ve sp=user_sp
+# atayarak start_first_task ile aynı invariant'ı kurar.
+# user_sp trap frame slot'undan (__stack_top - 16) okunur — switch_context
+# bu slotu yeni task'ın user_sp'siyle güncelledi.
+# mepc ve mstatus zaten CSR'a yüklendi (yukarıdaki csrw).
 .global task_trampoline
 task_trampoline:
+    la      t0, __stack_top
+    ld      t1, -16(t0)        # t1 = user_sp (switch_context update etti)
+    csrw    mscratch, t0       # mscratch = kernel_sp (= __stack_top)
+    mv      sp, t1             # sp = user_sp (kernel sp leak engellenir)
     mret

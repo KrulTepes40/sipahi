@@ -67,8 +67,12 @@ impl HashProvider for Blake3Provider {
 }
 
 // ═══════════════════════════════════════════════════════
-// Kani Proofs — Sprint 13 (Proof 69-70)
+// Kani Proofs — Sprint 13 (Proof 69-70), U-18 GÖREV 2: rename + symbolic input
 // ═══════════════════════════════════════════════════════
+// NOT: cfg(kani) stub gerçek BLAKE3 değil — key'in ilk 16 byte'ını döner.
+// Proof isimleri 'stub' olarak değiştirildi, gerçek BLAKE3 davranışı
+// iddia edilmiyor. Stub, memory safety ve API contract kanıtı için yeterli.
+// Production BLAKE3 davranışı blake3 crate'inin upstream test suite'inde.
 
 #[cfg(kani)]
 mod kani_proofs {
@@ -76,19 +80,20 @@ mod kani_proofs {
     use crate::common::crypto::provider::HashProvider;
 
     // ─────────────────────────────────────────────────────
-    // Kani Proof 69: keyed_hash çıkışı her zaman tam 16 byte, panik yok
+    // Kani Proof 69 (U-18 rename): stub bounded output, sembolik girdi, panik yok
     // ─────────────────────────────────────────────────────
     #[kani::proof]
-    fn blake3_output_16_bytes_no_panic() {
-        let key = [0xABu8; 32];
-        let data = [0x42u8; 64]; // tipik token boyutu
+    fn blake3_stub_bounded_no_panic() {
+        // Sembolik key + sembolik data — herhangi bir girdi kombinasyonu
+        let key: [u8; 32] = kani::any();
+        let data: [u8; 32] = kani::any(); // 64 yerine 32: Kani performans
 
         let result = Blake3Provider::keyed_hash(&key, &data);
 
         // Çıkış her zaman tam 16 byte (sabit dizi, overflow imkansız)
         assert!(result.len() == 16);
 
-        // Tüm indislere erişilebilir (bounds-safe)
+        // Tüm indislere erişilebilir (bounds-safe, panik yok)
         let mut i = 0;
         while i < 16 {
             let _ = result[i];
@@ -97,16 +102,38 @@ mod kani_proofs {
     }
 
     // ─────────────────────────────────────────────────────
-    // Kani Proof 70: Boş data ile keyed_hash — edge case, panik yok
+    // Kani Proof 70 (U-18 rename): boş data + sembolik key, panik yok
     // ─────────────────────────────────────────────────────
     #[kani::proof]
-    fn blake3_empty_data_no_panic() {
-        let key = [0u8; 32];
+    fn blake3_stub_empty_data_no_panic() {
+        let key: [u8; 32] = kani::any();
         let data: [u8; 0] = []; // boş mesaj (RFC 8032 TV1 senaryosu)
 
         let result = Blake3Provider::keyed_hash(&key, &data);
 
         // Boş input için de 16 byte çıkış (sabit boyut garantisi)
         assert!(result.len() == 16);
+    }
+
+    // ─────────────────────────────────────────────────────
+    // U-18 GÖREV 2: Yeni proof — stub deterministic (aynı input → aynı output)
+    // Bu, HashProvider trait kontratının testidir. Gerçek BLAKE3 davranışı değil,
+    // ama stub'ın da pure fonksiyon olduğunu kanıtlar (Kani için anlamlı: lockstep
+    // / cache invariant testlerinin geçerli olması için pure fonksiyon şart).
+    // ─────────────────────────────────────────────────────
+    #[kani::proof]
+    fn blake3_stub_deterministic() {
+        let key: [u8; 32] = kani::any();
+        let data: [u8; 16] = kani::any();
+
+        let h1 = Blake3Provider::keyed_hash(&key, &data);
+        let h2 = Blake3Provider::keyed_hash(&key, &data);
+
+        // Pure fonksiyon: aynı input → bit-bit aynı output
+        let mut i = 0;
+        while i < 16 {
+            assert!(h1[i] == h2[i]);
+            i += 1;
+        }
     }
 }

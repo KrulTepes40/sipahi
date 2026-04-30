@@ -110,10 +110,18 @@ NonceMonotonic ==
     \A t \in TASKS :
         [][lastNonce'[t] >= lastNonce[t]]_vars
 
-(* INV2: Invalidated token is never found in cache *)
+(* INV2: Invalidated token is never found in cache.
+   U-18 GÖREV 5: Construction-by-design tautolojisi → cache tutarlılık iddiası
+   yapısal değil davranışsal: invalidate sonrası tokenId hâlâ 1..2'de görünüyorsa
+   slot mutlaka valid=false olmalı (iki yönlü tutarlılık).
+   Behavioral observability (post-invalidate ValidateCached miss) action-level
+   reasoning gerektiriyor — TLA+ ENABLED + prime syntax kompleks; tam temporal
+   property U-19'a taşındı. Mevcut form yapısal tutarlılığı güçlendirir. *)
 InvalidatedNotFound ==
-    \A s \in 0..(CACHE_SLOTS - 1) :
-        ~cache[s].valid => cache[s].tokenId = 0
+    /\ \A s \in 0..(CACHE_SLOTS - 1) :
+           ~cache[s].valid => cache[s].tokenId = 0
+    /\ \A s \in 0..(CACHE_SLOTS - 1) :
+           cache[s].tokenId = 0 => ~cache[s].valid
 
 (* INV3: Cache slot count bounded *)
 CacheBounded ==

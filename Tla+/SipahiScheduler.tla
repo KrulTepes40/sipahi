@@ -147,10 +147,15 @@ DeadNeverScheduled ==
     \A t \in TASKS :
         []((state[t] = "Dead") => [](state[t] = "Dead"))
 
-(* INV3: Isolated task never becomes Ready/Running *)
+(* INV3: Isolated task never becomes Ready/Running.
+   U-18 GÖREV 5: Tip-tabanlı tautoloji yerine kalıcılık (permanence) iddiası.
+   Isolated state'i KALICI: degrade_system Isolated dışındaki DAL-C/D'yi
+   suspended yapar; Phase 1 periyot reset sadece Suspended → Ready yapar;
+   try_recover_from_degrade Isolated DAL-A/B varsa recovery iptal eder.
+   DeadNeverScheduled ile aynı temporal pattern (PROP2 stilinde). *)
 IsolatedNeverScheduled ==
-    \A t \in TASKS : state[t] = "Isolated" =>
-        state[t] \notin {"Ready", "Running"}
+    \A t \in TASKS :
+        []((state[t] = "Isolated") => [](state[t] = "Isolated"))
 
 (* INV4: Running task has the highest priority among ready tasks *)
 RunningHasHighestPriority ==
