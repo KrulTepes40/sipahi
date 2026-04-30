@@ -79,6 +79,7 @@ pub fn reset_restart_count(task_id: u8) {
 }
 
 /// Restart sayacını oku (test/debug için)
+#[allow(dead_code)] // U-17: production'da trace gate'li, sadece self-test build'de canlı
 pub(crate) fn get_restart_count(task_id: u8) -> u8 {
     if (task_id as usize) < MAX_TASKS {
         // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
@@ -154,8 +155,20 @@ pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureM
         0
     };
 
-    let action1 = decide_action_fenced(event as u8, count, dal);
-    let action2 = decide_action_fenced(event as u8, count, dal);
+    // U-17 GÖREV 3: Input'lara da black_box — CSE (Common Subexpression
+    // Elimination) ek güçlendirme. U-4'teki #[inline(never)] + black_box(r)
+    // çıktıyı koruyordu; bu input'ları da opaque yapıp derleyicinin iki
+    // çağrıyı "same args" görüp tek hesaba indirgemesini engelliyor.
+    let action1 = decide_action_fenced(
+        core::hint::black_box(event as u8),
+        core::hint::black_box(count),
+        core::hint::black_box(dal),
+    );
+    let action2 = decide_action_fenced(
+        core::hint::black_box(event as u8),
+        core::hint::black_box(count),
+        core::hint::black_box(dal),
+    );
     // Lockstep: iki çağrı aynı sonucu vermeli — farklıysa bellek bozulması
     let action = if action1 != action2 {
         // SEU / bit flip / glitch detected — forensics için blackbox log

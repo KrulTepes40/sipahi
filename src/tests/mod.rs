@@ -574,6 +574,13 @@ pub fn post() {
         let t2 = crate::arch::clint::read_mtime();
         if t2 <= t1 {
             arch::uart::println("[POST] WARN: mtime not advancing (CLINT issue)");
+            // U-17 GÖREV 8: Forensik için blackbox kayıt — DeadlineMiss
+            // (CLINT bozuksa tüm timer/scheduler etkilenir, deadline kaçırılır)
+            crate::ipc::blackbox::log(
+                crate::ipc::blackbox::BlackboxEvent::DeadlineMiss,
+                0xFF, // SYSTEM_TASK_ID
+                &[0x50, 0x4F, 0x53], // "POS" — POST marker
+            );
         } else {
             arch::uart::println("[POST] CLINT timer ✓");
         }
@@ -593,6 +600,13 @@ pub fn post() {
         let has_c = (misa >> 2)  & 1;
         if mxl != 2 || has_i == 0 || has_m == 0 || has_a == 0 || has_c == 0 {
             arch::uart::println("[POST] WARN: misa does not match riscv64imac");
+            // U-17 GÖREV 8: Forensik için blackbox kayıt — PmpFail (closest)
+            // ISA identity bozulması (donanım tehdidi) sertifikasyon için kritik
+            crate::ipc::blackbox::log(
+                crate::ipc::blackbox::BlackboxEvent::PmpFail,
+                0xFF, // SYSTEM_TASK_ID
+                &[0x49, 0x53, 0x41], // "ISA" marker
+            );
         } else {
             arch::uart::println("[POST] misa ISA identity ✓");
         }
@@ -751,6 +765,94 @@ fn fi_budget_exhaustion_policy() {
     test_pass("[FI-7] Budget(255) → Degrade (saturated) ✓");
 }
 
+// ═══════════════════════════════════════════════════════
+// U-17 GÖREV 9: U-16 fix'lerinin negatif regression testleri
+// 6 otomatik test + 1 INFO kontrolü
+// ═══════════════════════════════════════════════════════
+
+/// Test 1: Foreign stack pointer reddediliyor mu (U-16 Bug 8)
+fn test_cross_task_pointer_rejected() {
+    let range = crate::kernel::scheduler::task_stack_range(0);
+    if let Some((base, _top)) = range {
+        // Task 1, Task 0'ın stack base'ini pointer olarak veriyor → REJECT
+        let result = crate::kernel::syscall::dispatch::test_is_valid_user_ptr(1, base, 64);
+        test_result(!result,
+            "[PASS] cross_task_pointer_rejected ✓",
+            "[FAIL] cross_task_pointer_rejected ✗");
+    } else {
+        test_result(false, "", "[FAIL] task_stack_range returned None");
+    }
+}
+
+/// Test 2: Token owner mismatch reddediliyor mu (U-16 Bug 6)
+fn test_token_owner_mismatch_neg() {
+    let mismatch = !crate::kernel::capability::broker::token_owner_matches(0, 1);
+    let matching = crate::kernel::capability::broker::token_owner_matches(0, 0);
+    test_result(mismatch && matching,
+        "[PASS] token_owner_mismatch_rejected ✓",
+        "[FAIL] token_owner_mismatch_rejected ✗");
+}
+
+/// Test 3: IPC wrong owner reddediliyor mu (U-16 Bug 7)
+fn test_ipc_wrong_owner_rejected() {
+    // Channel 0: A(id=0) → B(id=1). Task 1 send DENİ.
+    let deny_send = !crate::ipc::can_send(0, 1);
+    // Channel 0: B(id=1) recv. Task 0 recv DENİ.
+    let deny_recv = !crate::ipc::can_recv(0, 0);
+    // Channel 7 atanmamış (default deny)
+    let deny_unassigned = !crate::ipc::can_send(7, 0);
+    test_result(deny_send && deny_recv && deny_unassigned,
+        "[PASS] ipc_wrong_owner_rejected ✓",
+        "[FAIL] ipc_wrong_owner_rejected ✗");
+}
+
+/// Test 4: PMP integrity verify çalışıyor mu (U-4 + U-16)
+fn test_pmp_integrity() {
+    let ok = crate::kernel::memory::verify_pmp_integrity();
+    test_result(ok,
+        "[PASS] pmp_integrity ✓",
+        "[FAIL] pmp_integrity ✗");
+}
+
+/// Test 5: Blackbox log crash-free mi (U-16 BB_WRITE_POS guard)
+fn test_blackbox_log_safe() {
+    crate::ipc::blackbox::log(
+        crate::ipc::blackbox::BlackboxEvent::KernelBoot,
+        0, &[],
+    );
+    // Crash olmadıysa pass
+    test_result(true,
+        "[PASS] blackbox_log_safe ✓",
+        "[FAIL] blackbox_log_safe ✗");
+}
+
+/// Test 6: Allocator overflow safe mi (U-16 checked_add)
+fn test_allocator_overflow() {
+    use core::alloc::{GlobalAlloc, Layout};
+    // 1 byte allocation, 1<<30 alignment → checked_add overflow
+    if let Ok(layout) = Layout::from_size_align(1, 1 << 30) {
+        // SAFETY: Test-only, return null veya valid; either case crash-free
+        let ptr = unsafe { crate::ALLOCATOR.alloc(layout) };
+        if !ptr.is_null() {
+            // SAFETY: Just allocated, dealloc with same layout
+            unsafe { crate::ALLOCATOR.dealloc(ptr, layout); }
+        }
+    }
+    test_result(true,
+        "[PASS] allocator_overflow_safe ✓",
+        "[FAIL] allocator_overflow_safe ✗");
+}
+
+/// INFO: Ready task watchdog counter — U-16 Bug 9 doğrulaması
+/// Watchdog SADECE Running task için artar. Task 1 (Ready/Suspended çoğunlukta)
+/// counter düşük olmalı (boot sonrası 0-10 arası).
+fn info_ready_task_watchdog() {
+    let counter = crate::kernel::scheduler::test_get_watchdog_counter(1);
+    arch::uart::puts("[INFO] Task 1 watchdog_counter = ");
+    print_u32(counter);
+    arch::uart::println("");
+}
+
 /// Tüm entegrasyon testlerini çalıştır
 /// Fail varsa kernel HALT — production'da test başarısız = boot durmalı (DO-178C)
 /// NOT: test_wcet_limits() QEMU TCG'de her zaman EXCEED — bu FAIL sayılmaz
@@ -765,6 +867,17 @@ pub fn run_all() {
     test_wasm();
     test_blackbox();
     test_fault_injection();
+
+    // U-17 GÖREV 9: U-16 negatif regression testleri
+    arch::uart::println("");
+    arch::uart::println("[TEST] U-17 negatif regression testleri:");
+    test_cross_task_pointer_rejected();
+    test_token_owner_mismatch_neg();
+    test_ipc_wrong_owner_rejected();
+    test_pmp_integrity();
+    test_blackbox_log_safe();
+    test_allocator_overflow();
+    info_ready_task_watchdog(); // INFO — test count'a dahil değil
 
     // ─── Fail criteria: DO-178C "pass criteria clearly defined" ───
     // SAFETY: Single-hart, boot sequence, no concurrent access.

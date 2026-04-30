@@ -60,6 +60,23 @@ jobs:
           -- -W clippy::undocumented_unsafe_blocks 2>&1 | tee unsafe_check.log
         continue-on-error: true
 
+      # U-17 GÖREV 6: Cargo.lock integrity (informational)
+      # build-std + --locked uyumsuzluk olabilir; sadece check ile bilgilendirme
+      - name: Verify Cargo.lock integrity (informational)
+        run: cargo check --locked 2>&1 || echo "WARN: --locked failed (build-std compat)"
+        continue-on-error: true
+
+      # U-17 GÖREV 4: Constant-time verification (informational)
+      # ct_eq_16 disassembly audit — LTO inline durumunda call-site kontrol
+      - name: Constant-time verification (informational)
+        run: |
+          if [ -f scripts/verify-ct-eq.sh ]; then
+            bash scripts/verify-ct-eq.sh
+          else
+            echo "verify-ct-eq.sh not found, skipping"
+          fi
+        continue-on-error: true
+
   qemu-test:
     name: QEMU Boot Test
     runs-on: ubuntu-latest
@@ -89,9 +106,12 @@ jobs:
       - name: Install QEMU
         run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
 
-      - name: Build
+      # U-17: QEMU self-test build (test suite + trace + debug-boot enabled)
+      # Production binary'de test yok — self-test feature explicitly ister
+      - name: Build (self-test feature)
         run: cargo build
           --release
+          --features self-test
           -Z build-std=core,alloc
           -Z build-std-features=compiler-builtins-mem
           --target riscv64imac-unknown-none-elf

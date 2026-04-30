@@ -92,6 +92,13 @@ fn is_valid_user_ptr(caller_task_id: u8, ptr: usize, size: usize) -> bool {
     }
 }
 
+/// U-17 GÖREV 9: Test-only helper — is_valid_user_ptr private, ama negatif
+/// test'lerde caller_hart erişimi gerekli. self-test feature gate'li.
+#[cfg(feature = "self-test")]
+pub(crate) fn test_is_valid_user_ptr(caller: u8, ptr: usize, size: usize) -> bool {
+    is_valid_user_ptr(caller, ptr, size)
+}
+
 type SyscallHandler = fn(usize, usize, usize, usize) -> usize;
 
 static SYSCALL_TABLE: [SyscallHandler; SYSCALL_COUNT] = [

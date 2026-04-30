@@ -103,7 +103,11 @@ pub fn find_code_section(bytes: &[u8]) -> Option<&[u8]> {
 /// Taranan aralıklar (bit-7 set olanlar güvenli; 0x43/0x44 de dahil):
 ///   0x43: f32.const   0x44: f64.const
 ///   0x8b–0xa6: f32/f64 aritmetik (bit-7 set → LEB128 terminali olamaz)
+///   0xa8–0xb1: i32/i64.trunc_f32/f64_s/u (float input → int) — U-17
 ///   0xb2–0xbf: float/int dönüşüm ve reinterpret
+///
+/// 0xFC prefix saturating truncation for has_float_opcodes scan loop
+/// içinde ayrıca kontrol edilir (sub-byte: 0x00..0x07).
 #[inline]
 pub fn is_float_opcode(b: u8) -> bool {
     matches!(b,
@@ -112,7 +116,9 @@ pub fn is_float_opcode(b: u8) -> bool {
         0x43 | 0x44 |       // f32.const, f64.const
         0x5b..=0x66 |       // f32/f64 comparisons (eq, ne, lt, gt, le, ge)
         0x8b..=0xa6 |       // f32/f64 aritmetik
-        0xb2..=0xbf         // float dönüşümleri
+        0xa8..=0xab |       // U-17: i32.trunc_f32/f64_s/u (float input)
+        0xae..=0xb1 |       // U-17: i64.trunc_f32/f64_s/u
+        0xb2..=0xbf         // float dönüşümleri (f32.convert, f64.convert ...)
     )
 }
 
@@ -130,23 +136,42 @@ pub fn has_float_opcodes_v1(bytes: &[u8]) -> bool {
     false
 }
 
+/// Bounded LEB128 decoder — max 5 byte (u32 range)
+/// Returns (decoded_value, bytes_consumed).
+/// None: out-of-bounds veya 5 byte'dan fazla continuation
+fn read_leb128_u32(code: &[u8], pos: usize) -> Option<(u32, usize)> {
+    let mut result: u32 = 0;
+    let mut shift: u32 = 0;
+    let mut bytes_read: usize = 0;
+    loop {
+        if pos + bytes_read >= code.len() { return None; }
+        if bytes_read >= 5 { return None; } // u32 max 5 byte LEB128
+        let byte = code[pos + bytes_read];
+        bytes_read += 1;
+        result |= ((byte & 0x7F) as u32) << shift;
+        if byte & 0x80 == 0 { break; }
+        shift += 7;
+    }
+    Some((result, bytes_read))
+}
+
+/// LEB128 byte sayısı atla — sadece byte count (value gerekmez)
+/// Tutarlılık için skip_instruction içinde kullanılır
+#[inline]
+fn skip_leb128(code: &[u8], pos: usize) -> Option<usize> {
+    let (_, n) = read_leb128_u32(code, pos)?;
+    Some(pos + n)
+}
+
 /// Instruction-aware skip — LEB128 immediate'leri atlayarak false positive önler
 fn skip_instruction(code: &[u8], pos: usize) -> Option<usize> {
     if pos >= code.len() { return None; }
     let op = code[pos];
     match op {
         // i32.const → signed LEB128 immediate
-        0x41 => {
-            let mut p = pos + 1;
-            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
-            if p < code.len() { Some(p + 1) } else { None }
-        }
+        0x41 => skip_leb128(code, pos + 1),
         // i64.const → signed LEB128 immediate
-        0x42 => {
-            let mut p = pos + 1;
-            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
-            if p < code.len() { Some(p + 1) } else { None }
-        }
+        0x42 => skip_leb128(code, pos + 1),
         // f32.const → 4 byte IEEE754
         0x43 => if pos + 5 <= code.len() { Some(pos + 5) } else { None },
         // f64.const → 8 byte IEEE754
@@ -154,21 +179,53 @@ fn skip_instruction(code: &[u8], pos: usize) -> Option<usize> {
         // block/loop/if → blocktype (1 byte)
         0x02..=0x04 => if pos + 2 <= code.len() { Some(pos + 2) } else { None },
         // br, br_if, call, local.get/set/tee, global.get/set, memory.size/grow → LEB128 index
-        0x0C | 0x0D | 0x10 | 0x20..=0x24 | 0x3F | 0x40 => {
-            let mut p = pos + 1;
-            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
-            if p < code.len() { Some(p + 1) } else { None }
+        0x0C | 0x0D | 0x10 | 0x20..=0x24 | 0x3F | 0x40 => skip_leb128(code, pos + 1),
+        // U-17: br_table 0x0E — count LEB128 + (count+1) label LEB128 + default
+        0x0E => {
+            let (count, b1) = read_leb128_u32(code, pos + 1)?;
+            let mut p = pos + 1 + b1;
+            // count + 1 labels (count target + 1 default)
+            // count u32 olduğu için count+1 overflow riski → checked_add
+            let total = count.checked_add(1)?;
+            let mut j: u32 = 0;
+            while j < total {
+                p = skip_leb128(code, p)?;
+                j += 1;
+            }
+            Some(p)
         }
         // load/store → 2× LEB128 (align + offset)
         0x28..=0x3E => {
-            let mut p = pos + 1;
-            // align
-            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
-            if p >= code.len() { return None; }
-            p += 1;
-            // offset
-            while p < code.len() && code[p] & 0x80 != 0 { p += 1; }
-            if p < code.len() { Some(p + 1) } else { None }
+            let p = skip_leb128(code, pos + 1)?;
+            skip_leb128(code, p)
+        }
+        // U-17: 0xFC prefix — saturating truncation (i32/i64.trunc_sat_f32/f64)
+        // Sub-opcode 0x00..0x07 = float trunc (REJECT), 0x08+ memory ops (LEB128'lı)
+        // skip_instruction çağrıldığında is_float_opcode hâlâ false → has_float
+        // scan loop içinde 0xFC ayrı kontrol gerekli (aşağıda has_float_opcodes).
+        // Burada sadece skip — sub-opcode + leb128'lar atlanır
+        0xFC => {
+            // Sub-opcode (LEB128, ama tipik <128 → 1 byte)
+            let (sub, b1) = read_leb128_u32(code, pos + 1)?;
+            let mut p = pos + 1 + b1;
+            // memory.copy = 0x0A (2 zero byte), memory.fill = 0x0B (1 zero byte)
+            // memory.init = 0x08 (data idx LEB + 0), data.drop = 0x09 (data idx LEB)
+            // Konservatif: sub <= 0x07 → 0 immediate (trunc_sat), 0x08+ → LEB'lar
+            match sub {
+                0x00..=0x07 => Some(p), // trunc_sat — no immediate
+                0x08 => {                // memory.init: data idx + reserved
+                    p = skip_leb128(code, p)?;
+                    if p < code.len() { Some(p + 1) } else { None }
+                }
+                0x09 => skip_leb128(code, p), // data.drop: data idx
+                0x0A => {                // memory.copy: 2 reserved bytes
+                    if p + 2 <= code.len() { Some(p + 2) } else { None }
+                }
+                0x0B => {                // memory.fill: 1 reserved byte
+                    if p < code.len() { Some(p + 1) } else { None }
+                }
+                _ => Some(p),            // diğer 0xFC sub-opcodes — konservatif
+            }
         }
         // Diğer tüm opcode'lar: 1 byte (immediate yok)
         _ => Some(pos + 1),
@@ -176,6 +233,7 @@ fn skip_instruction(code: &[u8], pos: usize) -> Option<usize> {
 }
 
 /// v2 instruction-level float tarama — LEB128 immediate atlanır
+/// U-17: 0xFC prefix saturating truncation (sub-opcode 0x00..0x07) reddet
 pub fn has_float_opcodes(bytes: &[u8]) -> bool {
     let code = match find_code_section(bytes) {
         Some(c) => c,
@@ -184,6 +242,17 @@ pub fn has_float_opcodes(bytes: &[u8]) -> bool {
     let mut pos = 0;
     while pos < code.len() {
         if is_float_opcode(code[pos]) { return true; }
+        // U-17: 0xFC prefix sub-opcode kontrolü — i32/i64.trunc_sat_f32/f64
+        if code[pos] == 0xFC && pos + 1 < code.len() {
+            // Sub-opcode LEB128 (tipik 1 byte için 0..127)
+            if let Some((sub, _)) = read_leb128_u32(code, pos + 1) {
+                if sub <= 0x07 {
+                    // 0x00..0x03: i32.trunc_sat_f32/f64_s/u
+                    // 0x04..0x07: i64.trunc_sat_f32/f64_s/u
+                    return true;
+                }
+            }
+        }
         pos = match skip_instruction(code, pos) {
             Some(next) => next,
             None => return false,
@@ -457,6 +526,42 @@ mod verification {
         let bytes = [42u8]; // 42 = 0x2a, bit-7 = 0, tek bayt
         let result = read_u32_leb128(&bytes);
         assert!(result == Some((42, 1)));
+    }
+
+    /// U-17 GÖREV 5: Float trunc opcode'lar tespit edilir
+    #[kani::proof]
+    fn float_trunc_detected() {
+        assert!(is_float_opcode(0xa8)); // i32.trunc_f32_s
+        assert!(is_float_opcode(0xa9)); // i32.trunc_f32_u
+        assert!(is_float_opcode(0xaa)); // i32.trunc_f64_s
+        assert!(is_float_opcode(0xab)); // i32.trunc_f64_u
+        assert!(is_float_opcode(0xae)); // i64.trunc_f32_s
+        assert!(is_float_opcode(0xaf)); // i64.trunc_f32_u
+        assert!(is_float_opcode(0xb0)); // i64.trunc_f64_s
+        assert!(is_float_opcode(0xb1)); // i64.trunc_f64_u
+    }
+
+    /// U-17 GÖREV 5: 0xa7 (i32.wrap_i64) integer — trunc aralığında değil
+    #[kani::proof]
+    fn integer_wrap_not_float() {
+        assert!(!is_float_opcode(0xa7)); // i32.wrap_i64 (integer)
+    }
+
+    /// U-17 GÖREV 5: read_leb128_u32 single-byte doğru
+    #[kani::proof]
+    fn leb128_u32_single_byte() {
+        let bytes = [42u8]; // 42 < 128, tek bayt
+        let result = read_leb128_u32(&bytes, 0);
+        assert!(result == Some((42, 1)));
+    }
+
+    /// U-17 GÖREV 5: read_leb128_u32 5-byte limit
+    #[kani::proof]
+    fn leb128_u32_max_5_bytes() {
+        // 6 byte continuation — None döner
+        let bytes = [0x80u8, 0x80, 0x80, 0x80, 0x80, 0x80];
+        let result = read_leb128_u32(&bytes, 0);
+        assert!(result.is_none());
     }
 
     /// Proof 63: Modül > 64KB → ModuleTooLarge hatası

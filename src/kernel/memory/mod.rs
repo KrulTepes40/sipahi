@@ -24,6 +24,7 @@
 // WASM arena: .wasm_arena section, M-mode only (U-mode deny)
 
 use crate::arch::pmp;
+#[cfg(feature = "debug-boot")]
 use crate::arch::uart;
 use crate::common::sync::SingleHartCell;
 
@@ -128,41 +129,45 @@ pub(crate) fn init_pmp() {
         addrs[7] = uart_end >> 2;
     }
 
-    // ─── Doğrulama çıktısı ───
-    uart::println("[PMP] Memory protection configured:");
+    // ─── Doğrulama çıktısı (debug-boot only, U-17 gate) ───
+    #[cfg(feature = "debug-boot")]
+    {
+        uart::println("[PMP] Memory protection configured:");
 
-    uart::puts("[PMP]   .text    RX  0x");
-    print_hex(text_start);
-    uart::puts(" - 0x");
-    print_hex(text_end);
-    uart::println("");
+        uart::puts("[PMP]   .text    RX  0x");
+        print_hex(text_start);
+        uart::puts(" - 0x");
+        print_hex(text_end);
+        uart::println("");
 
-    uart::puts("[PMP]   .rodata  R   0x");
-    print_hex(rodata_start);
-    uart::puts(" - 0x");
-    print_hex(rodata_end);
-    uart::println("");
+        uart::puts("[PMP]   .rodata  R   0x");
+        print_hex(rodata_start);
+        uart::puts(" - 0x");
+        print_hex(rodata_end);
+        uart::println("");
 
-    uart::puts("[PMP]   .data    RW  0x");
-    print_hex(data_start);
-    uart::puts(" - 0x");
-    print_hex(pmp_data_end);
-    uart::println("");
+        uart::puts("[PMP]   .data    RW  0x");
+        print_hex(data_start);
+        uart::puts(" - 0x");
+        print_hex(pmp_data_end);
+        uart::println("");
 
-    uart::puts("[PMP]   UART     RW  0x");
-    print_hex(uart_start);
-    uart::puts(" - 0x");
-    print_hex(uart_end);
-    uart::println("");
+        uart::puts("[PMP]   UART     RW  0x");
+        print_hex(uart_start);
+        uart::puts(" - 0x");
+        print_hex(uart_end);
+        uart::println("");
 
-    uart::puts("[PMP]   pmpcfg0 = 0x");
-    print_hex(pmp::read_pmpcfg0() as usize);
-    uart::println("");
-    uart::println("[PMP]   Catch-all: U-mode implicit DENY (RISC-V spec)");
-    uart::println("[PMP]   Task stacks: .task_stacks, per-task NAPOT Entry 8");
-    uart::println("[PMP]   WASM arena: .wasm_arena, M-mode only (U-mode deny)");
+        uart::puts("[PMP]   pmpcfg0 = 0x");
+        print_hex(pmp::read_pmpcfg0() as usize);
+        uart::println("");
+        uart::println("[PMP]   Catch-all: U-mode implicit DENY (RISC-V spec)");
+        uart::println("[PMP]   Task stacks: .task_stacks, per-task NAPOT Entry 8");
+        uart::println("[PMP]   WASM arena: .wasm_arena, M-mode only (U-mode deny)");
+    }
 }
 
+#[cfg(feature = "debug-boot")]
 use crate::common::fmt::print_hex;
 
 /// Task stacks bölgesi adres aralığı (trap handler stack overflow detection için)

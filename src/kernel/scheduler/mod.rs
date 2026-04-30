@@ -137,6 +137,12 @@ static DEGRADE_LOGGED: SingleHartCell<bool> = SingleHartCell::new(false);
 /// Sistem degrade modunda mı?
 static DEGRADED: SingleHartCell<bool> = SingleHartCell::new(false);
 
+// U-17 GÖREV 7: Degrade başlangıç tick'i — flapping (sürekli oscillation) önleme
+// degrade_system() çağrıldığında current_tick kaydedilir, try_recover en az
+// COOLDOWN_TICKS sonra gerçek recovery başlatır.
+static DEGRADE_TICK: SingleHartCell<u32> = SingleHartCell::new(0);
+const DEGRADE_COOLDOWN_TICKS: u32 = 100; // ~1s @10ms tick
+
 /// Şu anki çalışan task index'i
 static CURRENT_TASK: SingleHartCell<usize> = SingleHartCell::new(0);
 
@@ -498,6 +504,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             {
                 // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
                 let tid = unsafe { TASKS.get_mut()[task_id].id };
+                #[cfg(feature = "trace")]
                 if crate::kernel::policy::get_restart_count(tid) == 1 {
                     crate::arch::uart::println("[POLICY] RESTART (1) — periyot sonunda READY");
                 }
@@ -511,6 +518,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
         FailureMode::Isolate => {
             #[cfg(not(kani))]
             {
+                #[cfg(feature = "trace")]
                 crate::arch::uart::println("[POLICY] ISOLATE — task durduruldu");
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
@@ -527,6 +535,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             unsafe {
                 if !*DEGRADE_LOGGED.get() {
                     *DEGRADE_LOGGED.get_mut() = true;
+                    #[cfg(feature = "trace")]
                     crate::arch::uart::println("[POLICY] DEGRADE — DAL-C/D durduruldu");
                     crate::ipc::blackbox::log(
                         crate::ipc::blackbox::BlackboxEvent::PolicyDegrade,
@@ -555,7 +564,7 @@ fn apply_action(task_id: usize, mode: FailureMode) {
             degrade_system();
         }
         FailureMode::Alert => {
-            #[cfg(not(kani))]
+            #[cfg(all(not(kani), feature = "trace"))]
             crate::arch::uart::println("[POLICY] ALERT — operatör bildirildi, task devam");
         }
         FailureMode::Shutdown => {
@@ -602,6 +611,9 @@ fn degrade_system() {
     // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         *DEGRADED.get_mut() = true;
+        // U-17 GÖREV 7: Degrade başlangıç timestamp'i — recovery cooldown için
+        #[cfg(not(kani))]
+        { *DEGRADE_TICK.get_mut() = crate::ipc::blackbox::current_tick(); }
         let mut i: usize = 0;
         while i < *TASK_COUNT.get() {
             if TASKS.get_mut()[i].dal >= 2
@@ -623,6 +635,19 @@ fn try_recover_from_degrade() {
     // SAFETY: Single-hart.
     unsafe {
         if !*DEGRADED.get() { return; }
+
+        // U-17 GÖREV 7: Cooldown — recovery flapping önleme
+        // degrade'den en az 100 tick (~1s) sonra recovery'ye izin ver
+        #[cfg(not(kani))]
+        {
+            let current = crate::ipc::blackbox::current_tick();
+            let degrade_start = *DEGRADE_TICK.get();
+            // wrapping_sub güvenli — u32 wrap zaten 497 gün
+            if current.wrapping_sub(degrade_start) < DEGRADE_COOLDOWN_TICKS {
+                return; // cooldown süresinde, recover etme
+            }
+        }
+
         // DAL-A/B sağlıklı mı?
         let mut all_healthy = true;
         let mut i: usize = 0;
@@ -646,7 +671,7 @@ fn try_recover_from_degrade() {
                 TASKS.get_mut()[j].remaining_cycles =
                     TASKS.get_mut()[j].budget_cycles;
                 TASKS.get_mut()[j].state = TaskState::Ready;
-                #[cfg(not(kani))]
+                #[cfg(all(not(kani), feature = "trace"))]
                 crate::arch::uart::println(
                     "[POLICY] RECOVER — DAL-C/D restarted (original budget)"
                 );
@@ -744,6 +769,15 @@ pub(crate) fn current_task_id() -> u8 {
 }
 
 /// Sprint U-16: Task stack aralığını döndür — is_valid_user_ptr için kapsüllenmiş
+/// U-17 GÖREV 9: Test-only watchdog counter getter — INFO/test için
+/// task_id MAX_TASKS dışı → u32::MAX (sentinel)
+#[cfg(feature = "self-test")]
+pub fn test_get_watchdog_counter(task_id: usize) -> u32 {
+    if task_id >= MAX_TASKS { return u32::MAX; }
+    // SAFETY: Test-only, single-hart, bounds checked above.
+    unsafe { TASKS.get()[task_id].watchdog_counter }
+}
+
 /// erişim. Caller'ın sadece kendi stack'ine pointer vermesi zorunlu.
 /// Dead/Isolated/uninitialized task → None (default deny).
 pub(crate) fn task_stack_range(task_id: u8) -> Option<(usize, usize)> {
@@ -780,6 +814,7 @@ pub(crate) fn watchdog_kick() {
             if window > 0 && counter < window {
                 #[cfg(not(kani))]
                 {
+                    #[cfg(feature = "trace")]
                     crate::arch::uart::println("[WATCHDOG] WINDOW VIOLATION — kick too early");
                     crate::ipc::blackbox::log(
                         crate::ipc::blackbox::BlackboxEvent::WatchdogTimeout,

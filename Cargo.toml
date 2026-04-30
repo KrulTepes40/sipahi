@@ -16,7 +16,7 @@ iopmp = []                # IOPMP DMA koruması
 trace = []                # Debug trace (production'da KAPALI)
 debug-boot = []           # Boot sırasında [DBG] teşhis çıktıları (üretimde KAPALI)
 test-keys = []            # QEMU test key'leri (release'de sıfır key, production OTP)
-self-test = ["test-keys"] # Sprint U-16: boot-time test suite (production binary'de KAPALI)
+self-test = ["test-keys", "trace", "debug-boot"] # U-16/U-17: test + tüm UART output
 
 [dependencies]
 wasmi = { version = "1.0.9", default-features = false, features = ["prefer-btree-collections"] }
@@ -42,4 +42,4 @@ codegen-units = 1         # Tek derleme birimi (determinizm)
 overflow-checks = true    # Integer overflow → trap (safety-critical)
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys", "multi-hart", "self-test"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys", "multi-hart", "self-test", "trace", "debug-boot"))'] }

@@ -47,6 +47,7 @@ pub fn task_a() -> ! {
     let mut counter: u32 = 0;
     loop {
         counter = counter.wrapping_add(1);
+        #[cfg(feature = "trace")]
         if counter.is_multiple_of(50) {
             arch::uart::puts("[TASK-A] tick ");
             print_u32(counter);
@@ -62,6 +63,7 @@ pub fn task_b() -> ! {
     let mut counter: u32 = 0;
     loop {
         counter = counter.wrapping_add(1);
+        #[cfg(feature = "trace")]
         if counter.is_multiple_of(50) {
             arch::uart::puts("[TASK-B] tick ");
             print_u32(counter);
@@ -77,15 +79,18 @@ pub fn task_b() -> ! {
 #[cfg(not(kani))]
 #[no_mangle]
 pub extern "C" fn rust_main() -> ! {
-    arch::uart::println("=============================");
-    arch::uart::println("  Sipahi Microkernel v1.5");
-    arch::uart::println("  RISC-V 64 · RV64IMAC");
-    arch::uart::println("  Safety-Critical RTOS");
-    arch::uart::println("=============================");
-    arch::uart::println("");
-    arch::uart::println("[BOOT] Hart 0 active");
-    arch::uart::println("[BOOT] BSS cleared");
-    arch::uart::println("[BOOT] Stack initialized");
+    #[cfg(feature = "debug-boot")]
+    {
+        arch::uart::println("=============================");
+        arch::uart::println("  Sipahi Microkernel v1.5");
+        arch::uart::println("  RISC-V 64 · RV64IMAC");
+        arch::uart::println("  Safety-Critical RTOS");
+        arch::uart::println("=============================");
+        arch::uart::println("");
+        arch::uart::println("[BOOT] Hart 0 active");
+        arch::uart::println("[BOOT] BSS cleared");
+        arch::uart::println("[BOOT] Stack initialized");
+    }
 
     boot::init();
     // Sprint U-16: tests::run_all() sadece self-test feature build'de derlenir

@@ -300,6 +300,15 @@ pub(crate) fn get_tick() -> u64 {
     }
 }
 
+/// U-17 GÖREV 7: Tick getter — degrade cooldown vs gibi kullanımlar için
+/// BB_TICK private kalır, sadece bu fonksiyon ile dışarıdan okunabilir.
+/// Wrap-safe ek hesap için get_tick() (u48 effective) kullanılabilir.
+#[allow(dead_code)] // U-17: scheduler degrade cooldown'da kullanılıyor (gate'li)
+pub(crate) fn current_tick() -> u32 {
+    // SAFETY: Single-hart, read-only access.
+    unsafe { vol_read!(BB_TICK -> u32) }
+}
+
 // Compile-time guarantees
 const _: () = assert!(BLACKBOX_MAX_RECORDS <= 255);
 const _: () = assert!(core::mem::size_of::<BlackboxRecord>() == BLACKBOX_RECORD_SIZE);

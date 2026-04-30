@@ -17,6 +17,22 @@ pub const KERNEL_STACK_SIZE: usize = 16384; // 16KB
 /// Task stack boyutu (byte)
 pub const TASK_STACK_SIZE: usize = 8192; // 8KB
 
+/// Trap frame boyutu (byte) — trap.S addi sp,sp,-272 ile uyumlu
+/// 16 register × 8 byte + mcause + mepc + user_sp + padding = 272, 16-byte aligned
+pub const TRAP_FRAME_SIZE: usize = 272;
+
+/// User SP slot offset trap frame içinde — trap.S sd t0, 256(sp) ile uyumlu
+pub const TRAP_FRAME_USER_SP_OFFSET: usize = 256;
+
+// U-17 GÖREV 2: context.S compile-time invariant
+// context.S `__stack_top - 16` hardcoded — user_sp slot trap_frame içinde
+// offset 256'da. trap_frame 272 byte. user_sp slot uzaklığı = 272 - 256 = 16.
+// Bu sabitler arasındaki ilişki kırılırsa context switch sessizce bozulur.
+const _: () = assert!(
+    TRAP_FRAME_SIZE - TRAP_FRAME_USER_SP_OFFSET == 16,
+    "context.S user_sp slot offset mismatch: __stack_top - 16 invariant broken"
+);
+
 /// IPC mesaj boyutu (byte) — L1 cache line
 pub const IPC_MSG_SIZE: usize = 64;
 
