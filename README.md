@@ -10,11 +10,11 @@ A safety-critical hard real-time microkernel for RISC-V, written in Rust.
 
 ## Overview
 
-Sipahi is a bare-metal microkernel designed for DO-178C DAL-A avionics workloads. It provides:
+Sipahi is a bare-metal microkernel applying DO-178C DAL-A **design principles** for avionics workloads (not certified — see ARCHITECTURE.md "Formal Verification Scope & Limitations"). It provides:
 
 - **U-mode task isolation** — tasks run in User mode, kernel in Machine mode (mret transition, mscratch swap)
 - **Zero heap in kernel** — bump allocator confined to WASM sandbox only
-- **Formal verification** — 191 Kani harnesses + 7/7 TLA+ specs verified + 8 compile-time const asserts
+- **Formal verification** — 200 Kani bounded-model-checking harnesses + 7/7 TLA+ specs (35,770 distinct states) + 8+ compile-time const asserts. See ARCHITECTURE.md "Formal Verification Scope & Limitations" for what is and is not covered.
 - **PMP hardware protection** — 4 L-bit locked kernel regions (text RX, rodata R, data RW, UART RW) + per-task NAPOT stack isolation (Entry 8)
 - **Task memory isolation** — task stacks and WASM arena outside Entry 5 PMP coverage (Sprint U-5)
 - **Capability-based access control** — BLAKE3-keyed tokens with per-task nonce, cache TTL, replay guard, task-id isolated cache
@@ -81,9 +81,11 @@ make kani           # Formal verification (requires Kani)
 | Check | Status |
 |---|---|
 | `cargo clippy -- -D warnings` | 0 warnings |
-| Kani harnesses | 191 (90 symbolic, 101 concrete/compile-time) |
-| TLA+ specifications | 7/7 verified (TLC 2026.04 compatible) |
-| Compile-time asserts | 8 const asserts |
+| Kani harnesses | 200 (~100 symbolic, ~100 concrete/compile-time) |
+| TLA+ specifications | 7/7 verified with TLC v2.19 (35,770 distinct states) |
+| Compile-time asserts | 8+ const asserts |
+| Production binary | ~33 KB (`riscv64imac-unknown-none-elf` release, no UART trace) |
+| LOC | ~9.1 K Rust + ~321 ASM (RISC-V) |
 | `no_std` + `no alloc` in kernel | enforced |
 | Panic-free kernel | enforced (`overflow-checks = true`, no `unwrap`) |
 | `static mut` | 0 (all via `SingleHartCell<T>`) |
@@ -91,7 +93,10 @@ make kani           # Formal verification (requires Kani)
 | Per-task PMP | active (NAPOT Entry 8, reprogrammed on context switch) |
 | `cargo audit` | 0 CVE |
 | `cargo deny check` | advisories/bans/licenses/sources OK |
-| QEMU boot + test suite | ALL TESTS PASSED (HALT-on-failure) |
+| QEMU boot + test suite | ALL TESTS PASSED + 6 negative regression tests + 1 INFO check |
+| Negative regression tests | cross-task pointer / token owner / IPC ownership / PMP integrity / blackbox safe / allocator overflow |
+| CI jobs | clippy+build, QEMU self-test, cargo audit/deny, Kani full (master), Kani critical subset (PR) |
+| Production NF (nested fault) | 0 (U-18 task_trampoline mscratch/sp restore fix) |
 
 ---
 
@@ -114,7 +119,7 @@ make kani           # Formal verification (requires Kani)
 | 12 | WASM sandbox: wasmi 1.0.9, float-opcode rejection v2, fuel limit, bump allocator |
 | 13 | Secure boot: Ed25519 (RFC 8032), real BLAKE3 MAC (no-std), key provisioning |
 | 14 | `TaskState::Isolated`, GitHub Actions CI, debug-boot feature |
-| 1.5 | U-mode tasks, per-task PMP (NAPOT), windowed watchdog, policy lockstep, graceful degradation, POST, 177 Kani proofs (historical — post-U sprints: 191) |
+| 1.5 | U-mode tasks, per-task PMP (NAPOT), windowed watchdog, policy lockstep, graceful degradation, POST, 177 Kani proofs (historical — post-U sprints: 200) |
 | U-3 | Per-task PMP NAPOT activation, context-switch reprogramming |
 | U-4 | Lockstep CSE fix (black_box fence), boot capability, cache owner_task_id, pmpaddr shadow |
 | U-5 | PMP Entry 5 narrowing, `.task_stacks` + `.wasm_arena` sections, trap handler fault arms |
@@ -128,6 +133,11 @@ make kani           # Formal verification (requires Kani)
 | U-13 | CI 4-job (clippy+build, qemu-test, audit, kani), `deny.toml`, Post-Sprint Checklist, branch fix (main→master) |
 | U-14 | WASM float scanner v2 (load/store + comparisons), `compute_copy` stub guard, capability cache split (`invalidate_by_token` / `invalidate_by_owner`), blackbox `_pad` field, ct-eq audit script |
 | U-15 | WCET recalibration (TRAP 30→80, SCHED 80→350, CRC 120→1500), POST CLINT timer + misa, MPP verify before dispatch, IPC CRC opt-in clarification, metric sweep |
+| U-16 | IPC channel ownership (producer/consumer assigned, sealed at boot), token owner enforcement, ready-task watchdog fix, task-specific user pointer validation |
+| U-17 | Determinism + UART gating (production binary 42 KB → 33 KB), policy lockstep `black_box` fence, WASM float scanner extension (i32/i64.trunc + 0xFC saturating), 6 negative regression tests, 4 new Kani proofs (LEB128 + trunc) |
+| U-18 | **NF root cause fix** (task_trampoline mscratch/sp restore — production was nested-faulting on first context switch), Kani proof quality upgrade (4 tautologies → real production fn calls, +2 proofs: lockstep purity + BLAKE3 stub determinism), TLA+ scope strengthened (IsolatedNeverScheduled temporal permanence, InvalidatedNotFound bidirectional consistency) |
+| U-19 | Magic numbers → config constants (`SYSTEM_TASK_ID`, `KERNEL_BOOT_ID`, `CHANNEL_UNASSIGNED`), `halt_system()` helper consolidation (~11 sites), blanket `dead_code` cleanup, allocator SAFETY rewrite, defensive bounds on `print_*`, `pub mod ipc` tightening, IPC tail wrapping consistency, scheduler pure helpers (`is_selectable_by_scheduler`, `should_watchdog_timeout`) used by both production and Kani Proofs 71 + 95, `task_trampoline` caller-saved register clear (info-leak hardening) |
+| U-20 | Documentation polish: DAL-A "certified" → "design principles", WASM float scanner doc with explicit opcode ranges + limitations, `WCET_TASK_INFO` constant + ordering proof extension, Kani PR fast-path CI job (5 critical proofs), formal verification scope/limitations section, README/ARCHITECTURE metric refresh — Sipahi v1.0 final polish |
 
 ---
 

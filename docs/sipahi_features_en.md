@@ -1,7 +1,7 @@
 # Sipahi Microkernel — Technical Feature Document
 
-**Version:** v1.5 · **Architecture:** RISC-V RV64IMAC · **Language:** Rust no_std  
-**Total:** ~8,315 Rust + ~265 ASM lines · 42 source files · 191 Kani harnesses · 7/7 TLA+ verified  
+**Version:** v1.0 (post-U-20) · **Architecture:** RISC-V RV64IMAC · **Language:** Rust no_std
+**Total:** ~9,132 Rust + ~321 ASM lines · 200 Kani harnesses · 7/7 TLA+ verified (35,770 distinct states)
 **Philosophy:** Maximum speed while preserving determinism. Zero heap, zero panic, zero float.
 
 ---
@@ -18,11 +18,11 @@ Rust was chosen over C because Rust's ownership system guarantees memory safety 
 
 ### 1.3 Why No Floating-Point?
 
-IEEE 754 floating-point arithmetic can be non-deterministic — the same computation may produce different results on different hardware (rounding mode, denormalized number handling). This is unacceptable in safety-critical systems. Sipahi performs all computations in Q32.32 fixed-point (`i64`): ±2³¹ range, ~2.3×10⁻¹⁰ precision. If float opcodes are detected in WASM modules, the module is rejected — `is_float_opcode()` scans the 0x43–0xBF range.
+IEEE 754 floating-point arithmetic can be non-deterministic — the same computation may produce different results on different hardware (rounding mode, denormalized number handling). This is unacceptable in safety-critical systems. Sipahi performs all computations in Q32.32 fixed-point (`i64`): ±2³¹ range, ~2.3×10⁻¹⁰ precision. If float opcodes are detected in WASM modules, the module is rejected — `is_float_opcode()` is a byte-level heuristic scanning the 0x2a-0xbf range plus 0xFC-prefix saturating truncation sub-opcodes (NOT a full WASM grammar parser; see §10.3 for details).
 
 ### 1.4 Why Microkernel?
 
-Microkernel over monolithic because the attack surface is small. The kernel contains only the scheduler, IPC, capability, policy, and trap handler. WASM sandbox, blackbox, and secure boot run outside the kernel. If a component crashes, the kernel stays alive. A small, verifiable kernel is required for DO-178C DAL-A certification — 191 Kani harnesses (90 symbolic proofs + 101 concrete/compile-time assertions) and 7/7 TLA+ specs formally verify critical invariants (scheduler selection correctness, policy escalation, IPC integrity, memory safety).
+Microkernel over monolithic because the attack surface is small. The kernel contains only the scheduler, IPC, capability, policy, and trap handler. WASM sandbox, blackbox, and secure boot run outside the kernel. If a component crashes, the kernel stays alive. A small, verifiable kernel is required for DO-178C DAL-A **design principles** (NOT a certification claim — see ARCHITECTURE.md "Formal Verification Scope & Limitations") — 200 Kani harnesses (~100 symbolic + ~100 concrete/compile-time assertions) and 7/7 TLA+ specs verify critical invariants (scheduler selection correctness, policy escalation, IPC integrity, memory safety) via bounded model checking.
 
 ---
 
@@ -81,7 +81,7 @@ NAPOT task stack protection has been tested on QEMU virt machine. QEMU PMP granu
 
 ### 4.1 Fixed-Priority Preemptive Scheduler
 
-Sipahi uses a fixed-priority preemptive scheduler. Fixed priority over round-robin or EDF (Earliest Deadline First) because WCET analysis is simpler and preferred for DO-178C certification. Priority 0 = highest (DAL-A), priority 15 = lowest (DAL-D).
+Sipahi uses a fixed-priority preemptive scheduler. Fixed priority over round-robin or EDF (Earliest Deadline First) because WCET analysis is simpler and preferred under DO-178C **design principles**. Priority 0 = highest (DAL-A), priority 15 = lowest (DAL-D).
 
 **select_highest_priority()** performs an O(N) linear scan (N = MAX_TASKS = 8). Hash tables or priority queues were not used because the overhead is unnecessary for 8 tasks and worst case = best case = 8 iterations. Branchless — always scans all tasks, constant-time guarantee.
 
@@ -125,9 +125,11 @@ Function pointer table for 5 syscalls: `cap_invoke`, `ipc_send`, `ipc_recv`, `yi
 
 ### 5.2 Pointer Validation
 
-`is_valid_user_ptr()` applies five-layer validation: null check, `checked_add` overflow protection, kernel memory boundary (`ptr < kernel_end`), RAM upper bound (`end > RAM_END`), 8-byte alignment check.
+`is_valid_user_ptr(caller_task_id, ptr, size)` is task-specific and default-deny. It rejects null pointers, uses `checked_add` to catch overflow, then accepts the range only if it is fully inside the caller task's own stack NAPOT range returned by `scheduler::task_stack_range(caller_task_id)`. Dead/isolated/missing tasks have no valid user pointer range.
 
-**Why RAM_END check?** Without it, absurd addresses like 0xFFFF_FFFF_FFFF_0000 would be considered valid. PMP would block it, but having the kernel accept the pointer and then fall into a PMP trap makes WCET unpredictable.
+Alignment is enforced by the IPC syscall handlers before copying messages. Cross-task pointers are rejected even if they point into another valid task stack.
+
+**Why task-specific instead of a broad RAM_END check?** A global RAM range can accidentally bless another task's stack. The syscall boundary must prove "this pointer belongs to the caller", not merely "this pointer is somewhere in RAM." That keeps pointer checks deterministic and enforces task isolation before PMP ever has to trap.
 
 ### 5.3 WCET Measurement
 
@@ -290,9 +292,28 @@ Wasmi interpreter — register-based bytecode, deterministic execution. Interpre
 
 Each WASM instruction consumes 1 fuel. When fuel is exhausted, execution stops. Infinite loops are impossible — proven by Kani liveness proof. Dual-layer protection together with budget enforcement.
 
-### 10.3 Float Opcode Rejection
+### 10.3 Float Opcode Rejection (byte-level heuristic — NOT a full WASM decoder)
 
-`validate_module()` scans all opcodes when loading a module. If a float opcode is found in the 0x43–0xBF range, `Err(FloatOpcodes)` → module rejected. `skip_instruction()` correctly skips LEB128 immediates and fixed-size operands (f32.const → 5B, f64.const → 9B) — buffer overread is impossible with bounds checking (found and fixed via Kani proof).
+`validate_module()` scans the byte stream when loading a module. Rejected opcode ranges:
+
+- `0x2a-0x2b`: `f32/f64.load`
+- `0x38-0x39`: `f32/f64.store`
+- `0x43-0x44`: `f32/f64.const`
+- `0x5b-0x66`: f32/f64 comparisons
+- `0x8b-0xa6`: f32/f64 arithmetic
+- `0xa8-0xab`: `i32.trunc_f32/f64_s/u` (added in U-17)
+- `0xae-0xb1`: `i64.trunc_f32/f64_s/u` (added in U-17)
+- `0xb2-0xbf`: float conversions
+- `0xFC` prefix sub-opcodes `0x00-0x07`: saturating truncation (added in U-17)
+
+If matched, returns `Err(FloatOpcodes)` → module rejected.
+
+`skip_instruction()` skips LEB128 immediates (max 5-byte u32) and fixed-size operands (f32.const → 5B, f64.const → 9B); `0x0E br_table` reads LEB128 count + (count+1) labels — buffer overread impossible with bounds checking (verified by multiple Kani proofs).
+
+**Limitations:**
+- Float opcodes inside dead code are also rejected (false positive — accepted trade-off, soundness > completeness)
+- Multi-byte instruction boundary heuristic — NOT a full WASM grammar parser
+- Float byte patterns inside encoded constants may trigger false positives (planned to switch to wasmparser, v1.5 target)
 
 ### 10.4 BumpAllocator
 
@@ -344,26 +365,26 @@ Timer interrupt (code=7) → increment tick, call scheduler. ecall → syscall d
 
 ## 14. Boot Sequence
 
-`_start` (boot.S) → hart 0 selection → BSS clear → stack setup → `rust_main`. `rust_main` (boot.rs) → PMP init → UART init → Timer init → task creation → test suite → scheduler start. Multi-hart: harts other than 0 park with `wfi`.
+`_start` (boot.S) → hart 0 selection → BSS clear → stack setup → `rust_main`. `rust_main` runs `boot::init()` (mtvec, PMP, blackbox, capability key, secure boot, tasks, IPC ownership/seal), optional self-test code when `self-test` is enabled, then `boot::start()` enables the timer and enters the scheduler. Multi-hart: harts other than 0 park with `wfi`.
 
 ---
 
-## 15. Formal Verification — 191 Kani Harnesses + 7/7 TLA+
+## 15. Formal Verification — 200 Kani Harnesses + 7/7 TLA+
 
 ### 15.1 Proof Distribution
 
 | Module | Proofs | Coverage |
 |--------|--------|----------|
-| verify.rs (global) | 67 | DAL, PMP, memory, cross-module invariants |
-| sandbox (mod+allocator) | 20+1 | LEB128, float scanning (U-14: load/store + comparisons), bounds safety, allocator overlap |
+| verify.rs (global) | 68 | DAL, PMP, memory, cross-module invariants |
+| sandbox (mod+allocator) | 24+1 | LEB128, float scanning (U-14/U-17: load/store, comparisons, br_table, 0xFC), bounds safety, allocator overlap |
 | dispatch | 18 | Syscall table, pointer rejection, dispatch fuzzing |
 | scheduler | 17 | Selection correctness, Isolated/Dead never selected, watchdog, priority |
-| ipc (mod+blackbox) | 15+14 | CRC roundtrip, channel bounds, ring buffer wrap, blackbox record/CRC/wrap |
+| ipc (mod+blackbox) | 17+14 | CRC roundtrip, channel ownership/bounds, ring buffer wrap, blackbox record/CRC/wrap |
 | policy | 14 | Escalation chains, PMP→Shutdown, livelock freedom |
-| capability (mod+broker+cache) | 15+2+2 | Token encoding, cache, invalidation by token/owner (U-14), nonce, ct_eq_16 |
-| crypto | 2 | BLAKE3 API memory safety (Kani stub) — cryptographic correctness via external audit |
+| capability (mod+broker+cache) | 15+3+2 | Token encoding, cache, invalidation by token/owner (U-14), owner binding, nonce, ct_eq_16 |
+| crypto | 3 | BLAKE3 API memory safety/determinism (Kani stub) — cryptographic correctness via external audit |
 | hal (iopmp+key+boot) | 2+1+1 | IOPMP boundary, key size, secure boot |
-| **Total** | **191** | 90 symbolic proofs (explore state space via kani::any) + 101 concrete/compile-time assertions |
+| **Total** | **200** | ~100 symbolic proofs (explore state space via kani::any) + ~100 concrete/compile-time assertions |
 
 ### 15.2 High-Value Proofs
 
@@ -456,7 +477,7 @@ All tests print results via UART: `✓` passed, `✗` failed.
 
 ### 20.2 POST — Power-On Self Test
 
-Runs before the test suite. If any single test fails, the scheduler does not start — halts with `wfi` loop. PBIT (Power-on Built-In Test) is mandatory for DO-178C DAL-A.
+Runs before the test suite. If any single test fails, the scheduler does not start — halts with `wfi` loop. PBIT (Power-on Built-In Test) is recommended under DO-178C DAL-A **design principles**.
 
 - **CRC32 engine**: Known vector "123456789" → `0xCBF43926` (IEEE 802.3). If mismatch, the CRC engine is corrupted — all integrity checks are unreliable. HALT.
 - **PMP integrity**: The actual register is read via `read_pmpcfg0()` and compared with the shadow saved at boot. Mismatch = register corruption. HALT.
@@ -549,9 +570,9 @@ Heap-free format functions for debug output over UART: `print_u32` (decimal), `p
 - **Toolchain:** Rust nightly-2026-03-01, riscv64imac-unknown-none-elf target
 - **Build:** `make build` (build-std flags), `cargo clippy -- -D warnings` (target in config.toml)
 - **Run:** `make run` (QEMU 8.2.2 virt machine, -bios none, 512MB RAM)
-- **Verify:** `cargo kani` (191 harnesses), const assert (8 compile-time checks), TLC (7 TLA+ specs)
+- **Verify:** `cargo kani` (200 harnesses), const assert (8+ compile-time checks), TLC v2.19 (7 TLA+ specs, 35,770 states)
 - **Supply chain:** `cargo audit` (RustSec CVE scan, 0 CVE) + `cargo deny check` (license/bans/sources policy)
-- **CI:** GitHub Actions 4 jobs — clippy+build, QEMU boot test (HALT criteria), supply chain audit, Kani (master push only)
+- **CI:** GitHub Actions 5 jobs — clippy+build, QEMU self-test, supply chain audit, Kani full (master push), Kani critical subset (PR)
 - **WASM:** Wasmi 1.0.9, `default-features = false`, `prefer-btree-collections`
 - **Crypto:** BLAKE3 (`fast-crypto` feature), Ed25519 (`fast-sign` feature, `ed25519-dalek`)
 
@@ -650,9 +671,9 @@ When a U-mode task executes an illegal instruction, the trap handler sends a `Wa
 
 ---
 
-## Appendix 6. IPC Head wrapping_add Safety
+## Appendix 6. IPC Head/Tail wrapping_add Safety
 
-`head.wrapping_add(1)` instead of `head + 1` — prevents panic at u16::MAX with `overflow-checks = true`. Modulo still works correctly (Kani proof: `ipc_ring_buffer_wrap_never_exceeds_slots`).
+`head.wrapping_add(1)` and `tail.wrapping_add(1)` instead of `+ 1` — prevents panic at u16::MAX with `overflow-checks = true`. Modulo still works correctly (Kani proof: `ipc_ring_buffer_wrap_never_exceeds_slots`).
 
 ---
 
@@ -668,4 +689,4 @@ When a U-mode task executes an illegal instruction, the trap handler sends a `Wa
 
 Kani verifies at function level, TLA+ at system level. They answer different questions and complement each other. In Sprint U-12 all specs were brought to TLC 2026.04 compatibility (tick bound → StateConstraint, bounded message IDs, WF→SF fairness adjustments).
 
-*Sipahi Microkernel v1.5 — 191 Kani Harnesses · 7/7 TLA+ Verified · 12 Hardening Features · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 5/7 Security Walls Active*
+*Sipahi Microkernel v1.0 (post-U-20) — 200 Kani Harnesses · 7/7 TLA+ Verified · 18 Hardening Sprints (U-3..U-20) · 0 Clippy Warnings · 0 Runtime Panics · 0 Heap Allocations (kernel) · 0 Production Nested Faults*

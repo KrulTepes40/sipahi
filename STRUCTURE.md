@@ -1,16 +1,16 @@
-# Sipahi v1.5 — File Structure
+# Sipahi v1.0 (post-U-20) — File Structure
 
 ```
 sipahi/
 ├── .cargo/config.toml           # riscv64imac-unknown-none-elf target + QEMU runner
-├── .github/workflows/ci.yml     # GitHub Actions: build + qemu-test + audit + kani
+├── .github/workflows/ci.yml     # GitHub Actions: build, QEMU self-test, audit, Kani full + PR subset
 ├── deny.toml                    # cargo-deny policy (licenses, bans, sources)
 ├── src/
-│   ├── main.rs                  # Entry point, task_a/task_b, panic handler (~113 lines)
-│   ├── boot.rs                  # Boot sequence: PMP, HAL, task creation, timer (~85 lines)
-│   ├── verify.rs                # Kani formal verification harnesses (~925 lines)
+│   ├── main.rs                  # Entry point, task_a/task_b, panic handler
+│   ├── boot.rs                  # Boot sequence: mtvec, PMP, blackbox, capability, tasks, IPC, timer
+│   ├── verify.rs                # Cross-module Kani formal verification harnesses
 │   ├── tests/
-│   │   └── mod.rs               # POST + integration + FI tests (~785 lines)
+│   │   └── mod.rs               # POST + integration + FI + negative regression tests
 │   ├── arch/                    # Layer 0: RISC-V hardware
 │   │   ├── boot.S               # _start → BSS clear → stack → rust_main
 │   │   ├── trap.S               # Trap frame save/restore (34 registers)
@@ -76,27 +76,27 @@ sipahi/
 │   ├── SipahiIPC.tla + .cfg
 │   └── SipahiScheduler.tla + .cfg
 └── docs/
-    ├── sipahi_context.md        # New-chat context doc (design rationale, build commands)
-    ├── sipahi_features_tr.md    # Technical features (Turkish, ~650 lines)
-    └── sipahi_features_en.md    # Technical features (English, ~650 lines)
+    ├── sipahi_context.md        # New-chat context doc (local-only, not tracked in repo)
+    ├── sipahi_features_tr.md    # Technical features (Turkish)
+    └── sipahi_features_en.md    # Technical features (English)
 ```
 
 ## Stats
 
 | Metric | Value |
 |---|---|
-| Source lines (Rust) | ~8,315 |
-| Source lines (ASM) | ~265 |
+| Source lines (Rust) | ~9,132 |
+| Source lines (ASM) | ~321 |
 | `.rs` files | 39 |
 | `.S` files | 3 |
-| Kani harnesses | 191 (90 symbolic, 101 concrete/compile-time) |
-| Compile-time asserts | 8 |
+| Kani harnesses | 200 (~100 symbolic, ~100 concrete/compile-time) |
+| Compile-time asserts | 8+ |
 | `static mut` count | 0 |
-| `unsafe` blocks | 123 (95 documented with `// SAFETY:`) |
-| TLA+ specs | 7 (all verified — Sprint U-12: TLC 2026.04 compatibility fixes) |
-| TLA+ lines | ~1,030 |
-| Sprints completed | 16 core (0–14 + 1.5) + 12 security (U-3 … U-15, U-7 skipped) = 28 |
-| CI jobs | 4 (clippy+build, qemu-test, audit, kani) |
+| `unsafe` blocks | ~131 (majority documented with `// SAFETY:`; remaining sites tracked by U-20 audit) |
+| TLA+ specs | 7/7 verified with TLC v2.19 (35,770 distinct states) |
+| TLA+ lines | 1,093 |
+| Sprints completed | Core 0–14 + U-3 … U-20 hardening/polish |
+| CI jobs | 5 (clippy+build, qemu self-test, audit, Kani full, Kani PR subset) |
 | Supply chain | `cargo audit` (0 CVE) + `cargo deny` (license/bans/sources) |
 
 ## Post-Sprint Checklist

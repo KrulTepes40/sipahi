@@ -164,12 +164,14 @@ pub fn print_wcet_stats() {
 #[allow(dead_code)] // WCET self-test API — FPGA ölçüm sonrası entegre edilecek
 pub fn check_wcet_limits() -> bool {
     use crate::common::config;
+    // U-20 GÖREV 5: SYS_TASK_INFO için WCET_SCHEDULER_TICK fallback'ı yerine
+    // dedicated WCET_TASK_INFO sabiti — gerçekçi limit (15c, struct read).
     let limits: [u64; SYSCALL_COUNT] = [
-        config::WCET_CAP_INVOKE,
-        config::WCET_IPC_SEND,
-        config::WCET_IPC_RECV,
-        config::WCET_YIELD,
-        config::WCET_SCHEDULER_TICK,
+        config::WCET_CAP_INVOKE,  // SYS_CAP_INVOKE (0)
+        config::WCET_IPC_SEND,    // SYS_IPC_SEND (1)
+        config::WCET_IPC_RECV,    // SYS_IPC_RECV (2)
+        config::WCET_YIELD,       // SYS_YIELD (3)
+        config::WCET_TASK_INFO,   // SYS_TASK_INFO (4)
     ];
     // SAFETY: Single-hart, no concurrent mutation.
     unsafe {

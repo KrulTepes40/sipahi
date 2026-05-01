@@ -182,7 +182,7 @@ jobs:
         run: cargo deny check
 
   kani:
-    name: Kani Formal Verification
+    name: Kani Formal Verification (full)
     runs-on: ubuntu-latest
     # Sadece master push'unda çalışır — PR'larda 40 dk beklenmez
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -208,3 +208,55 @@ jobs:
 
       - name: Run all Kani harnesses
         run: cargo kani
+
+  kani-fast:
+    name: Kani Critical Subset (PR)
+    runs-on: ubuntu-latest
+    # PR'larda hızlı sanity check — full Kani master'da çalışır
+    # U-20 GÖREV 6: ~5 kritik proof, dakikalar mertebesinde tamamlanır
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # U-20: cargo build cache eksikti — her PR sıfırdan derliyordu.
+      # Build job ile aynı key (Cargo.lock hash) → kullanılabiliyorsa shared cache.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Cache Kani
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-kani
+            ~/.kani
+          key: kani-${{ runner.os }}-v1
+
+      - name: Install Kani (if not cached)
+        run: |
+          if ! command -v cargo-kani &> /dev/null; then
+            cargo install --locked kani-verifier
+            cargo kani setup
+          fi
+
+      # U-20 fix: 5 ayrı `cargo kani --harness X` çağrısı = 5 ayrı rebuild
+      # (deps + blake3 + ed25519-dalek her seferinde recompile). Tek
+      # invocation ile multiple --harness flag → tek build, 5 harness.
+      # Kani docs: "Use `--harness <NAME>` ... You can specify this option
+      # multiple times to run multiple harnesses."
+      - name: Run critical proof subset (single build)
+        run: |
+          cargo kani \
+            --harness wcet_ordering_consistent \
+            --harness token_owner_mismatch_always_rejected \
+            --harness decide_action_lockstep_pure \
+            --harness isolated_task_never_becomes_ready \
+            --harness watchdog_limit_zero_disables

@@ -136,8 +136,14 @@ pub const WCET_IPC_SEND: u64 = 60;
 /// Rounded up.
 pub const WCET_IPC_RECV: u64 = 40;
 
-/// yield / task_info WCET — estimated at 10c, FPGA pending.
+/// yield WCET — estimated at 10c, FPGA pending.
 pub const WCET_YIELD: u64 = 10;
+
+/// task_info WCET — estimated at 15c, FPGA pending.
+/// U-20 GÖREV 5: Önceden WCET_YIELD ile birlikte 10c sayılıyordu — task_info
+/// scheduler::query_task_info çağırıyor, küçük struct read + bitfield pack;
+/// yield'dan biraz daha pahalı ama yine de küçük (≤ scheduler tick).
+pub const WCET_TASK_INFO: u64 = 15;
 
 // ═══════════════════════════════════════════════════════
 // Syscall ID'leri (Sprint 7'de kullanılacak)

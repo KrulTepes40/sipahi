@@ -51,19 +51,69 @@ No other circular dependencies exist.
 - Zero floating-point (Q32.32 fixed-point, WASM float opcodes rejected)
 - Zero recursion (bounded stack)
 - Zero `static mut` (all via `SingleHartCell<T>`)
-- 123 `unsafe` blocks, 95 documented with `// SAFETY:` (CI informational check enforces growth)
+- ~131 `unsafe` blocks, majority documented with `// SAFETY:` (CI informational check reports undocumented blocks via `continue-on-error: true` — advisory, not enforced)
 
 ## Formal Verification
 
-- Kani: 191 bounded model checking harnesses
-  (90 symbolic proofs, 101 concrete/compile-time assertions)
-- TLA+: 7 specifications, all verified (Sprint U-12: TLC 2026.04 compatibility)
-- Compile-time: 8 `const assert!` (layout, size, config invariants)
+- Kani: 200 bounded model checking harnesses (~100 symbolic, ~100 concrete/compile-time)
+- TLA+: 7 specifications, all verified with TLC v2.19 (35,770 distinct states total)
+- Compile-time: 8+ `const assert!` (layout, size, config invariants)
 - Clippy: zero warnings (`-D warnings`)
 - Overflow checks: enabled in release (`overflow-checks = true`)
 - Supply chain: `cargo audit` (RustSec CVE scan) + `cargo deny` (license/bans/sources policy)
-- CI gates (GitHub Actions): 4 jobs — clippy+build, QEMU boot test (HALT criteria),
-  supply chain audit, Kani formal verification (master push only)
+- CI gates (GitHub Actions): 5 jobs — clippy+build, QEMU boot test (HALT criteria),
+  supply chain audit, Kani full (master push), Kani critical subset (PR fast feedback)
+
+## Formal Verification Scope & Limitations
+
+What "verified" means for Sipahi — and what it does NOT mean.
+
+### Kani (Bounded Model Checking)
+
+200 harnesses cover **Rust function-level invariants**: panic freedom, integer
+overflow, array bounds, pure-function purity, policy decision tables.
+
+Kani **does NOT cover**:
+- **Assembly** (`trap.S`, `context.S`, inline `asm!`) — Kani works at Rust IR level
+- **Hardware register semantics** (CSR read/write, PMP, CLINT mtime/mtimecmp) — stubbed
+- **Atomics / memory ordering** — single-hart assumption (`MIE=0` in trap context)
+- **Interrupt timing / concurrency** — sequential execution model only
+- **Crypto correctness** (BLAKE3, Ed25519) — only API safety; correctness via upstream test vectors
+- **WASM runtime** (Wasmi) — interpreter is `cfg(not(kani))`; only static byte-scanner verified
+
+Kani "proved" = "this Rust function over its bounded input space does not panic
+or trigger UB." It does **not** mean "the system as a whole behaves correctly."
+
+### TLA+ (Temporal Logic Model Checking)
+
+7 specs verified with TLC: scheduler, capability cache, policy escalation,
+watchdog, IPC, degrade/recovery, budget fairness.
+
+TLA+ specs are **abstractions** of Rust code. **No formal refinement mapping**
+(TLAPM) has been performed — i.e., we have not proved that the Rust code is a
+refinement of the TLA+ spec. Specs and code are kept aligned by review and
+shared constants, not by mechanically checked correspondence.
+
+TLAPM-based refinement is a v2.0 roadmap item.
+
+### WCET (Worst-Case Execution Time)
+
+All `WCET_*` constants in `config.rs` are **estimated** based on instruction
+counting under QEMU TCG. QEMU does **not** model cache, branch prediction, or
+memory hierarchy — its `rdcycle` returns instruction count, not real cycles.
+
+**No cycle-accurate WCET measurement has been performed on real hardware.**
+Production WCET validation (FPGA + cycle counter, AbsInt aiT or similar) is a
+v1.5 roadmap item. Treat WCET numbers as ordering constraints (which is
+faster than which) rather than absolute cycle budgets.
+
+### Bottom line
+
+Sipahi applies **safety-critical design principles** (DO-178C DAL-A, ISO 26262
+ASIL-D patterns) and uses **multiple verification layers** to catch entire
+classes of bugs early. It is **not certified** and would require independent
+DER review, requirements traceability matrix, and FPGA timing analysis before
+any certification claim could be made.
 
 ## Scheduler Features
 

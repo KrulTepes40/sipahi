@@ -59,13 +59,16 @@ mod verification {
     #[kani::proof]
     fn wcet_ordering_consistent() {
         // Hot path: trap-syscall-yield zinciri (≤ scheduler tick)
-        assert!(WCET_YIELD <= WCET_CAP_INVOKE);
+        assert!(WCET_YIELD <= WCET_TASK_INFO);     // U-20: yield (10) ≤ task_info (15)
+        assert!(WCET_TASK_INFO <= WCET_CAP_INVOKE); // task_info (15) ≤ cap_invoke (25)
         assert!(WCET_CAP_INVOKE <= WCET_IPC_RECV);
         assert!(WCET_IPC_RECV <= WCET_IPC_SEND);
         assert!(WCET_IPC_SEND <= WCET_TRAP_ENTRY);
         assert!(WCET_TRAP_ENTRY <= WCET_TRAP_HANDLER);
         assert!(WCET_TRAP_HANDLER <= WCET_CONTEXT_SWITCH);
         assert!(WCET_CONTEXT_SWITCH <= WCET_SCHEDULER_TICK);
+        // task_info da scheduler tick'ten küçük olmalı (transitif ama açıkça yaz)
+        assert!(WCET_TASK_INFO <= WCET_SCHEDULER_TICK);
 
         // U-18 GÖREV 4: Sıcak yol → kapasite zinciri.
         // Token validate (cache miss) > scheduler tick — full broker validate
