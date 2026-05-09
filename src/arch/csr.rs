@@ -72,6 +72,46 @@ pub fn read_mtval() -> usize {
     val
 }
 
+/// misa oku — ISA identity (RV64IMAC doğrulaması için POST'ta kullanılır)
+#[cfg(not(kani))]
+#[inline(always)]
+pub fn read_misa() -> usize {
+    let val: usize;
+    // SAFETY: CSR read in M-mode — always accessible. misa standart M-mode CSR.
+    unsafe { asm!("csrr {}, misa", out(reg) val); }
+    val
+}
+
+/// mcounteren oku — U-mode cycle/instret/time counter erişim kontrolü (timing side-channel gating)
+#[cfg(not(kani))]
+#[inline(always)]
+pub fn read_mcounteren() -> usize {
+    let val: usize;
+    // SAFETY: CSR read in M-mode — always accessible.
+    unsafe { asm!("csrr {}, mcounteren", out(reg) val); }
+    val
+}
+
+/// medeleg oku — exception delegation register (M-only kernel'de 0 olmalı)
+#[cfg(not(kani))]
+#[inline(always)]
+pub fn read_medeleg() -> usize {
+    let val: usize;
+    // SAFETY: CSR read in M-mode — always accessible.
+    unsafe { asm!("csrr {}, medeleg", out(reg) val); }
+    val
+}
+
+/// mideleg oku — interrupt delegation register (M-only kernel'de 0 olmalı)
+#[cfg(not(kani))]
+#[inline(always)]
+pub fn read_mideleg() -> usize {
+    let val: usize;
+    // SAFETY: CSR read in M-mode — always accessible.
+    unsafe { asm!("csrr {}, mideleg", out(reg) val); }
+    val
+}
+
 // ═══════════════════════════════════════════════════════
 // CSR Yazma
 // ═══════════════════════════════════════════════════════
@@ -79,8 +119,13 @@ pub fn read_mtval() -> usize {
 #[cfg(not(kani))]
 #[inline(always)]
 pub fn write_mtvec(addr: usize) {
+    // U-21 GÖREV 10 [M3]: Mode bits [1:0] explicit clear → direct mode (0).
+    // mtvec[1:0]=1 (vectored) ya da ≥2 (reserved) yanlışlıkla set edilirse
+    // trap dispatch yanlış adrese atlar. Linker/symbol re-alignment veya
+    // ileride alt-bit kullanan entry adresi için savunmacı maskeleme.
+    let clean = addr & !0x3;
     // SAFETY: CSR read/write in M-mode — always accessible.
-    unsafe { asm!("csrw mtvec, {}", in(reg) addr) };
+    unsafe { asm!("csrw mtvec, {}", in(reg) clean) };
 }
 
 #[cfg(not(kani))]

@@ -52,8 +52,10 @@ check:
 	cargo clippy $(BUILD_STD) -- -D warnings
 
 # Kani formal verification (build-std OLMADAN — Kani kendi core'unu kullanır)
+# U-21 GÖREV 14 [M13]: --all-harnesses Kani 0.67+ ile unsupported flag.
+# `cargo kani` (flag'siz) tüm harness'leri çalıştırır (CI ile align).
 kani:
-	cargo kani --all-harnesses
+	cargo kani
 
 # Temizle
 clean:

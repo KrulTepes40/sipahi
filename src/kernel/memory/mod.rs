@@ -69,9 +69,11 @@ pub(crate) fn init_pmp() {
     let data_start = unsafe { &__data_start as *const u8 as usize };
     let pmp_data_end = unsafe { &__pmp_data_end as *const u8 as usize };
 
-    use crate::common::config;
-    let uart_start = config::UART_BASE;
-    let uart_end   = config::UART_END;
+    // U-21 GÖREV 3: UART start/end yalnızca debug/trace/self-test'te gerek
+    #[cfg(any(feature = "debug-boot", feature = "trace", feature = "self-test"))]
+    let uart_start = crate::common::config::UART_BASE;
+    #[cfg(any(feature = "debug-boot", feature = "trace", feature = "self-test"))]
+    let uart_end   = crate::common::config::UART_END;
 
     // ─── PMP Adres Register'ları (linker script sırasıyla) ───
     //
@@ -95,22 +97,48 @@ pub(crate) fn init_pmp() {
     pmp::write_pmpaddr(3, rodata_end);
     pmp::write_pmpaddr(4, data_start);
     pmp::write_pmpaddr(5, pmp_data_end);
-    pmp::write_pmpaddr(6, uart_start);
-    pmp::write_pmpaddr(7, uart_end);
+
+    // U-21 GÖREV 3 [H4]: UART PMP entry 6/7 sadece debug/trace/self-test build'de.
+    // Production'da U-mode UART direct erişimi kapalı (no PMP match → implicit
+    // DENY); kernel UART trace'i M-mode unmatched access ile yapar (RISC-V spec).
+    // Eski hata: Entry 7 her build'de R+W+L → hostile U-mode task syscall/policy
+    // bypass ile UART flood + timing DoS yapabiliyordu.
+    #[cfg(any(feature = "debug-boot", feature = "trace", feature = "self-test"))]
+    {
+        pmp::write_pmpaddr(6, uart_start);
+        pmp::write_pmpaddr(7, uart_end);
+    }
+    #[cfg(not(any(feature = "debug-boot", feature = "trace", feature = "self-test")))]
+    {
+        pmp::write_pmpaddr(6, 0);
+        pmp::write_pmpaddr(7, 0);
+    }
 
     // ─── PMP Config (pmpcfg0) ───
     // L-bit: Entry kilitleme — M-mode da bu izinlere tabi.
     // Eşleşmeyen adresler (CLINT 0x200_0000) → M-mode tam erişir (spec).
     // Scheduler PMP değiştirmediği için L-bit güvenle eklenebilir.
+    #[cfg(any(feature = "debug-boot", feature = "trace", feature = "self-test"))]
     let configs: [u8; 8] = [
-        0,                                                       // Entry 0: OFF (alt sınır)
-        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_X | pmp::PMP_L,   // Entry 1: .text RX (locked)
-        0,                                                       // Entry 2: OFF (alt sınır)
-        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_L,                 // Entry 3: .rodata R (locked)
-        0,                                                       // Entry 4: OFF (alt sınır)
-        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,   // Entry 5: .data+bss+stack RW (locked)
-        0,                                                       // Entry 6: OFF (alt sınır)
-        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,   // Entry 7: UART RW (locked)
+        0,
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_X | pmp::PMP_L,
+        0,
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_L,
+        0,
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,
+        0,
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,   // Entry 7: UART RW
+    ];
+    #[cfg(not(any(feature = "debug-boot", feature = "trace", feature = "self-test")))]
+    let configs: [u8; 8] = [
+        0,
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_X | pmp::PMP_L,
+        0,
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_L,
+        0,
+        pmp::PMP_TOR | pmp::PMP_R | pmp::PMP_W | pmp::PMP_L,
+        0,
+        0,                                                       // Entry 7: UART KAPALI
     ];
 
     let packed = pmp::pack_pmpcfg(configs);
@@ -128,8 +156,17 @@ pub(crate) fn init_pmp() {
         addrs[3] = rodata_end >> 2;
         addrs[4] = data_start >> 2;
         addrs[5] = pmp_data_end >> 2;
-        addrs[6] = uart_start >> 2;
-        addrs[7] = uart_end >> 2;
+        // U-21 GÖREV 3 [H4]: UART entry feature-gated
+        #[cfg(any(feature = "debug-boot", feature = "trace", feature = "self-test"))]
+        {
+            addrs[6] = uart_start >> 2;
+            addrs[7] = uart_end >> 2;
+        }
+        #[cfg(not(any(feature = "debug-boot", feature = "trace", feature = "self-test")))]
+        {
+            addrs[6] = 0;
+            addrs[7] = 0;
+        }
     }
 
     // ─── Doğrulama çıktısı (debug-boot only, U-17 gate) ───

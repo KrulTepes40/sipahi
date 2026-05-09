@@ -8,7 +8,9 @@
 #[cfg(not(kani))]
 use crate::common::config::{CLINT_BASE, CLINT_MTIME_OFFSET, CLINT_MTIMECMP_OFFSET, TICK_PERIOD_US};
 
+// U-21 GÖREV 16: hot path — trap handler timer interrupt + POST'ta çağrılır
 #[cfg(not(kani))]
+#[inline(always)]
 pub fn read_mtime() -> u64 {
     let addr = (CLINT_BASE + CLINT_MTIME_OFFSET) as *const u64;
     // SAFETY: Volatile read/write to MMIO register at hardware-guaranteed address.

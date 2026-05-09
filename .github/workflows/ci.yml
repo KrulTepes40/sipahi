@@ -160,7 +160,53 @@ jobs:
             exit 1
           fi
 
-          echo "QEMU test passed"
+          # U-21 GÖREV 13 [M12]: NF (nested fault) regression guard.
+          # task_trampoline / start_first_task fix'leri (U-18/U-19/U-21 G5)
+          # sonrası bu marker hiçbir build'de görünmemeli.
+          if grep -q "^NF$" boot.log; then
+            echo "FAIL: Nested fault detected in self-test"
+            exit 1
+          fi
+
+          # FAIL marker tarama — herhangi bir self-test fail'i regression
+          if grep -q "\[FAIL\]" boot.log; then
+            echo "FAIL: Test failure marker present"
+            exit 1
+          fi
+
+          echo "QEMU self-test passed"
+
+      # U-21 GÖREV 13 [M12]: Production smoke test — self-test'ten ayrı
+      # production binary boot edip NF/FATAL üretmediğini doğrula.
+      - name: Production smoke (NF guard)
+        run: |
+          cargo build \
+            --release \
+            -Z build-std=core,alloc \
+            -Z build-std-features=compiler-builtins-mem \
+            --target riscv64imac-unknown-none-elf
+
+          timeout 8s qemu-system-riscv64 \
+            -machine virt \
+            -nographic \
+            -bios none \
+            -m 512M \
+            -smp 1 \
+            -kernel target/riscv64imac-unknown-none-elf/release/sipahi \
+            > prod.log 2>&1 || true
+
+          echo "--- Production log ---"
+          cat prod.log
+
+          if grep -q "^NF$" prod.log; then
+            echo "FAIL: Nested fault in production"
+            exit 1
+          fi
+          if grep -q "FATAL" prod.log; then
+            echo "FAIL: FATAL marker in production"
+            exit 1
+          fi
+          echo "Production smoke passed"
 
   audit:
     name: Supply Chain Audit
@@ -260,3 +306,37 @@ jobs:
             --harness decide_action_lockstep_pure \
             --harness isolated_task_never_becomes_ready \
             --harness watchdog_limit_zero_disables
+
+  # U-21 GÖREV 21: Mutation testing — PR'larda informational
+  mutation-test:
+    name: Mutation Testing (informational)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          targets: riscv64imac-unknown-none-elf
+          components: rust-src
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+      - name: Run mutation tests on diff
+        run: cargo mutants --in-diff --timeout 120 || true
+
+  # U-21 GÖREV 21: unsafe block count tracking — release-blocking değil
+  unsafe-count:
+    name: Unsafe Block Count
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Count unsafe blocks
+        run: |
+          COUNT=$(grep -rn "unsafe {" src/ | wc -l)
+          echo "Unsafe blocks: $COUNT"
+          # Defense-in-depth: 200'ün üzerine çıkarsa anomali
+          if [ "$COUNT" -gt 200 ]; then
+            echo "WARN: Unsafe block count > 200 — review needed"
+          fi

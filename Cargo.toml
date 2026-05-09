@@ -1,13 +1,17 @@
 [package]
 name = "sipahi"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Safety-critical hard real-time microkernel for RISC-V"
 license = "Apache-2.0"
 authors = ["gzhno"]
 
 [features]
-default = ["fast-crypto", "fast-sign"]
+# U-21 GÖREV 6 [H2]: default'a test-keys eklendi — pre-fix default build
+# secure_boot_check + provision_key compile-out ediyordu, capability sistemi
+# sessizce devre dışı kalıyordu. Yeni doktrin: test-keys VEYA production-otp
+# olmalı (compile_error guard src/main.rs'te).
+default = ["fast-crypto", "fast-sign", "test-keys"]
 fast-crypto = []          # BLAKE3 hash/MAC (v1.0)
 cnsa-crypto = []          # SHA-384 + Zknh HW accel (v2.0)
 fast-sign = []            # Ed25519 imza (v1.0)
@@ -15,7 +19,8 @@ cnsa-sign = []            # LMS post-quantum imza (v2.0)
 iopmp = []                # IOPMP DMA koruması
 trace = []                # Debug trace (production'da KAPALI)
 debug-boot = []           # Boot sırasında [DBG] teşhis çıktıları (üretimde KAPALI)
-test-keys = []            # QEMU test key'leri (release'de sıfır key, production OTP)
+test-keys = []            # QEMU test key'leri (development/CI)
+production-otp = []       # HSM/OTP key provisioning (v2.0 — gerçek silikon)
 self-test = ["test-keys", "trace", "debug-boot"] # U-16/U-17: test + tüm UART output
 
 [dependencies]
@@ -42,4 +47,4 @@ codegen-units = 1         # Tek derleme birimi (determinizm)
 overflow-checks = true    # Integer overflow → trap (safety-critical)
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys", "multi-hart", "self-test", "trace", "debug-boot"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys", "multi-hart", "self-test", "trace", "debug-boot", "production-otp"))'] }

@@ -115,7 +115,7 @@ pub extern "C" fn trap_handler(
                     );
                     scheduler::apply_action_from_trap(task_id as usize, action);
                 }
-                scheduler::schedule();
+                scheduler::schedule_timer_tick();
             }
             _ => {
                 #[cfg(feature = "debug-boot")]
@@ -211,16 +211,73 @@ pub extern "C" fn trap_handler(
                 }
                 0
             }
+            // U-21 GÖREV 4 [H6]: Unknown exception triage — fail-closed.
+            // Önceden default arm `_ => 0` dönüyordu; ecall dışında trap.S
+            // mepc += 4 yapmadığı için faulting instruction'a dönüyor →
+            // sonsuz trap loop / livelock DoS. Şimdi her exception class
+            // için explicit dispatch:
+            //   - Task fault'lar (misaligned, breakpoint) → handle_task_fault
+            //   - Hardware integrity (bus error, page fault) → SHUTDOWN
+            //   - Bilinmeyen → fail-closed SHUTDOWN
+            0 => {
+                // Instruction misaligned — RV64IMAC C-extension ile imkansız
+                // (16-bit instructions allowed); fail-closed isolate
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
+                    crate::common::config::SYSTEM_TASK_ID, &[],
+                );
+                crate::kernel::scheduler::handle_task_fault();
+                0
+            }
+            3 => {
+                // Breakpoint (ebreak) — debugger trap, U-mode'dan task isolate
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
+                    crate::common::config::SYSTEM_TASK_ID, &[],
+                );
+                crate::kernel::scheduler::handle_task_fault();
+                0
+            }
+            4 | 6 => {
+                // Load/Store address misaligned — task fault, isolate
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
+                    crate::common::config::SYSTEM_TASK_ID, &[],
+                );
+                crate::kernel::scheduler::handle_task_fault();
+                0
+            }
+            1 => {
+                // Instruction access fault — bus error / hw integrity
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PmpFail,
+                    crate::common::config::SYSTEM_TASK_ID, &[],
+                );
+                crate::common::halt_system("[TRAP] FATAL: instruction access fault");
+            }
+            9 | 10 => {
+                // S-mode/H-mode ecall (impossible — S-mode yok)
+                crate::common::halt_system("[TRAP] FATAL: S/H-mode ecall (impossible)");
+            }
+            12..=15 => {
+                // Page fault — paging yok, donanım/firmware hatası
+                crate::common::halt_system("[TRAP] FATAL: page fault (no paging)");
+            }
             _ => {
+                // Bilinmeyen exception class — fail-closed SHUTDOWN
                 #[cfg(feature = "debug-boot")]
                 {
-                    uart::puts("[TRAP] Exception: cause=");
+                    uart::puts("[TRAP] Unknown exception: cause=");
                     print_u64(mcause as u64);
                     uart::puts(" at 0x");
                     print_hex(_mepc);
                     uart::println("");
                 }
-                0
+                crate::ipc::blackbox::log(
+                    crate::ipc::blackbox::BlackboxEvent::PolicyShutdown,
+                    crate::common::config::SYSTEM_TASK_ID, &[],
+                );
+                crate::common::halt_system("[TRAP] FATAL: unknown exception");
             }
         }
     }

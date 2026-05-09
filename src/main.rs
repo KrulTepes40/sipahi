@@ -9,6 +9,19 @@
 // alloc crate — SADECE wasmi sandbox kullanır, kernel kodu KULLANMAZ
 extern crate alloc;
 
+// U-21 GÖREV 6 [H2]: Capability MAC key provisioning şart. Pre-fix default
+// build secure_boot + provision_key'i sessizce compile-out ediyordu →
+// production binary'de capability sistemi devre dışı kalıyordu.
+// `test-keys` (development/QEMU) veya `production-otp` (HSM/OTP, v2.0 stub)
+// VEYA Kani build (verification — runtime path yok) zorunlu.
+#[cfg(not(any(feature = "test-keys", feature = "production-otp", kani)))]
+compile_error!(
+    "Sipahi build requires either 'test-keys' (development/CI) or \
+     'production-otp' (production HSM/OTP — v2.0). Default features include \
+     test-keys; for production deployment use --no-default-features --features \
+     production-otp,fast-crypto,fast-sign."
+);
+
 mod arch;
 mod common;
 mod hal;
@@ -82,7 +95,7 @@ pub extern "C" fn rust_main() -> ! {
     #[cfg(feature = "debug-boot")]
     {
         arch::uart::println("=============================");
-        arch::uart::println("  Sipahi Microkernel v1.5");
+        arch::uart::println("  Sipahi Microkernel v1.0");
         arch::uart::println("  RISC-V 64 · RV64IMAC");
         arch::uart::println("  Safety-Critical RTOS");
         arch::uart::println("=============================");

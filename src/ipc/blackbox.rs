@@ -286,6 +286,7 @@ pub(crate) fn read(index: usize) -> Option<BlackboxRecord> {
 
 /// Tampondaki geçerli kayıt sayısı
 #[allow(dead_code)] // Blackbox inspection API; debug/test/external readout
+#[inline(always)]
 pub fn count() -> usize {
     // SAFETY: Volatile access prevents compiler from caching static mut in register.
     unsafe { vol_read!(BB_COUNT -> u8) as usize }
@@ -293,6 +294,8 @@ pub fn count() -> usize {
 
 /// Mevcut blackbox tick sayacını döndür — expiry kontrolü için
 /// Bileşik u64: (epoch << 32) | tick — u32 wrap-safe, ~900K yıl monoton
+/// U-21 GÖREV 16: capability validate hot path'inde çağrılır
+#[inline(always)]
 pub(crate) fn get_tick() -> u64 {
     // SAFETY: Single-hart, read-only access.
     unsafe {
@@ -305,7 +308,9 @@ pub(crate) fn get_tick() -> u64 {
 /// U-17 GÖREV 7: Tick getter — degrade cooldown vs gibi kullanımlar için
 /// BB_TICK private kalır, sadece bu fonksiyon ile dışarıdan okunabilir.
 /// Wrap-safe ek hesap için get_tick() (u48 effective) kullanılabilir.
+/// U-21 GÖREV 16: scheduler tick'inde her çağrıda — inline gerekli
 #[allow(dead_code)] // U-17: scheduler degrade cooldown'da kullanılıyor (gate'li)
+#[inline(always)]
 pub(crate) fn current_tick() -> u32 {
     // SAFETY: Single-hart, read-only access.
     unsafe { vol_read!(BB_TICK -> u32) }

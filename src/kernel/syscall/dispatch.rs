@@ -52,12 +52,20 @@ pub const E_NO_CAPABILITY: usize = SyscallResult::NoCapability.to_raw();
 pub const E_IPC_FULL: usize = SyscallResult::IpcFull.to_raw();
 pub const E_IPC_EMPTY: usize = SyscallResult::IpcEmpty.to_raw();
 pub const E_INVALID_ARG: usize = SyscallResult::InvalidArg.to_raw();
-const E_RATE_LIMITED: usize = 7;
-const E_INTERNAL: usize = 8;
+// U-21 GÖREV 18 [MP2]: SyscallResult::to_raw() şeması usize::MAX-N kullanıyor;
+// E_RATE_LIMITED ve E_INTERNAL küçük integer'larla şema dışıydı (caller'da
+// 7/8 dönen değer geçerli usize sonuç olarak yorumlanabilir). Diğer error
+// kodlarıyla aynı şemaya hizalandı (`to_raw` SyscallResult variant'larıyla
+// çakışmayacak şekilde devamı):
+const E_RATE_LIMITED: usize = usize::MAX - 6;
+const E_INTERNAL: usize = usize::MAX - 7;
 
-// Linker-provided symbol — kernel memory end
+// Linker-provided symbols — kernel image range
 #[cfg(not(kani))]
-extern "C" { static _end: u8; }
+extern "C" {
+    static _end: u8;
+    static __text_start: u8; // U-21 GÖREV 20 [MP3]: kernel .text başlangıcı
+}
 
 /// Kernel bellek sınırını al — Kani'de sabit mock (0x80800000)
 #[inline]
@@ -69,6 +77,20 @@ fn kernel_end_addr() -> usize {
     }
     #[cfg(kani)]
     { 0x80800000 } // 8MB RAM mock
+}
+
+/// Kernel image başlangıcı — pointer leak filter için.
+/// U-21 GÖREV 20 [MP3]: RAM_BASE config sabiti yerine linker symbol —
+/// __text_start ile eşleşmeyen senaryoda (BootROM, PIE) doğru sınır.
+#[inline]
+fn kernel_start_addr() -> usize {
+    #[cfg(not(kani))]
+    {
+        // SAFETY: Linker-provided symbol address.
+        unsafe { &__text_start as *const u8 as usize }
+    }
+    #[cfg(kani)]
+    { 0x80000000 } // RAM_BASE mock
 }
 
 /// User pointer doğrulama — caller'ın KENDİ stack aralığına sınırlandırılmış.
@@ -223,8 +245,11 @@ pub fn dispatch(
     wcet_update(syscall_id, end.wrapping_sub(start));
 
     // Kernel pointer sızıntı koruması — kernel adresi U-mode'a dönmemeli
+    // U-21 GÖREV 20 [MP3]: linker symbol __text_start'tan kernel _end'e —
+    // .text + .rodata + .data + .bss + kernel_stack + .task_stacks + .wasm_arena
+    // tüm kernel image bölgeleri kapsanır.
     #[cfg(not(kani))]
-    if result >= crate::common::config::RAM_BASE && result < kernel_end_addr() {
+    if result >= kernel_start_addr() && result < kernel_end_addr() {
         return E_INTERNAL;
     }
 
@@ -432,7 +457,10 @@ fn sys_yield(_: usize, _: usize, _: usize, _: usize) -> usize {
         crate::kernel::scheduler::watchdog_kick();
         #[cfg(feature = "trace")]
         uart::println("[SYS] yield");
-        crate::kernel::scheduler::schedule();
+        // U-21 GÖREV 11 [H5]: schedule_yield() — schedule_timer_tick()
+        // değil. Yield path tick state advance yapmaz; sadece context
+        // switch eder. Yield spam → DoS yüzeyi kapalı.
+        crate::kernel::scheduler::schedule_yield();
     }
     E_OK
 }

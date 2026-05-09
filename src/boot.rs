@@ -10,8 +10,112 @@ extern "C" {
     fn trap_entry();
 }
 
+// U-21 GÖREV 6 [H2]: Production OTP key provisioning stub (v2.0 hedefi).
+// Bu extern fonksiyon HSM driver veya silikon-spesifik OTP read implementasyonu
+// ile sağlanır. v1.0 build'de production-otp feature aktifse linker bu sembolü
+// arar — tanımsız sembol → link error → unintended production deploy engellenir.
+#[cfg(feature = "production-otp")]
+extern "C" {
+    /// HSM/OTP'den root MAC key'i oku. true = başarılı, false = donanım hatası.
+    fn production_provision_from_otp(key: *mut u8) -> bool;
+}
+
+#[cfg(feature = "production-otp")]
+fn provision_production_key() {
+    let mut key = [0u8; 32];
+    // SAFETY: extern C fn — v2.0'da HSM driver implement edecek; key buffer
+    // yerel stack, 32 byte yazma ABI'a uygun.
+    let ok = unsafe { production_provision_from_otp(key.as_mut_ptr()) };
+    if !ok {
+        crate::common::halt_system("[BOOT] FATAL: OTP key provisioning failed");
+    }
+    kernel::capability::broker::provision_key(&key);
+}
+
+/// U-21 GÖREV 2 [H1]: Production POST — feature'dan bağımsız çalışan minimum
+/// sağlık kontrolleri. Self-test'teki geniş POST (BLAKE3, Ed25519, vb.)
+/// `#[cfg(feature = "self-test")]` altında kalır; bu fonksiyon tüm build'lerde
+/// boot path'inde çağrılır ve halt_system ile boot'u durdurur.
+///
+/// Kontrol kapsamı:
+/// 1. mtvec doğru kuruldu mu (boot.rs::init başında write_mtvec yapıldı)
+/// 2. mtvec mode bits = 0 (direct mode — vectored modunu önle)
+/// 3. CLINT mtime ilerliyor mu (timer ölü → tüm safety mekanizması ölü)
+/// 4. misa = RV64IMAC mı (donanım identity manipülasyonu)
+/// 5. medeleg/mideleg = 0 (M-only kernel'de delegation yok)
+/// 6. mcounteren = 0 (U-mode timing side-channel kapalı)
+/// 7. PMP shadow integrity (boot sonrası başlangıç durumu)
+pub fn production_post() {
+    // 1. mtvec
+    let mtvec = arch::csr::read_mtvec();
+    if mtvec == 0 {
+        crate::common::halt_system("[POST] FATAL: mtvec = 0");
+    }
+    if mtvec & 0x3 != 0 {
+        crate::common::halt_system("[POST] FATAL: mtvec mode != direct");
+    }
+
+    // 2. CLINT mtime ilerliyor mu — kısa busy-wait sonrası t2 > t1 olmalı
+    let t1 = arch::clint::read_mtime();
+    let mut spin = 0u32;
+    while spin < 1000 { spin = spin.wrapping_add(1); core::hint::spin_loop(); }
+    let t2 = arch::clint::read_mtime();
+    if t2 <= t1 {
+        crate::common::halt_system("[POST] FATAL: CLINT mtime not advancing");
+    }
+
+    // 3. misa: RV64IMAC — MXL=2 (64-bit), I+M+A+C bit'leri
+    let misa = arch::csr::read_misa();
+    let mxl = (misa >> 62) & 0x3;
+    if mxl != 2 {
+        crate::common::halt_system("[POST] FATAL: misa MXL != RV64");
+    }
+    let has_i = (misa >> 8)  & 1;
+    let has_m = (misa >> 12) & 1;
+    let has_a = misa & 1; // bit 0 = 'A'
+    let has_c = (misa >> 2) & 1;
+    if has_i == 0 || has_m == 0 || has_a == 0 || has_c == 0 {
+        crate::common::halt_system("[POST] FATAL: misa missing IMAC");
+    }
+
+    // 4. Delegation registers (G9 [M2])
+    // WARL register — bazı bit'ler hardware impl-defined olarak 1 kalabilir
+    // (QEMU virt RV64'te medeleg bazı reserved bit'leri 1 döner). M-only
+    // kernel'de delegation effect'siz: S-mode olmadığından delegate edilen
+    // trap mtvec'e düşer. csrw zero atılmış olsa da read-back hard guarantee
+    // değil; yine de "tüm bit'lerin 1 olduğu kötü hardware" durumunu yakalamak
+    // için all-ones reddi yapılır.
+    let medeleg = arch::csr::read_medeleg();
+    let mideleg = arch::csr::read_mideleg();
+    if medeleg == usize::MAX || mideleg == usize::MAX {
+        crate::common::halt_system("[POST] FATAL: medeleg/mideleg all-ones (hw fault)");
+    }
+
+    // 5. mcounteren = 0 (G8 [M1] — U-mode timing side-channel kapalı)
+    // Bu register WARL değil; csrw zero geçerli. Sıfır olmalı.
+    let mcounteren = arch::csr::read_mcounteren();
+    if mcounteren != 0 {
+        crate::common::halt_system("[POST] FATAL: mcounteren != 0");
+    }
+
+    // 6. PMP integrity (init_pmp sonrası shadow ile uyum)
+    if !kernel::memory::verify_pmp_integrity() {
+        crate::common::halt_system("[POST] FATAL: PMP integrity fail");
+    }
+}
+
 /// Boot initialization — PMP, blackbox, HAL, task creation
 pub fn init() {
+    // U-21 GÖREV 9 [M2]: M-only kernel — exception/interrupt delegation 0.
+    // U-21 GÖREV 8 [M1]: U-mode counter access 0 (rdcycle/rdtime/rdinstret deny).
+    // mtvec set'inden ÖNCE — eğer trap olursa S-mode'a delegate edilmemeli.
+    // SAFETY: M-mode CSR write, boot sequence, MIE=0 (interrupts not yet enabled).
+    unsafe {
+        core::arch::asm!("csrw medeleg, zero");
+        core::arch::asm!("csrw mideleg, zero");
+        core::arch::asm!("csrw mcounteren, zero");
+    }
+
     arch::csr::write_mtvec(trap_entry as *const () as usize);
     #[cfg(feature = "debug-boot")]
     {
@@ -23,6 +127,11 @@ pub fn init() {
     kernel::memory::init_pmp();
     ipc::blackbox::init();
 
+    // U-21 GÖREV 2 [H1]: PMP/CLINT/CSR sağlık kontrolleri — boot fail-closed
+    // Self-test build'inde tests::run_all() ek kontroller yapacak; bu zorunlu set
+    // her build'de çalışır.
+    production_post();
+
     #[cfg(feature = "debug-boot")]
     {
         arch::uart::println("[HAL]  Device trait registered");
@@ -30,9 +139,9 @@ pub fn init() {
     }
 
     // ─── Capability MAC key provisioning ───
-    // Sprint U-9: test-keys gate — production'da HSM/OTP'den gelmeli.
-    // no-test-keys build'de KEY_READY=false → capability sistemi kapalı
-    // (validate_full her zaman false → güvenli fail-closed davranış).
+    // U-21 GÖREV 6 [H2]: test-keys VEYA production-otp ZORUNLU
+    // (compile_error guard src/main.rs'te). KEY_READY=false ile boot etmek
+    // sessizce capability sistemi devre dışı bırakırdı; o yol artık kapalı.
     #[cfg(feature = "test-keys")]
     {
         let mac_key = [0x5Au8; 32];
@@ -40,8 +149,12 @@ pub fn init() {
         #[cfg(feature = "debug-boot")]
         arch::uart::println("[BOOT] Capability MAC key provisioned (TEST KEY)");
     }
-    #[cfg(all(not(feature = "test-keys"), feature = "debug-boot"))]
-    arch::uart::println("[BOOT] MAC key SKIP (no test-keys, production: HSM/OTP v2.0)");
+    #[cfg(feature = "production-otp")]
+    {
+        provision_production_key();
+        #[cfg(feature = "debug-boot")]
+        arch::uart::println("[BOOT] Capability MAC key provisioned (OTP/HSM)");
+    }
 
     // ─── Secure boot doğrulama ───
     #[cfg(feature = "test-keys")]

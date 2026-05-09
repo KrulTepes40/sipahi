@@ -307,7 +307,7 @@ checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 
 [[package]]
 name = "sipahi"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",

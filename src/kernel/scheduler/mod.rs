@@ -48,6 +48,14 @@ pub struct TaskContext {
     pub mstatus: usize,  // U-mode: mstatus (MPP bits)
 }
 
+// U-21 GÖREV 12 [M5]: TaskContext layout assertion — context.S sabit offset'ler
+// (sd ra, 0(a0); sd s0, 16(a0); ...; sd mstatus, 120(a0)) ile bağlı.
+// 16 alan × 8 byte = 128 byte; alan eklenirse bu assertion build fail eder.
+const _: () = assert!(
+    core::mem::size_of::<TaskContext>() == 128,
+    "TaskContext size changed — context.S offsets MUST be updated"
+);
+
 impl TaskContext {
     pub const fn zero() -> Self {
         TaskContext {
@@ -213,9 +221,15 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
     Some(count as u8)
 }
 
-/// Scheduler tick — timer interrupt'tan çağrılır
+/// Scheduler tick — TIMER INTERRUPT'tan çağrılır.
+/// U-21 GÖREV 11 [H5]: schedule_yield()'den AYRI; bu fonksiyon tüm
+/// per-tick state advance'ları içerir (blackbox tick, IPC rate reset,
+/// watchdog increment, budget decrement, period advance, PMP shadow verify).
+/// U-mode task'lar bu yola erişemez (sadece timer interrupt çağırır);
+/// hostile yield spam tick state'ini bozamaz.
+///
 /// WCET: ≤0.8μs @ 100MHz (doküman hedef)
-pub(crate) fn schedule() {
+pub(crate) fn schedule_timer_tick() {
     // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         // Sprint U-16: Early return Phase 2 SONRASINA taşındı — güvenlik
@@ -251,8 +265,11 @@ pub(crate) fn schedule() {
 
         // ─── Faz 1: Periyot ilerletme (tüm task'lar) ───
         // Periyot dolarsa: bütçe sıfırla, SUSPENDED → READY
+        // U-21 GÖREV 17 [MP1]: dual bound (TASK_COUNT && MAX_TASKS) — Phase 3
+        // ile simetrik. TASK_COUNT bozulursa array OOB engellenir.
+        let count_phase1 = *TASK_COUNT.get();
         let mut i: usize = 0;
-        while i < *TASK_COUNT.get() {
+        while i < count_phase1 && i < MAX_TASKS {
             let t = &mut TASKS.get_mut()[i];
             if t.period_ticks > 0 {
                 t.period_counter = t.period_counter.wrapping_add(1);
@@ -279,8 +296,10 @@ pub(crate) fn schedule() {
         // CPU almaz, watchdog kick'i çağıramaz, dolayısıyla cezalandırılmamalı.
         // IPC rate reset Ready dahil tutulur (rate limit tick bazlı; Ready burst
         // tüketmemeli — kanal sıralı paylaşılan kaynak).
+        // U-21 GÖREV 17 [MP1]: dual bound — Phase 1 ile simetrik.
+        let count_phase15 = *TASK_COUNT.get();
         let mut w: usize = 0;
-        while w < *TASK_COUNT.get() {
+        while w < count_phase15 && w < MAX_TASKS {
             let st = TASKS.get_mut()[w].state;
 
             // IPC rate limit reset — Running ve Ready için tick başı sıfırlanır
@@ -291,7 +310,11 @@ pub(crate) fn schedule() {
             // Watchdog SADECE Running task için artırılır
             if st == TaskState::Running {
                 let t = &mut TASKS.get_mut()[w];
-                t.watchdog_counter += 1;
+                // U-21 GÖREV 19 [MP4]: saturating_add — overflow_checks=true
+                // altında u32::MAX'a ulaşan counter += 1 panic atar.
+                // Saturating: counter u32::MAX'ta donar; should_watchdog_timeout
+                // zaten >= limit kontrolü yapıyor → semantik korunur.
+                t.watchdog_counter = t.watchdog_counter.saturating_add(1);
                 // U-19 GÖREV 10: helper inline kullanım (Kani Proof 95 ile aynı)
                 if should_watchdog_timeout(t.watchdog_limit, t.watchdog_counter) {
                     // Watchdog tetiklendi — t'yi drop et, apply_action aliasing safe
@@ -340,53 +363,84 @@ pub(crate) fn schedule() {
             apply_action(old, action);
         }
 
-        // ─── Faz 3: En yüksek öncelikli Ready task ───
-        // select_highest_priority() Kani ile kanıtlanmış (Proof 79-81)
-        // Sprint U-16: Tek task'ta context switch gereksiz — Phase 1/1.5/2
-        // güvenlik kontrolleri yukarıda zaten çalıştı.
-        if *TASK_COUNT.get() < 2 {
-            return;
-        }
-        let count = *TASK_COUNT.get();
-        let mut states = [TaskState::Dead; MAX_TASKS];
-        let mut priorities = [15u8; MAX_TASKS];
-        let mut k: usize = 0;
-        while k < count && k < MAX_TASKS {
-            states[k] = TASKS.get_mut()[k].state;
-            priorities[k] = TASKS.get_mut()[k].priority;
-            k += 1;
-        }
-        let next = match select_highest_priority(&states, &priorities, count) {
-            Some(idx) => idx,
-            None => return, // Hiç Ready/Running task yok
-        };
+        // ─── Faz 3+4: Priority select + context switch ───
+        // U-21 GÖREV 11 [H5]: helper'a çıkarıldı; schedule_yield() de aynı
+        // path'i kullanır (tek doğruluk kaynağı — drift imkansız).
+        do_priority_select_and_switch(old);
+    }
+}
 
-        // Aynı task, hâlâ çalışıyor → context switch gerekmez
-        if next == old && TASKS.get_mut()[old].state == TaskState::Running {
-            return;
-        }
+/// Phase 3+4 helper — priority select + context switch.
+/// Hem schedule_timer_tick() (timer interrupt sonrası) hem schedule_yield()
+/// (SYS_YIELD sonrası) bu fonksiyonu çağırır. State advance YAPMAZ; sadece
+/// "şu an hangi task running olmalı" kararını uygular.
+///
+/// SAFETY: Caller MIE=0 garanti etmeli (trap context veya boot sequence).
+#[inline]
+unsafe fn do_priority_select_and_switch(old: usize) {
+    // Tek task'ta context switch gereksiz
+    if *TASK_COUNT.get() < 2 {
+        return;
+    }
+    let count = *TASK_COUNT.get();
+    let mut states = [TaskState::Dead; MAX_TASKS];
+    let mut priorities = [15u8; MAX_TASKS];
+    let mut k: usize = 0;
+    while k < count && k < MAX_TASKS {
+        states[k] = TASKS.get_mut()[k].state;
+        priorities[k] = TASKS.get_mut()[k].priority;
+        k += 1;
+    }
+    let next = match select_highest_priority(&states, &priorities, count) {
+        Some(idx) => idx,
+        None => return, // Hiç Ready/Running task yok
+    };
 
-        // ─── Faz 4: Context switch ───
-        if TASKS.get_mut()[old].state == TaskState::Running {
-            TASKS.get_mut()[old].state = TaskState::Ready;
-        }
-        TASKS.get_mut()[next].state = TaskState::Running;
-        *CURRENT_TASK.get_mut()     = next;
+    // Aynı task, hâlâ çalışıyor → context switch gerekmez
+    if next == old && TASKS.get_mut()[old].state == TaskState::Running {
+        return;
+    }
 
-        // PMP entry 8: yeni task'ın stack bölgesini NAPOT ile koru
-        #[cfg(not(kani))]
-        {
-            let napot_addr = TASKS.get()[next].pmp_addr_napot;
-            crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
-            // Sprint U-14: shadow wrapper — memory modül sınırları korunur
-            crate::kernel::memory::update_task_pmp_shadow(
-                napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
-            );
-        }
+    if TASKS.get_mut()[old].state == TaskState::Running {
+        TASKS.get_mut()[old].state = TaskState::Ready;
+    }
+    TASKS.get_mut()[next].state = TaskState::Running;
+    *CURRENT_TASK.get_mut()     = next;
 
-        let old_ctx = &mut TASKS.get_mut()[old].context as *mut TaskContext;
-        let new_ctx = &TASKS.get_mut()[next].context    as *const TaskContext;
-        switch_context(old_ctx, new_ctx);
+    // PMP entry 8: yeni task'ın stack bölgesini NAPOT ile koru
+    #[cfg(not(kani))]
+    {
+        let napot_addr = TASKS.get()[next].pmp_addr_napot;
+        crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
+        // Sprint U-14: shadow wrapper — memory modül sınırları korunur
+        crate::kernel::memory::update_task_pmp_shadow(
+            napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
+        );
+    }
+
+    let old_ctx = &mut TASKS.get_mut()[old].context as *mut TaskContext;
+    let new_ctx = &TASKS.get_mut()[next].context    as *const TaskContext;
+    switch_context(old_ctx, new_ctx);
+}
+
+/// SYS_YIELD syscall'dan çağrılır — SADECE context switch.
+/// U-21 GÖREV 11 [H5]: schedule_timer_tick()'ten ayrıldı. U-mode task
+/// yield spam ile blackbox tick / IPC rate reset / watchdog counter
+/// state'ini bozamaz.
+///
+/// YAPMAZ (timer-tick path'in görevi):
+///   - blackbox::advance_tick (forensik zaman bozmaz)
+///   - ipc_send_count = 0 reset (rate limit bypass engellenir)
+///   - watchdog_counter += 1 (yield != execution time)
+///   - budget decrement (yield ≠ tick)
+///   - period advance
+///   - PMP shadow verify (timer'da zaten yapılıyor)
+pub fn schedule_yield() {
+    // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
+    unsafe {
+        if *TASK_COUNT.get() == 0 { return; }
+        let old = *CURRENT_TASK.get();
+        do_priority_select_and_switch(old);
     }
 }
 
@@ -474,11 +528,36 @@ pub(crate) fn start_first_task() -> ! {
         // extern static + register operand (PIE/PIC güvenli, `la` kullanma)
         let kernel_sp = &__stack_top as *const u8 as usize;
 
+        // U-21 GÖREV 5 [H7]: Caller-saved register scrub — task_trampoline
+        // ile aynı pattern (U-19 hardening). İlk U-mode geçişte de kernel
+        // state info-leak engellenir. mret öncesi ra/a0-a7/t0-t6 sıfırlanır;
+        // mscratch/sp/mepc/mstatus setup'ta kullanılan reg'ler en son
+        // temizlenir.
         core::arch::asm!(
             "csrw mscratch, {ksp}",
             "csrw mepc, {entry}",
             "csrw mstatus, {mstatus}",
             "mv sp, {sp}",
+            // Caller-saved register clear (kernel state leak prevention)
+            "li ra, 0",
+            "li a0, 0",
+            "li a1, 0",
+            "li a2, 0",
+            "li a3, 0",
+            "li a4, 0",
+            "li a5, 0",
+            "li a6, 0",
+            "li a7, 0",
+            "li t2, 0",
+            "li t3, 0",
+            "li t4, 0",
+            "li t5, 0",
+            "li t6, 0",
+            // t0/t1 setup'ta kullanıldı (csrw operand'ları via reg) —
+            // asm! input register'larını inline'da temizleyemediğimiz için
+            // bu son li'ler mret öncesi taşınmış değerleri sıfırlar.
+            "li t0, 0",
+            "li t1, 0",
             "mret",
             ksp     = in(reg) kernel_sp,
             entry   = in(reg) entry,

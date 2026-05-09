@@ -18,7 +18,7 @@ compile_error!("Either fast-sign or cnsa-sign feature must be enabled");
 //     Production: ROM kodu OTP public key'ini okur, kernel imzasını doğrular.
 //
 //   Ed25519 seçim gerekçesi (dokümandan):
-//     "Ed25519 secure boot (zaten en iyi seçenek)" — 7 AI review sonrası doğrulandı.
+//     "Ed25519 secure boot (zaten en iyi seçenek)" — 
 //     CNSA 2.0 yolu: v2.0'da LMS (post-kuantum) ile değiştirilecek.
 //
 // Kani Proof 66: SIGNATURE_SIZE == 64 (Ed25519 imza boyutu sabit)
