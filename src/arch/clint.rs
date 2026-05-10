@@ -3,7 +3,7 @@
 // QEMU virt: CLINT @ 0x2000000
 //
 // NOT: Donanım erişimi RISC-V'e özgü.
-// Kani x86_64'te çalışır → #[cfg(not(kani))] ile korunur.
+// Kani x86_64'te çalışır -> #[cfg(not(kani))] ile korunur.
 
 #[cfg(not(kani))]
 use crate::common::config::{CLINT_BASE, CLINT_MTIME_OFFSET, CLINT_MTIMECMP_OFFSET, TICK_PERIOD_US};
@@ -31,7 +31,7 @@ pub fn init_timer() {
 }
 
 /// Schedule next tick. Returns true if overrun detected
-/// (current mtime already past target → tick deadline missed).
+/// (current mtime already past target -> tick deadline missed).
 #[cfg(not(kani))]
 pub fn schedule_next_tick() -> bool {
     // mtimecmp bazlı ilerleme — birikimli drift önleme

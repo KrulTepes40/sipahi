@@ -39,7 +39,7 @@ pub enum SipahiError {
 }
 
 impl SipahiError {
-    /// Error → human-readable string (Kani harness + production trace UART için)
+    /// Error -> human-readable string (Kani harness + production trace UART için)
     #[allow(dead_code)] // Kani Proof 85 (sipahi_error_as_str_never_empty) çağırır
     pub const fn as_str(&self) -> &'static str {
         match self {

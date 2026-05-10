@@ -117,13 +117,13 @@ trap_entry:
     csrw    mscratch, t0            # mscratch = user_sp (geçici)
 
     # 2. user t0'ı restore et (artık mscratch'a ihtiyacımız yok)
-    ld      t0,   8(sp)             # t0 = user t0 ✓
+    ld      t0,   8(sp)             # t0 = user t0 [OK]
 
     # 3. Frame'i temizle → sp = kernel_sp top
     addi    sp, sp, 272
 
     # 4. Atomic swap: sp = user_sp, mscratch = kernel_sp
-    csrrw   sp, mscratch, sp        # sp=user_sp, mscratch=kernel_sp ✓
+    csrrw   sp, mscratch, sp        # sp=user_sp, mscratch=kernel_sp [OK]
 
     mret
 

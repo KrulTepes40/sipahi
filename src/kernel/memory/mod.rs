@@ -14,8 +14,8 @@
 //   Entry 6-7: UART MMIO (RW)  — seri port
 //
 // Catch-all: RISC-V spec gereği PMP eşleşmeyen adresler:
-//   M-mode → erişim İZİN VERİLİR (şu anki mod)
-//   U-mode → erişim REDDEDİLİR (Sprint 7'de otomatik koruma)
+//   M-mode -> erişim İZİN VERİLİR (şu anki mod)
+//   U-mode -> erişim REDDEDİLİR (Sprint 7'de otomatik koruma)
 //   Yani U-mode'da ayrı catch-all entry gerekmez.
 //
 // Sprint U-5: Task stacks ve WASM arena Entry 5 dışına taşındı.
@@ -34,7 +34,7 @@ static PMP_SHADOW: SingleHartCell<u64> = SingleHartCell::new(0);
 static PMP_SHADOW_ADDRS: SingleHartCell<[usize; 8]> = SingleHartCell::new([0; 8]);
 
 /// PMP entry 8 shadow — per-task NAPOT stack region
-// Sprint U-14: pub(crate) → private (scheduler wrapper üzerinden erişir)
+// Sprint U-14: pub(crate) -> private (scheduler wrapper üzerinden erişir)
 static PMP_SHADOW_ADDR8: SingleHartCell<usize> = SingleHartCell::new(0);
 static PMP_SHADOW_CFG2: SingleHartCell<usize> = SingleHartCell::new(0);
 
@@ -77,19 +77,19 @@ pub(crate) fn init_pmp() {
 
     // ─── PMP Adres Register'ları (linker script sırasıyla) ───
     //
-    // Bellek düzeni: .text → .rodata → .data → .bss → kernel_stack
-    //   → __pmp_data_end (Entry 5 TOR sınırı)
-    //   → .task_stacks (per-task NAPOT Entry 8)
-    //   → .wasm_arena (M-mode only, U-mode deny)
+    // Bellek düzeni: .text -> .rodata -> .data -> .bss -> kernel_stack
+    //   -> __pmp_data_end (Entry 5 TOR sınırı)
+    //   -> .task_stacks (per-task NAPOT Entry 8)
+    //   -> .wasm_arena (M-mode only, U-mode deny)
     //
     //   pmpaddr0 = text_start    (Entry 0: OFF, alt sınır)
-    //   pmpaddr1 = text_end      (Entry 1: TOR RX)  → .text
+    //   pmpaddr1 = text_end      (Entry 1: TOR RX)  -> .text
     //   pmpaddr2 = rodata_start  (Entry 2: OFF, alt sınır)
-    //   pmpaddr3 = rodata_end    (Entry 3: TOR R)   → .rodata
+    //   pmpaddr3 = rodata_end    (Entry 3: TOR R)   -> .rodata
     //   pmpaddr4 = data_start    (Entry 4: OFF, alt sınır)
-    //   pmpaddr5 = pmp_data_end  (Entry 5: TOR RW)  → .data+bss+kernel_stack
+    //   pmpaddr5 = pmp_data_end  (Entry 5: TOR RW)  -> .data+bss+kernel_stack
     //   pmpaddr6 = uart_start    (Entry 6: OFF, alt sınır)
-    //   pmpaddr7 = uart_end      (Entry 7: TOR RW)  → UART MMIO
+    //   pmpaddr7 = uart_end      (Entry 7: TOR RW)  -> UART MMIO
 
     pmp::write_pmpaddr(0, text_start);
     pmp::write_pmpaddr(1, text_end);
@@ -99,9 +99,9 @@ pub(crate) fn init_pmp() {
     pmp::write_pmpaddr(5, pmp_data_end);
 
     // U-21 GÖREV 3 [H4]: UART PMP entry 6/7 sadece debug/trace/self-test build'de.
-    // Production'da U-mode UART direct erişimi kapalı (no PMP match → implicit
+    // Production'da U-mode UART direct erişimi kapalı (no PMP match -> implicit
     // DENY); kernel UART trace'i M-mode unmatched access ile yapar (RISC-V spec).
-    // Eski hata: Entry 7 her build'de R+W+L → hostile U-mode task syscall/policy
+    // Eski hata: Entry 7 her build'de R+W+L -> hostile U-mode task syscall/policy
     // bypass ile UART flood + timing DoS yapabiliyordu.
     #[cfg(any(feature = "debug-boot", feature = "trace", feature = "self-test"))]
     {
@@ -116,7 +116,7 @@ pub(crate) fn init_pmp() {
 
     // ─── PMP Config (pmpcfg0) ───
     // L-bit: Entry kilitleme — M-mode da bu izinlere tabi.
-    // Eşleşmeyen adresler (CLINT 0x200_0000) → M-mode tam erişir (spec).
+    // Eşleşmeyen adresler (CLINT 0x200_0000) -> M-mode tam erişir (spec).
     // Scheduler PMP değiştirmediği için L-bit güvenle eklenebilir.
     #[cfg(any(feature = "debug-boot", feature = "trace", feature = "self-test"))]
     let configs: [u8; 8] = [

@@ -4,15 +4,14 @@
 //
 // Kural: SADECE WASM sandbox kullanır — kernel kodu asla alloc KULLANMAZ
 // Kural: dealloc = no-op (bump allocator, tek tek free yok)
-// Kural: epoch_reset() → offset sıfırla (modül değiştiğinde çağrılır)
-// Kural: OOM → null dön → alloc_error_handler → wfi loop (panic yok)
+// Kural: epoch_reset() -> offset sıfırla (modül değiştiğinde çağrılır)
+// Kural: OOM -> null dön -> alloc_error_handler -> wfi loop (panic yok)
 //
 // Kani Proof 58: offset asla WASM_HEAP_SIZE'ı aşmaz
 // Kani Proof 59: epoch_reset() sonrası offset == 0
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crate::common::config::WASM_HEAP_SIZE;
 use crate::common::sync::SingleHartCell;
 
 // ═══════════════════════════════════════════════════════
@@ -20,7 +19,22 @@ use crate::common::sync::SingleHartCell;
 // U-19 GÖREV 6: stale "64KB" yorum config sabitine güncellendi
 // ═══════════════════════════════════════════════════════
 
-/// WASM bellek arenası — config::WASM_HEAP_SIZE byte, .wasm_arena section'da.
+// U-22 GÖREV 8 [M14]: WASM arena feature-gated.
+// `wasm-sandbox` feature ON -> 4 MB .wasm_arena (production-out)
+// `wasm-sandbox` feature OFF -> 16-byte placeholder (ed25519 alloc trait
+// requires bir global_allocator slot ama path runtime'da yürümez).
+//
+// Production binary (default features): WASM_HEAP_SIZE_EFFECTIVE = 16 -> .wasm_arena
+// section neredeyse boş. ed25519-dalek verify path zaten alloc çağırmaz; OOM
+// olursa alloc_error_handler tetiklenir -> wfi (fail-closed).
+
+#[cfg(feature = "wasm-sandbox")]
+const WASM_HEAP_SIZE: usize = crate::common::config::WASM_HEAP_SIZE;
+
+#[cfg(not(feature = "wasm-sandbox"))]
+const WASM_HEAP_SIZE: usize = 16;
+
+/// WASM bellek arenası — feature-gated boyut, .wasm_arena section'da.
 /// PMP Entry 5 dışında: U-mode DENY, M-mode erişir (Wasmi interpreter M-mode'da).
 #[link_section = ".wasm_arena"]
 static ARENA: SingleHartCell<[u8; WASM_HEAP_SIZE]> = SingleHartCell::new([0u8; WASM_HEAP_SIZE]);
@@ -51,10 +65,10 @@ unsafe impl GlobalAlloc for BumpAllocator {
 
         // Sprint U-16: wrapping_add wrap riski — old yakın u64::MAX olursa
         // aligned küçük bir değere wrap edip "geçerli" gibi geçebilir.
-        // checked_add ile overflow → erken OOM.
+        // checked_add ile overflow -> erken OOM.
         let aligned = match old.checked_add(align - 1) {
             Some(a) => a & !(align - 1),
-            None => return core::ptr::null_mut(), // align hesabında overflow → OOM
+            None => return core::ptr::null_mut(), // align hesabında overflow -> OOM
         };
 
         // Hizalanmış başlangıç adresi arena içinde mi?
@@ -65,12 +79,12 @@ unsafe impl GlobalAlloc for BumpAllocator {
         // Yeni son ofset — overflow kontrolü
         let new_end = match aligned.checked_add(size) {
             Some(v) => v,
-            None    => return core::ptr::null_mut(), // aritmetik taşma → OOM
+            None    => return core::ptr::null_mut(), // aritmetik taşma -> OOM
         };
 
         // Arena sınır kontrolü: hem aligned hem new_end kontrol edilmeli
         if new_end > WASM_HEAP_SIZE {
-            return core::ptr::null_mut(); // OOM → alloc_error_handler devreye girer
+            return core::ptr::null_mut(); // OOM -> alloc_error_handler devreye girer
         }
 
         // Atomik güncelleme (tek hart, Relaxed yeterli)

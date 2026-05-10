@@ -262,7 +262,7 @@ CRC32 bit-by-bit hesaplanır — lookup table yok. Kernel-enforced auto-CRC v2.0
 
 ### 9.1 Tasarım
 
-128 kayıt × 64 byte = 8KB circular buffer. Her kayıt: MAGIC (4B "SPHI"), version (2B), sequence (2B), timestamp (4B), task_id (1B), event (1B), data (46B), CRC32 (4B). Sadece kernel yazar — PMP ile korunur.
+128 kayıt × 64 byte = 8KB circular buffer. Her kayıt: MAGIC (4B "SPHI"), version (2B), pad (2B alignment), sequence (4B u32), timestamp (4B), task_id (1B), event (1B), data (42B), CRC32 (4B). Sadece kernel yazar — PMP ile korunur.
 
 ### 9.2 Power-Loss Koruması
 

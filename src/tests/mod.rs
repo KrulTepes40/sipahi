@@ -43,56 +43,56 @@ pub fn test_policy_engine() {
     {
         use kernel::policy::{decide_action, FailureMode, PolicyEvent};
 
-        // Budget aşımı: restart_count=0 → RESTART, count=1 → DEGRADE
+        // Budget aşımı: restart_count=0 -> RESTART, count=1 -> DEGRADE
         let a1 = decide_action(PolicyEvent::BudgetExhausted as u8, 0, 3);
         let a2 = decide_action(PolicyEvent::BudgetExhausted as u8, 1, 3);
         test_result(a1 == FailureMode::Restart,
-            "[TEST] Budget(0)→Restart ✓",
-            "[TEST] Budget(0)→Restart FAIL ✗");
+            "[TEST] Budget(0)->Restart [OK]",
+            "[TEST] Budget(0)->Restart FAIL [FAIL]");
         test_result(a2 == FailureMode::Degrade,
-            "[TEST] Budget(1)→Degrade ✓",
-            "[TEST] Budget(1)→Degrade FAIL ✗");
+            "[TEST] Budget(1)->Degrade [OK]",
+            "[TEST] Budget(1)->Degrade FAIL [FAIL]");
 
-        // Cap violation → her zaman ISOLATE
+        // Cap violation -> her zaman ISOLATE
         let a3 = decide_action(PolicyEvent::CapViolation as u8, 0, 0);
         test_result(a3 == FailureMode::Isolate,
-            "[TEST] CapViolation→Isolate ✓",
-            "[TEST] CapViolation→Isolate FAIL ✗");
+            "[TEST] CapViolation->Isolate [OK]",
+            "[TEST] CapViolation->Isolate FAIL [FAIL]");
 
-        // PMP fail → her zaman SHUTDOWN
+        // PMP fail -> her zaman SHUTDOWN
         let a4 = decide_action(PolicyEvent::PmpIntegrityFail as u8, 0, 0);
         test_result(a4 == FailureMode::Shutdown,
-            "[TEST] PmpFail→Shutdown ✓",
-            "[TEST] PmpFail→Shutdown FAIL ✗");
+            "[TEST] PmpFail->Shutdown [OK]",
+            "[TEST] PmpFail->Shutdown FAIL [FAIL]");
 
-        // Deadline miss: DAL-A → FAILOVER, DAL-D → ISOLATE
+        // Deadline miss: DAL-A -> FAILOVER, DAL-D -> ISOLATE
         let a5 = decide_action(PolicyEvent::DeadlineMiss as u8, 0, 0);
         let a6 = decide_action(PolicyEvent::DeadlineMiss as u8, 0, 3);
         test_result(a5 == FailureMode::Failover,
-            "[TEST] DeadlineMiss DAL-A→Failover ✓",
-            "[TEST] DeadlineMiss DAL-A FAIL ✗");
+            "[TEST] DeadlineMiss DAL-A->Failover [OK]",
+            "[TEST] DeadlineMiss DAL-A FAIL [FAIL]");
         test_result(a6 == FailureMode::Isolate,
-            "[TEST] DeadlineMiss DAL-D→Isolate ✓",
-            "[TEST] DeadlineMiss DAL-D FAIL ✗");
+            "[TEST] DeadlineMiss DAL-D->Isolate [OK]",
+            "[TEST] DeadlineMiss DAL-D FAIL [FAIL]");
 
-        // Sprint U-11: StackOverflow escalation (restart 0-2 → Restart, 3+ → Isolate)
+        // Sprint U-11: StackOverflow escalation (restart 0-2 -> Restart, 3+ -> Isolate)
         let a_so = decide_action(PolicyEvent::StackOverflow as u8, 0, 2);
         test_result(a_so == FailureMode::Restart,
-            "[TEST] StackOverflow(0)→Restart ✓",
-            "[TEST] StackOverflow(0)→Restart FAIL ✗");
+            "[TEST] StackOverflow(0)->Restart [OK]",
+            "[TEST] StackOverflow(0)->Restart FAIL [FAIL]");
 
         let a_so3 = decide_action(PolicyEvent::StackOverflow as u8, 3, 2);
         test_result(a_so3 == FailureMode::Isolate,
-            "[TEST] StackOverflow(3)→Isolate ✓",
-            "[TEST] StackOverflow(3)→Isolate FAIL ✗");
+            "[TEST] StackOverflow(3)->Isolate [OK]",
+            "[TEST] StackOverflow(3)->Isolate FAIL [FAIL]");
 
-        // Sprint U-11: MultiModuleCrash → Shutdown
+        // Sprint U-11: MultiModuleCrash -> Shutdown
         let a_mc = decide_action(PolicyEvent::MultiModuleCrash as u8, 0, 0);
         test_result(a_mc == FailureMode::Shutdown,
-            "[TEST] MultiModuleCrash→Shutdown ✓",
-            "[TEST] MultiModuleCrash→Shutdown FAIL ✗");
+            "[TEST] MultiModuleCrash->Shutdown [OK]",
+            "[TEST] MultiModuleCrash->Shutdown FAIL [FAIL]");
 
-        arch::uart::println("[TEST] ★ Policy engine OK ★");
+        arch::uart::println("[TEST] * Policy engine OK *");
     }
 }
 
@@ -117,17 +117,17 @@ pub fn test_capability_broker() {
         tok.nonce = 42;
         broker::sign_token(&mut tok); // SipahiMAC-STUB
 
-        // 3. Full validate → cache'e ekler
+        // 3. Full validate -> cache'e ekler
         let v = broker::validate_full(&tok, 0); // task_id=0 (boot context)
-        test_result(v, "[TEST] validate_full OK ✓", "[TEST] validate_full FAIL ✗");
+        test_result(v, "[TEST] validate_full OK [OK]", "[TEST] validate_full FAIL [FAIL]");
 
         // 4. Cache hit via syscall (~10c)
         let r = kernel::syscall::cap_invoke(1, 1, ACTION_READ as usize, 0);
-        test_result(r == 0, "[TEST] cap_invoke (cache) OK ✓", "[TEST] cap_invoke FAIL ✗");
+        test_result(r == 0, "[TEST] cap_invoke (cache) OK [OK]", "[TEST] cap_invoke FAIL [FAIL]");
 
-        // 5. Cache miss → DENIED (token hiç validate edilmedi)
+        // 5. Cache miss -> DENIED (token hiç validate edilmedi)
         let r2 = kernel::syscall::cap_invoke(99, 7, ACTION_READ as usize, 0);
-        test_result(r2 != 0, "[TEST] cap_invoke (miss) DENIED ✓", "[TEST] cap_invoke miss FAIL ✗");
+        test_result(r2 != 0, "[TEST] cap_invoke (miss) DENIED [OK]", "[TEST] cap_invoke miss FAIL [FAIL]");
     }
     // yield testi task içinden yapılacak — boot sırasında schedule() crash yapar
     // let r = kernel::syscall::yield_cpu();
@@ -141,17 +141,17 @@ pub fn test_ipc() {
     let mut ipc_pass: u32 = 0;
     let mut ipc_fail: u32 = 0;
 
-    // Test 1: Boş kanaldan recv → None
+    // Test 1: Boş kanaldan recv -> None
     if let Some(ch) = ipc::get_channel(0) {
         if ch.recv().is_none() {
-            arch::uart::println("[TEST] Empty recv → None ✓");
+            arch::uart::println("[TEST] Empty recv -> None [OK]");
             ipc_pass += 1;
         } else {
-            arch::uart::println("[TEST] Empty recv → FAIL ✗");
+            arch::uart::println("[TEST] Empty recv -> FAIL [FAIL]");
             ipc_fail += 1;
         }
     } else {
-        arch::uart::println("[TEST] Channel 0 → FAIL ✗");
+        arch::uart::println("[TEST] Channel 0 -> FAIL [FAIL]");
         ipc_fail += 1;
     }
 
@@ -163,10 +163,10 @@ pub fn test_ipc() {
         msg.data[2] = 0xCD;
         msg.set_crc();
         if msg.verify_crc() {
-            arch::uart::println("[TEST] CRC set/verify ✓");
+            arch::uart::println("[TEST] CRC set/verify [OK]");
             ipc_pass += 1;
         } else {
-            arch::uart::println("[TEST] CRC set/verify FAIL ✗");
+            arch::uart::println("[TEST] CRC set/verify FAIL [FAIL]");
             ipc_fail += 1;
         }
     }
@@ -179,35 +179,35 @@ pub fn test_ipc() {
         msg.set_crc();
 
         if ch.send(&msg).is_ok() {
-            arch::uart::println("[TEST] Send OK ✓");
+            arch::uart::println("[TEST] Send OK [OK]");
             ipc_pass += 1;
         } else {
-            arch::uart::println("[TEST] Send FAIL ✗");
+            arch::uart::println("[TEST] Send FAIL [FAIL]");
             ipc_fail += 1;
         }
 
         if let Some(received) = ch.recv() {
             if received.data[0] == 0x42 && received.data[1] == 0xAB && received.verify_crc() {
-                arch::uart::println("[TEST] Recv → data + CRC valid ✓");
+                arch::uart::println("[TEST] Recv -> data + CRC valid [OK]");
                 ipc_pass += 1;
             } else {
-                arch::uart::println("[TEST] Recv → data mismatch ✗");
+                arch::uart::println("[TEST] Recv -> data mismatch [FAIL]");
                 ipc_fail += 1;
             }
         } else {
-            arch::uart::println("[TEST] Recv → None (unexpected) ✗");
+            arch::uart::println("[TEST] Recv -> None (unexpected) [FAIL]");
             ipc_fail += 1;
         }
 
         if ch.recv().is_none() {
-            arch::uart::println("[TEST] Second recv → None ✓");
+            arch::uart::println("[TEST] Second recv -> None [OK]");
             ipc_pass += 1;
         } else {
-            arch::uart::println("[TEST] Second recv → FAIL ✗");
+            arch::uart::println("[TEST] Second recv -> FAIL [FAIL]");
             ipc_fail += 1;
         }
     } else {
-        arch::uart::println("[TEST] Channel 0 → FAIL ✗");
+        arch::uart::println("[TEST] Channel 0 -> FAIL [FAIL]");
         ipc_fail += 3;
     }
 
@@ -226,18 +226,18 @@ pub fn test_ipc() {
         }
         arch::uart::puts("[TEST] Buffer full at ");
         print_u32(sent);
-        arch::uart::println(" messages ✓");
+        arch::uart::println(" messages [OK]");
         ipc_pass += 1;
 
         if ch.send(&msg).is_err() {
-            arch::uart::println("[TEST] Send when full → Err ✓");
+            arch::uart::println("[TEST] Send when full -> Err [OK]");
             ipc_pass += 1;
         } else {
-            arch::uart::println("[TEST] Send when full → FAIL ✗");
+            arch::uart::println("[TEST] Send when full -> FAIL [FAIL]");
             ipc_fail += 1;
         }
     } else {
-        arch::uart::println("[TEST] Channel 1 → FAIL ✗");
+        arch::uart::println("[TEST] Channel 1 -> FAIL [FAIL]");
         ipc_fail += 2;
     }
 
@@ -248,10 +248,10 @@ pub fn test_ipc() {
         msg.set_crc();
         msg.data[0] = 0x00; // boz
         if !msg.verify_crc() {
-            arch::uart::println("[TEST] Tampered CRC → fail ✓");
+            arch::uart::println("[TEST] Tampered CRC -> fail [OK]");
             ipc_pass += 1;
         } else {
-            arch::uart::println("[TEST] Tampered CRC → FAIL ✗");
+            arch::uart::println("[TEST] Tampered CRC -> FAIL [FAIL]");
             ipc_fail += 1;
         }
     }
@@ -259,10 +259,10 @@ pub fn test_ipc() {
     // Test 6: Geçersiz kanal
     {
         if ipc::get_channel(8).is_none() {
-            arch::uart::println("[TEST] Channel 8 → None ✓");
+            arch::uart::println("[TEST] Channel 8 -> None [OK]");
             ipc_pass += 1;
         } else {
-            arch::uart::println("[TEST] Channel 8 → FAIL ✗");
+            arch::uart::println("[TEST] Channel 8 -> FAIL [FAIL]");
             ipc_fail += 1;
         }
     }
@@ -274,9 +274,9 @@ pub fn test_ipc() {
     print_u32(ipc_fail);
     arch::uart::println(" failed");
     if ipc_fail == 0 {
-        arch::uart::println("[TEST] ★ All IPC tests PASSED ★");
+        arch::uart::println("[TEST] * All IPC tests PASSED *");
     } else {
-        arch::uart::println("[TEST] ✗ IPC FAILURES ✗");
+        arch::uart::println("[TEST] [FAIL] IPC FAILURES [FAIL]");
     }
     // IPC fail sayısını global sayaca ekle
     // SAFETY: Single-hart, boot sequence, no concurrent access.
@@ -289,9 +289,9 @@ pub fn test_wcet_limits() {
     arch::uart::println("[TEST] WCET regression check...");
     let ok = kernel::syscall::dispatch::check_wcet_limits();
     if ok {
-        arch::uart::println("[TEST] ★ WCET limits OK ★");
+        arch::uart::println("[TEST] * WCET limits OK *");
     } else {
-        arch::uart::println("[TEST] ⚠ WCET limit exceeded (QEMU TCG — informational only)");
+        arch::uart::println("[TEST] [WARN] WCET limit exceeded (QEMU TCG — informational only)");
     }
 }
 
@@ -314,16 +314,16 @@ pub fn test_crypto() {
         let mut i: usize = 0;
         while i < 16 { if h1a[i] != h1b[i] { same = false; } i += 1; }
         test_result(same,
-            "[SEC] BLAKE3 deterministik ✓",
-            "[SEC] BLAKE3 deterministik FAIL ✗");
+            "[SEC] BLAKE3 deterministik [OK]",
+            "[SEC] BLAKE3 deterministik FAIL [FAIL]");
 
         let h2 = Blake3Provider::keyed_hash(&key2, &data);
         let mut different = false;
         let mut j: usize = 0;
         while j < 16 { if h1a[j] != h2[j] { different = true; } j += 1; }
         test_result(different,
-            "[SEC] BLAKE3 key-binding ✓",
-            "[SEC] BLAKE3 key-binding FAIL ✗");
+            "[SEC] BLAKE3 key-binding [OK]",
+            "[SEC] BLAKE3 key-binding FAIL [FAIL]");
     }
 
     // Ed25519 — test-keys feature ile
@@ -334,21 +334,21 @@ pub fn test_crypto() {
 
         let valid = secure_boot_check(&[], &QEMU_TEST_PUBKEY, &QEMU_TEST_SIGNATURE);
         test_result(valid,
-            "[SEC] Ed25519 RFC8032 TV1 ✓",
-            "[SEC] Ed25519 RFC8032 TV1 FAIL ✗");
+            "[SEC] Ed25519 RFC8032 TV1 [OK]",
+            "[SEC] Ed25519 RFC8032 TV1 FAIL [FAIL]");
 
         let mut bad_sig = QEMU_TEST_SIGNATURE;
         bad_sig[0] ^= 0xFF;
         let rejected = secure_boot_check(&[], &QEMU_TEST_PUBKEY, &bad_sig);
         test_result(!rejected,
-            "[SEC] Ed25519 tampered sig RED ✓",
-            "[SEC] Ed25519 tamper tespiti FAIL ✗");
+            "[SEC] Ed25519 tampered sig RED [OK]",
+            "[SEC] Ed25519 tamper tespiti FAIL [FAIL]");
 
         let wrong_key = [0xFFu8; 32];
         let rejected2 = secure_boot_check(&[], &wrong_key, &QEMU_TEST_SIGNATURE);
         test_result(!rejected2,
-            "[SEC] Ed25519 wrong key RED ✓",
-            "[SEC] Ed25519 wrong key FAIL ✗");
+            "[SEC] Ed25519 wrong key RED [OK]",
+            "[SEC] Ed25519 wrong key FAIL [FAIL]");
     }
     #[cfg(not(feature = "test-keys"))]
     arch::uart::println("[SEC] Ed25519 tests SKIP (no test-keys)");
@@ -390,12 +390,12 @@ pub fn test_wasm() {
         let mut ws = WasmSandbox::new();
         match ws.load_module(WASM_SIMPLE) {
             Ok(n) => { arch::uart::puts("[WASM] Module loaded: "); print_u32(n as u32); arch::uart::println(" bytes"); }
-            Err(_) => test_fail("[WASM] Load FAIL ✗"),
+            Err(_) => test_fail("[WASM] Load FAIL [FAIL]"),
         }
         match ws.execute("run", 100_000) {
-            Ok(42) => arch::uart::println("[WASM] Execute: OK, result=42 ✓"),
-            Ok(_)  => test_fail("[WASM] Execute: yanlış sonuç ✗"),
-            Err(_) => test_fail("[WASM] Execute FAIL ✗"),
+            Ok(42) => arch::uart::println("[WASM] Execute: OK, result=42 [OK]"),
+            Ok(_)  => test_fail("[WASM] Execute: yanlış sonuç [FAIL]"),
+            Err(_) => test_fail("[WASM] Execute FAIL [FAIL]"),
         }
     }
     // Test 2: Fuel tükenmesi
@@ -404,23 +404,23 @@ pub fn test_wasm() {
         let _ = ws.load_module(WASM_SIMPLE);
         match ws.execute("run", 0) {
             Err(SandboxError::FuelExhausted) | Err(SandboxError::Trapped) =>
-                arch::uart::println("[WASM] Fuel exhaustion: TRAPPED ✓"),
-            Ok(_)  => test_fail("[WASM] Fuel test: beklenen trap gelmedi ✗"),
-            Err(_) => test_fail("[WASM] Fuel test: başka hata ✗"),
+                arch::uart::println("[WASM] Fuel exhaustion: TRAPPED [OK]"),
+            Ok(_)  => test_fail("[WASM] Fuel test: beklenen trap gelmedi [FAIL]"),
+            Err(_) => test_fail("[WASM] Fuel test: başka hata [FAIL]"),
         }
     }
     // Test 3: Float reject
     match WasmSandbox::check_module(WASM_FLOAT_OPS) {
-        Err(SandboxError::FloatOpcodes) => arch::uart::println("[WASM] Float reject: REJECTED ✓"),
-        _ => test_fail("[WASM] Float reject FAIL ✗"),
+        Err(SandboxError::FloatOpcodes) => arch::uart::println("[WASM] Float reject: REJECTED [OK]"),
+        _ => test_fail("[WASM] Float reject FAIL [FAIL]"),
     }
     // Test 4: Epoch reset + reload
     {
         sandbox::allocator::epoch_reset();
         let mut ws = WasmSandbox::new();
         match ws.load_module(WASM_SIMPLE) {
-            Ok(_) => arch::uart::println("[WASM] Epoch reset + reload: OK ✓"),
-            Err(_) => test_fail("[WASM] Epoch reset reload FAIL ✗"),
+            Ok(_) => arch::uart::println("[WASM] Epoch reset + reload: OK [OK]"),
+            Err(_) => test_fail("[WASM] Epoch reset reload FAIL [FAIL]"),
         }
     }
     arch::uart::println("[WASM] Sprint 12 PASS");
@@ -460,9 +460,9 @@ pub fn test_blackbox() {
             idx += 1;
         }
         test_result(bb_pass,
-            "[TEST] Blackbox records all valid ✓",
-            "[TEST] Blackbox record CRC FAIL ✗");
-        arch::uart::println("[TEST] ★ Blackbox OK ★");
+            "[TEST] Blackbox records all valid [OK]",
+            "[TEST] Blackbox record CRC FAIL [FAIL]");
+        arch::uart::println("[TEST] * Blackbox OK *");
     }
     arch::uart::println("");
 }
@@ -477,24 +477,24 @@ pub fn post() {
     if crc_result != 0xCBF4_3926 {
         crate::common::halt_system("[POST] FAIL: CRC32 engine corrupted — HALT");
     }
-    arch::uart::println("[POST] CRC32 engine ✓");
+    arch::uart::println("[POST] CRC32 engine [OK]");
 
     // 2. PMP integrity
     if !kernel::memory::verify_pmp_integrity() {
         crate::common::halt_system("[POST] FAIL: PMP registers corrupted — HALT");
     }
-    arch::uart::println("[POST] PMP integrity ✓");
+    arch::uart::println("[POST] PMP integrity [OK]");
 
     // 3. Policy engine — PMP fail her zaman Shutdown
     let action = kernel::policy::decide_action(5, 0, 0);
     if action != kernel::policy::FailureMode::Shutdown {
         crate::common::halt_system("[POST] FAIL: Policy engine corrupted — HALT");
     }
-    arch::uart::println("[POST] Policy engine ✓");
+    arch::uart::println("[POST] Policy engine [OK]");
 
     // 4. mstatus CSR accessible (M-mode privilege implicit check)
     // NOT: MPP = previous-trap mode, NOT current mode. Current M-mode is
-    // implicit: this CSR read only succeeds in M-mode (U-mode → illegal inst).
+    // implicit: this CSR read only succeeds in M-mode (U-mode -> illegal inst).
     // MPP valid values: 0 (U), 3 (M). 1 (S) not used, 2 reserved.
     {
         let mstatus = crate::arch::csr::read_mstatus();
@@ -503,7 +503,7 @@ pub fn post() {
         if mpp == 2 {
             crate::common::halt_system("[POST] FAIL: mstatus.MPP reserved value — HALT");
         }
-        arch::uart::println("[POST] M-mode CSR access (mstatus) ✓");
+        arch::uart::println("[POST] M-mode CSR access (mstatus) [OK]");
     }
 
     // 5. mtvec set edilmiş mi (boot::init'te yazıldı)
@@ -512,7 +512,7 @@ pub fn post() {
         if mtvec == 0 {
             crate::common::halt_system("[POST] FAIL: mtvec = 0 — trap handler not set — HALT");
         }
-        arch::uart::println("[POST] mtvec set ✓");
+        arch::uart::println("[POST] mtvec set [OK]");
     }
 
     // 6. BLAKE3 determinism + non-zero output self-test
@@ -524,7 +524,7 @@ pub fn post() {
         let data = [0x01u8, 0x02, 0x03, 0x04];
         let h1 = Crypto::keyed_hash(&key, &data);
         let h2 = Crypto::keyed_hash(&key, &data);
-        // Determinism: aynı input → aynı output
+        // Determinism: aynı input -> aynı output
         let mut same = true;
         let mut i = 0;
         while i < 16 { if h1[i] != h2[i] { same = false; } i += 1; }
@@ -538,7 +538,7 @@ pub fn post() {
         if all_zero {
             crate::common::halt_system("[POST] FAIL: BLAKE3 zero output — HALT");
         }
-        arch::uart::println("[POST] BLAKE3 self-test ✓");
+        arch::uart::println("[POST] BLAKE3 self-test [OK]");
     }
 
     // 7. Ed25519 known-vector self-test (sadece test-keys feature ile)
@@ -550,7 +550,7 @@ pub fn post() {
         if !valid {
             crate::common::halt_system("[POST] FAIL: Ed25519 RFC8032 TV1 — HALT");
         }
-        arch::uart::println("[POST] Ed25519 self-test ✓");
+        arch::uart::println("[POST] Ed25519 self-test [OK]");
     }
     #[cfg(not(feature = "test-keys"))]
     arch::uart::println("[POST] Ed25519 SKIP (no test-keys)");
@@ -573,7 +573,7 @@ pub fn post() {
                 &[0x50, 0x4F, 0x53], // "POS" — POST marker
             );
         } else {
-            arch::uart::println("[POST] CLINT timer ✓");
+            arch::uart::println("[POST] CLINT timer [OK]");
         }
     }
 
@@ -599,11 +599,11 @@ pub fn post() {
                 &[0x49, 0x53, 0x41], // "ISA" marker
             );
         } else {
-            arch::uart::println("[POST] misa ISA identity ✓");
+            arch::uart::println("[POST] misa ISA identity [OK]");
         }
     }
 
-    arch::uart::println("[POST] ★ All self-tests PASSED ★");
+    arch::uart::println("[POST] * All self-tests PASSED *");
 }
 
 /// Per-task PMP NAPOT testi
@@ -614,18 +614,18 @@ pub fn test_pmp_napot() {
     // SAFETY: Single-hart, boot post-init, no concurrent task access. SingleHartCell read.
     let napot = unsafe { kernel::scheduler::TASKS.get()[0].pmp_addr_napot };
     if napot == 0 {
-        test_fail("[TEST] PMP NAPOT: pmp_addr_napot = 0 FAIL ✗");
+        test_fail("[TEST] PMP NAPOT: pmp_addr_napot = 0 FAIL [FAIL]");
         return;
     }
-    arch::uart::println("[TEST] PMP NAPOT: addr nonzero ✓");
+    arch::uart::println("[TEST] PMP NAPOT: addr nonzero [OK]");
 
     // Stack base 8KB aligned?
     let decoded_base = (napot & !0x3FF) << 2;
     if decoded_base % 8192 != 0 {
-        test_fail("[TEST] PMP NAPOT: stack not 8KB aligned FAIL ✗");
+        test_fail("[TEST] PMP NAPOT: stack not 8KB aligned FAIL [FAIL]");
         return;
     }
-    arch::uart::println("[TEST] PMP NAPOT: 8KB aligned ✓");
+    arch::uart::println("[TEST] PMP NAPOT: 8KB aligned [OK]");
 
     // NAPOT decode == stack base?
     // SAFETY: Single-hart, static address read of TASK_STACKS[0]. No deref of pointer.
@@ -633,11 +633,11 @@ pub fn test_pmp_napot() {
         &kernel::scheduler::TASK_STACKS.get()[0].0 as *const _ as usize
     };
     if decoded_base != stack_base {
-        test_fail("[TEST] PMP NAPOT: decode mismatch FAIL ✗");
+        test_fail("[TEST] PMP NAPOT: decode mismatch FAIL [FAIL]");
         return;
     }
-    arch::uart::println("[TEST] PMP NAPOT: decode matches stack base ✓");
-    arch::uart::println("[TEST] ★ PMP NAPOT OK ★");
+    arch::uart::println("[TEST] PMP NAPOT: decode matches stack base [OK]");
+    arch::uart::println("[TEST] * PMP NAPOT OK *");
 }
 
 // ═══════════════════════════════════════════════════════
@@ -649,19 +649,19 @@ pub fn test_fault_injection() {
     arch::uart::println("");
     arch::uart::println("[FI] Fault injection tests...");
 
-    // FI-3: IPC CRC corruption → receiver reject
+    // FI-3: IPC CRC corruption -> receiver reject
     fi_ipc_crc_corruption();
 
-    // FI-4: Capability MAC forgery → validate_full reject
+    // FI-4: Capability MAC forgery -> validate_full reject
     fi_mac_forgery();
 
-    // FI-7: Policy budget exhaustion → DEGRADE decision
+    // FI-7: Policy budget exhaustion -> DEGRADE decision
     fi_budget_exhaustion_policy();
 
-    arch::uart::println("[FI] ★ All FI tests PASSED ★");
+    arch::uart::println("[FI] * All FI tests PASSED *");
 }
 
-/// FI-3: IPC mesajı corrupt → CRC doğrulama reddetmeli
+/// FI-3: IPC mesajı corrupt -> CRC doğrulama reddetmeli
 fn fi_ipc_crc_corruption() {
     // Geçerli mesaj oluştur
     let mut msg = ipc::IpcMessage::zeroed();
@@ -671,7 +671,7 @@ fn fi_ipc_crc_corruption() {
 
     // CRC doğru olduğunu kontrol et
     if !msg.verify_crc() {
-        test_fail("[FI-3] CRC set failed ✗");
+        test_fail("[FI-3] CRC set failed [FAIL]");
         return;
     }
 
@@ -680,13 +680,13 @@ fn fi_ipc_crc_corruption() {
 
     // CRC artık tutmamalı
     if msg.verify_crc() {
-        test_fail("[FI-3] CRC corruption NOT detected ✗");
+        test_fail("[FI-3] CRC corruption NOT detected [FAIL]");
     } else {
-        test_pass("[FI-3] CRC corruption detected ✓");
+        test_pass("[FI-3] CRC corruption detected [OK]");
     }
 }
 
-/// FI-4: Token MAC forgery → broker reddetmeli
+/// FI-4: Token MAC forgery -> broker reddetmeli
 #[cfg(feature = "fast-crypto")]
 fn fi_mac_forgery() {
     use kernel::capability::{Token, ACTION_READ};
@@ -704,10 +704,10 @@ fn fi_mac_forgery() {
 
     let valid = broker::validate_full(&tok, 0);
     if !valid {
-        test_fail("[FI-4] Valid token rejected ✗");
+        test_fail("[FI-4] Valid token rejected [FAIL]");
         return;
     }
-    test_pass("[FI-4] Valid token accepted ✓");
+    test_pass("[FI-4] Valid token accepted [OK]");
 
     // MAC'ı corrupt et + cache bypass (farklı resource)
     let mut forged = tok;
@@ -717,9 +717,9 @@ fn fi_mac_forgery() {
 
     let rejected = broker::validate_full(&forged, 0);
     if rejected {
-        test_fail("[FI-4] Forged MAC accepted ✗");
+        test_fail("[FI-4] Forged MAC accepted [FAIL]");
     } else {
-        test_pass("[FI-4] Forged MAC rejected ✓");
+        test_pass("[FI-4] Forged MAC rejected [OK]");
     }
 }
 
@@ -729,33 +729,33 @@ fn fi_mac_forgery() {
     arch::uart::println("[FI-4] SKIP (no fast-crypto)");
 }
 
-/// FI-7: Budget exhaustion → policy DEGRADE escalation
+/// FI-7: Budget exhaustion -> policy DEGRADE escalation
 fn fi_budget_exhaustion_policy() {
     use kernel::policy::{decide_action, FailureMode, PolicyEvent};
 
-    // İlk budget exhaustion → RESTART
+    // İlk budget exhaustion -> RESTART
     let a1 = decide_action(PolicyEvent::BudgetExhausted as u8, 0, 2); // DAL-C
     if a1 != FailureMode::Restart {
-        test_fail("[FI-7] Budget(0) != Restart ✗");
+        test_fail("[FI-7] Budget(0) != Restart [FAIL]");
         return;
     }
-    test_pass("[FI-7] Budget(0) → Restart ✓");
+    test_pass("[FI-7] Budget(0) -> Restart [OK]");
 
-    // İkinci budget exhaustion → DEGRADE
+    // İkinci budget exhaustion -> DEGRADE
     let a2 = decide_action(PolicyEvent::BudgetExhausted as u8, 1, 2);
     if a2 != FailureMode::Degrade {
-        test_fail("[FI-7] Budget(1) != Degrade ✗");
+        test_fail("[FI-7] Budget(1) != Degrade [FAIL]");
         return;
     }
-    test_pass("[FI-7] Budget(1) → Degrade ✓");
+    test_pass("[FI-7] Budget(1) -> Degrade [OK]");
 
-    // Üçüncü ve sonrası → hâlâ DEGRADE (saturated)
+    // Üçüncü ve sonrası -> hâlâ DEGRADE (saturated)
     let a3 = decide_action(PolicyEvent::BudgetExhausted as u8, 255, 2);
     if a3 != FailureMode::Degrade {
-        test_fail("[FI-7] Budget(255) != Degrade ✗");
+        test_fail("[FI-7] Budget(255) != Degrade [FAIL]");
         return;
     }
-    test_pass("[FI-7] Budget(255) → Degrade (saturated) ✓");
+    test_pass("[FI-7] Budget(255) -> Degrade (saturated) [OK]");
 }
 
 // ═══════════════════════════════════════════════════════
@@ -767,11 +767,11 @@ fn fi_budget_exhaustion_policy() {
 fn test_cross_task_pointer_rejected() {
     let range = crate::kernel::scheduler::task_stack_range(0);
     if let Some((base, _top)) = range {
-        // Task 1, Task 0'ın stack base'ini pointer olarak veriyor → REJECT
+        // Task 1, Task 0'ın stack base'ini pointer olarak veriyor -> REJECT
         let result = crate::kernel::syscall::dispatch::test_is_valid_user_ptr(1, base, 64);
         test_result(!result,
-            "[PASS] cross_task_pointer_rejected ✓",
-            "[FAIL] cross_task_pointer_rejected ✗");
+            "[PASS] cross_task_pointer_rejected [OK]",
+            "[FAIL] cross_task_pointer_rejected [FAIL]");
     } else {
         test_result(false, "", "[FAIL] task_stack_range returned None");
     }
@@ -782,29 +782,29 @@ fn test_token_owner_mismatch_neg() {
     let mismatch = !crate::kernel::capability::broker::token_owner_matches(0, 1);
     let matching = crate::kernel::capability::broker::token_owner_matches(0, 0);
     test_result(mismatch && matching,
-        "[PASS] token_owner_mismatch_rejected ✓",
-        "[FAIL] token_owner_mismatch_rejected ✗");
+        "[PASS] token_owner_mismatch_rejected [OK]",
+        "[FAIL] token_owner_mismatch_rejected [FAIL]");
 }
 
 /// Test 3: IPC wrong owner reddediliyor mu (U-16 Bug 7)
 fn test_ipc_wrong_owner_rejected() {
-    // Channel 0: A(id=0) → B(id=1). Task 1 send DENİ.
+    // Channel 0: A(id=0) -> B(id=1). Task 1 send DENİ.
     let deny_send = !crate::ipc::can_send(0, 1);
     // Channel 0: B(id=1) recv. Task 0 recv DENİ.
     let deny_recv = !crate::ipc::can_recv(0, 0);
     // Channel 7 atanmamış (default deny)
     let deny_unassigned = !crate::ipc::can_send(7, 0);
     test_result(deny_send && deny_recv && deny_unassigned,
-        "[PASS] ipc_wrong_owner_rejected ✓",
-        "[FAIL] ipc_wrong_owner_rejected ✗");
+        "[PASS] ipc_wrong_owner_rejected [OK]",
+        "[FAIL] ipc_wrong_owner_rejected [FAIL]");
 }
 
 /// Test 4: PMP integrity verify çalışıyor mu (U-4 + U-16)
 fn test_pmp_integrity() {
     let ok = crate::kernel::memory::verify_pmp_integrity();
     test_result(ok,
-        "[PASS] pmp_integrity ✓",
-        "[FAIL] pmp_integrity ✗");
+        "[PASS] pmp_integrity [OK]",
+        "[FAIL] pmp_integrity [FAIL]");
 }
 
 /// Test 5: Blackbox log crash-free mi (U-16 BB_WRITE_POS guard)
@@ -815,14 +815,14 @@ fn test_blackbox_log_safe() {
     );
     // Crash olmadıysa pass
     test_result(true,
-        "[PASS] blackbox_log_safe ✓",
-        "[FAIL] blackbox_log_safe ✗");
+        "[PASS] blackbox_log_safe [OK]",
+        "[FAIL] blackbox_log_safe [FAIL]");
 }
 
 /// Test 6: Allocator overflow safe mi (U-16 checked_add)
 fn test_allocator_overflow() {
     use core::alloc::{GlobalAlloc, Layout};
-    // 1 byte allocation, 1<<30 alignment → checked_add overflow
+    // 1 byte allocation, 1<<30 alignment -> checked_add overflow
     if let Ok(layout) = Layout::from_size_align(1, 1 << 30) {
         // SAFETY: Test-only, return null veya valid; either case crash-free
         let ptr = unsafe { crate::ALLOCATOR.alloc(layout) };
@@ -832,8 +832,8 @@ fn test_allocator_overflow() {
         }
     }
     test_result(true,
-        "[PASS] allocator_overflow_safe ✓",
-        "[FAIL] allocator_overflow_safe ✗");
+        "[PASS] allocator_overflow_safe [OK]",
+        "[FAIL] allocator_overflow_safe [FAIL]");
 }
 
 // ═══════════════════════════════════════════════════════
@@ -848,33 +848,33 @@ fn test_post_runs_in_production() {
     // G2 sonrası: crate::boot::production_post fonksiyonu mevcut + çağrılıyor.
     // Test compile-time existence kontrolü ile yapılır — fonksiyon yoksa
     // build fail eder, dolayısıyla bu test'in compile etmesi G2 fix'ini ima eder.
-    // Pre-G2: ya bu satır comment'lenmiş ya da production_post yok → build fail.
+    // Pre-G2: ya bu satır comment'lenmiş ya da production_post yok -> build fail.
     #[cfg(not(kani))]
     let _probe: fn() = crate::boot::production_post;
     test_result(true,
-        "[PASS] post_production_exists ✓",
-        "[FAIL] post_production_exists ✗");
+        "[PASS] post_production_exists [OK]",
+        "[FAIL] post_production_exists [FAIL]");
 }
 
 /// Test B — UART PMP Entry 7 production'da deny (G3 sonrası anlamlı)
 /// trace/debug-boot/self-test feature'ları yoksa pmpcfg0[byte 7] == 0 olmalı
 fn test_uart_pmp_production() {
-    // self-test build'inde trace+debug-boot var → entry 7 R+W olmalı (mevcut davranış)
-    // Production build'de feature'ların hepsi kapalı → entry 7 kaldırılmış olmalı
+    // self-test build'inde trace+debug-boot var -> entry 7 R+W olmalı (mevcut davranış)
+    // Production build'de feature'ların hepsi kapalı -> entry 7 kaldırılmış olmalı
     #[cfg(not(any(feature = "trace", feature = "debug-boot", feature = "self-test")))]
     {
         let pmpcfg0 = crate::arch::pmp::read_pmpcfg0();
         let entry7 = (pmpcfg0 >> 56) & 0xFF;
         test_result(entry7 == 0,
-            "[PASS] uart_pmp_production_deny ✓",
-            "[FAIL] uart_pmp_production_deny ✗");
+            "[PASS] uart_pmp_production_deny [OK]",
+            "[FAIL] uart_pmp_production_deny [FAIL]");
         return;
     }
     // self-test build'de entry 7 R+W olmalı (UART trace için)
     #[cfg(any(feature = "trace", feature = "debug-boot", feature = "self-test"))]
     test_result(true,
-        "[PASS] uart_pmp_self_test_open ✓",
-        "[FAIL] uart_pmp_self_test_open ✗");
+        "[PASS] uart_pmp_self_test_open [OK]",
+        "[FAIL] uart_pmp_self_test_open [FAIL]");
 }
 
 /// Test C — Unknown exception livelock yok (G4 sonrası anlamlı)
@@ -882,10 +882,10 @@ fn test_uart_pmp_production() {
 fn test_unknown_exception_no_livelock() {
     // Compile-time + manual review check — runtime'da unknown exception
     // tetiklemek QEMU'da kolay değil. G4 fix'i trap.rs match arms'ına explicit
-    // mcause dispatch ekler → manuel inspection ve grep ile doğrulanır.
+    // mcause dispatch ekler -> manuel inspection ve grep ile doğrulanır.
     test_result(true,
-        "[PASS] exception_triage_documented ✓",
-        "[FAIL] exception_triage_documented ✗");
+        "[PASS] exception_triage_documented [OK]",
+        "[FAIL] exception_triage_documented [FAIL]");
 }
 
 /// Test D — start_first_task register scrub (G5 sonrası anlamlı)
@@ -895,21 +895,21 @@ fn test_start_first_task_scrub() {
     // doğru zero'lamış). Self-test sadece task entry sonrası boyutta varlığı kontrol.
     // Kesin kontrol objdump ile CI'da yapılır.
     test_result(true,
-        "[PASS] register_scrub_exists ✓",
-        "[FAIL] register_scrub_exists ✗");
+        "[PASS] register_scrub_exists [OK]",
+        "[FAIL] register_scrub_exists [FAIL]");
 }
 
 /// Test E — schedule_yield sadece context switch (G11 sonrası anlamlı)
 /// Yield çağrıldığında blackbox tick artmamalı, IPC rate sıfırlanmamalı, watchdog artmamalı
 fn test_schedule_yield_minimal() {
     // Compile-time existence check — schedule_yield public mi?
-    // G11 öncesi: SYS_YIELD direkt schedule() çağırıyor → bu probe build fail eder
-    // G11 sonrası: schedule_yield ayrı entry → probe geçer
+    // G11 öncesi: SYS_YIELD direkt schedule() çağırıyor -> bu probe build fail eder
+    // G11 sonrası: schedule_yield ayrı entry -> probe geçer
     #[cfg(not(kani))]
     let _probe: fn() = crate::kernel::scheduler::schedule_yield;
     test_result(true,
-        "[PASS] yield_minimal_split ✓",
-        "[FAIL] yield_minimal_split ✗");
+        "[PASS] yield_minimal_split [OK]",
+        "[FAIL] yield_minimal_split [FAIL]");
 }
 
 /// Test F — Watchdog counter overflow safe (G19 sonrası anlamlı)
@@ -922,8 +922,8 @@ fn test_watchdog_saturating() {
     let result_disabled = crate::kernel::scheduler::should_watchdog_timeout(0, u32::MAX);
     let pass = result_high && !result_disabled;
     test_result(pass,
-        "[PASS] watchdog_saturating ✓",
-        "[FAIL] watchdog_saturating ✗");
+        "[PASS] watchdog_saturating [OK]",
+        "[FAIL] watchdog_saturating [FAIL]");
 }
 
 /// INFO: Ready task watchdog counter — U-16 Bug 9 doğrulaması
@@ -985,8 +985,8 @@ pub fn run_all() {
             crate::common::config::SYSTEM_TASK_ID, &[],
         );
         crate::common::halt_system(
-            "[TEST] ✗✗✗ BOOT HALTED — fix failures before deployment ✗✗✗"
+            "[TEST] [FAIL][FAIL][FAIL] BOOT HALTED — fix failures before deployment [FAIL][FAIL][FAIL]"
         );
     }
-    arch::uart::println("[TEST] ★★★ ALL TESTS PASSED ★★★");
+    arch::uart::println("[TEST] *** ALL TESTS PASSED ***");
 }

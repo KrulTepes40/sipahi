@@ -2,7 +2,23 @@
 (* Sipahi Microkernel — Scheduler TLA+ Specification
    Models: task state transitions, fixed-priority preemptive scheduling,
            period-based budget replenishment.
-   Verifies: starvation freedom, priority correctness, state invariants.
+
+   ===========================================================================
+   U-22 GÖREV 19 [L16]: SCOPE DISCLAIMER
+   ===========================================================================
+   This spec proves:
+     - Highest-priority Ready task is always selected (priority correctness)
+     - Period reset eligibility correctness (PeriodReset_Eligible)
+     - Watchdog timeout invariant (Watchdog_Bounded)
+     - Task state transition validity (no Running while Isolated, etc.)
+   This spec does NOT prove:
+     - Starvation freedom (low-priority tasks may never run by design —
+       fixed-priority preemptive scheduling can starve lower priorities)
+     - Real-time deadline meetings (timing model is abstract; WCET is
+       proved separately via Kani + config.rs const_assert)
+   Starvation mitigation (priority aging, budget donation) is a v2.0 goal —
+   tracked as AMCI design item, not regression in v1.x.
+   ===========================================================================
 
    NOTE: This spec models policy DECISION logic, not trigger mechanisms.
    Runtime trigger conditions (e.g., 3× consecutive cap fail → CapViolation,

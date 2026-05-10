@@ -8,15 +8,15 @@ compile_error!("fast-crypto and cnsa-crypto are mutually exclusive");
 // v2.0: SHA-384/Zknh + LMS (cnsa-crypto)
 //
 // Kullanım:
-//   capability/broker.rs → Crypto::mac()
-//   sandbox/loader.rs    → Signer::verify()
+//   capability/broker.rs -> Crypto::mac()
+//   sandbox/loader.rs    -> Signer::verify()
 //
 // Sprint 9'da implemente edilecek
 
 pub mod provider;
 
 /// Compile-time seçilen hash/MAC provider
-/// fast-crypto: SipahiMAC-STUB (Sprint 9) → BLAKE3 (Sprint 13)
+/// fast-crypto: SipahiMAC-STUB (Sprint 9) -> BLAKE3 (Sprint 13)
 /// cnsa-crypto: SHA-384 + Zknh HW (v2.0, henüz yok)
 #[cfg(feature = "fast-crypto")]
 mod blake3_impl;

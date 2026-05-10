@@ -2,7 +2,7 @@
 // Sipahi — Capability System (Sprint 9)
 // token.rs: 32B Token struct, ACTION_* sabitleri
 // cache.rs: 4-slot constant-time TokenCache
-// broker.rs: MAC doğrulama (SipahiMAC-STUB → Sprint 13 BLAKE3)
+// broker.rs: MAC doğrulama (SipahiMAC-STUB -> Sprint 13 BLAKE3)
 
 pub mod token;
 pub mod cache;
@@ -67,11 +67,11 @@ mod verification {
         let mut t = Token::zeroed();
         t._pad = [0xFF, 0xFF]; // pad'e ne yazılırsa yazılsın
         let h = t.header_bytes();
-        assert!(h[6] == 0);  // pad[0] → sıfır
-        assert!(h[7] == 0);  // pad[1] → sıfır
+        assert!(h[6] == 0);  // pad[0] -> sıfır
+        assert!(h[7] == 0);  // pad[1] -> sıfır
     }
 
-    /// Proof 44: Boş cache lookup → her zaman false
+    /// Proof 44: Boş cache lookup -> her zaman false
     #[kani::proof]
     fn cache_empty_lookup_false() {
         let cache = TokenCache::new();
@@ -80,14 +80,14 @@ mod verification {
         assert!(!cache.lookup(0, 0xFF, 0xFFFF, 0xFF));
     }
 
-    /// Proof 45: Cache insert → sonraki lookup hit
+    /// Proof 45: Cache insert -> sonraki lookup hit
     #[kani::proof]
     fn cache_insert_then_lookup() {
         let mut cache = TokenCache::new();
         cache.insert(0, 7, 3, ACTION_READ, 0);
         assert!(cache.lookup(0, 7, 3, ACTION_READ));
-        assert!(!cache.lookup(0, 7, 3, ACTION_WRITE));  // farklı action → miss
-        assert!(!cache.lookup(0, 0, 3, ACTION_READ));   // farklı token id → miss
+        assert!(!cache.lookup(0, 7, 3, ACTION_WRITE));  // farklı action -> miss
+        assert!(!cache.lookup(0, 0, 3, ACTION_READ));   // farklı token id -> miss
     }
 
     /// Proof 46: ACTION flag'leri birbirini maskelemiyor, OR ile 0x07
@@ -103,7 +103,7 @@ mod verification {
         assert!(ACTION_READ | ACTION_WRITE | ACTION_EXECUTE == ACTION_ALL);
     }
 
-    /// Proof 73: Replay nonce her zaman reject — last >= token.nonce → false
+    /// Proof 73: Replay nonce her zaman reject — last >= token.nonce -> false
     #[kani::proof]
     fn replay_nonce_always_rejected() {
         let last_nonce: u32 = kani::any();
@@ -150,7 +150,7 @@ mod verification {
         assert!(!cache.lookup(0, tid, res, act));
     }
 
-    /// Proof 117: Cache 4 slot dolu → 5. insert en eski üzerine yazar
+    /// Proof 117: Cache 4 slot dolu -> 5. insert en eski üzerine yazar
     #[kani::proof]
     fn cache_overwrites_oldest() {
         let mut cache = TokenCache::new();
@@ -158,7 +158,7 @@ mod verification {
         cache.insert(0, 1, 200, 2, 0);
         cache.insert(0, 2, 300, 3, 0);
         cache.insert(0, 3, 400, 4, 0);
-        // 5. insert → slot 0 üzerine yazar (round-robin)
+        // 5. insert -> slot 0 üzerine yazar (round-robin)
         cache.insert(0, 4, 500, 5, 0);
         assert!(!cache.lookup(0, 0, 100, 1)); // evicted
         assert!(cache.lookup(0, 4, 500, 5));  // yeni
@@ -174,16 +174,16 @@ mod verification {
         assert!(all_zero);
     }
 
-    /// Proof 172: Cache TTL — expires>0, get_tick()=0 → henüz dolmadı → hit
+    /// Proof 172: Cache TTL — expires>0, get_tick()=0 -> henüz dolmadı -> hit
     #[kani::proof]
     fn cache_not_expired_entry_found() {
         let mut cache = TokenCache::new();
-        // expires=1, Kani'de get_tick() BB_TICK=0 → 0 <= 1 → not expired
+        // expires=1, Kani'de get_tick() BB_TICK=0 -> 0 <= 1 -> not expired
         cache.insert(0, 5, 200, 1, 1);
         assert!(cache.lookup(0, 5, 200, 1));
     }
 
-    /// Invalidated token → herhangi resource/action ile asla bulunamaz
+    /// Invalidated token -> herhangi resource/action ile asla bulunamaz
     #[kani::proof]
     fn invalidated_token_never_found_in_cache() {
         let mut cache = TokenCache::new();

@@ -2,10 +2,12 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-# RustSec advisory database kontrolü
-yanked = "warn"
+# U-22 GÖREV 7 [M11]: explicit deny — eski "warn" varsayılanları zorla "deny".
+# RustSec advisory database kontrolü, fail-closed posture.
+yanked = "deny"
 # Mevcut tüm transitive dep'ler için unmaintained uyarısı
 # Daha sonra ignore listesiyle ince ayar yapılabilir.
+ignore = []
 
 [licenses]
 # Sipahi dep'leri için onaylı license listesi.
@@ -31,6 +33,8 @@ confidence-threshold = 0.8
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
+deny = []
+allow = []
 
 [sources]
 unknown-registry = "deny"

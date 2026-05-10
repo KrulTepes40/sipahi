@@ -10,11 +10,11 @@ compile_error!("Either fast-sign or cnsa-sign feature must be enabled");
 // Doküman §SECURE_BOOT:
 //
 //   Boot zinciri:
-//     ROM boot (M-mode) → Ed25519 imza doğrula → Sipahi kernel yükle
-//     Geçersiz imza → BOOT REDDET → donanım kilidi
+//     ROM boot (M-mode) -> Ed25519 imza doğrula -> Sipahi kernel yükle
+//     Geçersiz imza -> BOOT REDDET -> donanım kilidi
 //
 //   v1.0 basitleştirme:
-//     QEMU'da ROM yok → kernel başlatırken test fonksiyonu çağrılır.
+//     QEMU'da ROM yok -> kernel başlatırken test fonksiyonu çağrılır.
 //     Production: ROM kodu OTP public key'ini okur, kernel imzasını doğrular.
 //
 //   Ed25519 seçim gerekçesi (dokümandan):
@@ -33,7 +33,7 @@ use crate::hal::key::{OTP_KEY_SIZE, SIGNATURE_SIZE};
 /// Ed25519 imza doğrulama provider'ı
 ///
 /// feature = "fast-sign" ile seçilir (Cargo.toml features).
-/// feature = "cnsa-sign" → LmsProvider (v2.0, henüz implemente değil).
+/// feature = "cnsa-sign" -> LmsProvider (v2.0, henüz implemente değil).
 pub struct Ed25519Provider;
 
 // ─── Gerçek Ed25519 verify (not(kani) guard) ─────────────────────────────────
@@ -53,7 +53,7 @@ impl SignatureVerifier for Ed25519Provider {
     fn verify(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-        // Public key parse — hatalı key (invalid Edwards nokta) → false
+        // Public key parse — hatalı key (invalid Edwards nokta) -> false
         let vk = match VerifyingKey::from_bytes(public_key) {
             Ok(k) => k,
             Err(_) => return false,
@@ -83,7 +83,7 @@ impl SignatureVerifier for Ed25519Provider {
 /// Boot sırası:
 ///   1. Kernel binary (veya hash'i) al
 ///   2. OTP fuse'daki public key ile imzayı doğrula
-///   3. false → halt (donanım kilidi v2.0, şimdi wfi loop)
+///   3. false -> halt (donanım kilidi v2.0, şimdi wfi loop)
 ///
 /// QEMU testi için: RFC 8032 Test Vector #1 (boş mesaj, bilinen imza)
 #[cfg(not(kani))]

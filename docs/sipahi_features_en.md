@@ -262,7 +262,7 @@ CRC32 is computed bit-by-bit — no lookup table. Kernel-enforced auto-CRC plann
 
 ### 9.1 Design
 
-128 records × 64 bytes = 8KB circular buffer. Each record: MAGIC (4B "SPHI"), version (2B), sequence (2B), timestamp (4B), task_id (1B), event (1B), data (46B), CRC32 (4B). Only the kernel writes — protected by PMP.
+128 records × 64 bytes = 8KB circular buffer. Each record: MAGIC (4B "SPHI"), version (2B), pad (2B alignment), sequence (4B u32), timestamp (4B), task_id (1B), event (1B), data (42B), CRC32 (4B). Only the kernel writes — protected by PMP.
 
 ### 9.2 Power-Loss Protection
 

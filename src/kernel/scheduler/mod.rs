@@ -6,8 +6,8 @@
 // Sprint 10: priority (0-15), budget_cycles, period_ticks, policy engine entegrasyonu
 //
 // Her tick:
-//   1. Tüm task'lar için period ilerlet → süre dolduysa bütçe sıfırla + READY
-//   2. Mevcut task bütçesini düş → 0 ise SUSPENDED + policy
+//   1. Tüm task'lar için period ilerlet -> süre dolduysa bütçe sıfırla + READY
+//   2. Mevcut task bütçesini düş -> 0 ise SUSPENDED + policy
 //   3. En yüksek öncelikli Ready task'ı seç (düşük sayı = yüksek öncelik)
 //   4. Context switch
 //
@@ -176,7 +176,7 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
     let count = unsafe { *TASK_COUNT.get() };
     if count >= MAX_TASKS { return None; }
 
-    // Sprint U-14: budget=0 task ilk tick'te Suspended'a düşer, asla çalışmaz → silent dead task
+    // Sprint U-14: budget=0 task ilk tick'te Suspended'a düşer, asla çalışmaz -> silent dead task
     if cfg.budget_cycles == 0 { return None; }
 
     // SAFETY: count < MAX_TASKS — index in bounds.
@@ -237,7 +237,7 @@ pub(crate) fn schedule_timer_tick() {
         // boot/test senaryolarında da çalışmalı. Sadece Phase 3+4 (priority
         // select + context switch) atlanır.
         if *TASK_COUNT.get() == 0 {
-            return; // Hiç task yok → zarar verecek state yok
+            return; // Hiç task yok -> zarar verecek state yok
         }
 
         // Blackbox tick sayacını ilerlet (schedule() her çağrısında)
@@ -254,7 +254,7 @@ pub(crate) fn schedule_timer_tick() {
             crate::ipc::blackbox::log(
                 crate::ipc::blackbox::BlackboxEvent::PmpFail, SYSTEM_TASK_ID, &[],
             );
-            // Policy path — decide_action(PmpIntegrityFail, *, *) → Shutdown
+            // Policy path — decide_action(PmpIntegrityFail, *, *) -> Shutdown
             let action = crate::kernel::policy::apply_policy(
                 SYSTEM_TASK_ID, // kernel pseudo-task
                 PolicyEvent::PmpIntegrityFail,
@@ -264,7 +264,7 @@ pub(crate) fn schedule_timer_tick() {
         }
 
         // ─── Faz 1: Periyot ilerletme (tüm task'lar) ───
-        // Periyot dolarsa: bütçe sıfırla, SUSPENDED → READY
+        // Periyot dolarsa: bütçe sıfırla, SUSPENDED -> READY
         // U-21 GÖREV 17 [MP1]: dual bound (TASK_COUNT && MAX_TASKS) — Phase 3
         // ile simetrik. TASK_COUNT bozulursa array OOB engellenir.
         let count_phase1 = *TASK_COUNT.get();
@@ -280,7 +280,7 @@ pub(crate) fn schedule_timer_tick() {
                     if is_period_reset_eligible(t.state) {
                         t.state = TaskState::Ready;
                         // Not: Isolated task'lar bu blokta hiç eşleşmez —
-                        // kasıtlı. Isolated → periyot reset ile READY yapılmaz.
+                        // kasıtlı. Isolated -> periyot reset ile READY yapılmaz.
                     }
                 }
             }
@@ -313,7 +313,7 @@ pub(crate) fn schedule_timer_tick() {
                 // U-21 GÖREV 19 [MP4]: saturating_add — overflow_checks=true
                 // altında u32::MAX'a ulaşan counter += 1 panic atar.
                 // Saturating: counter u32::MAX'ta donar; should_watchdog_timeout
-                // zaten >= limit kontrolü yapıyor → semantik korunur.
+                // zaten >= limit kontrolü yapıyor -> semantik korunur.
                 t.watchdog_counter = t.watchdog_counter.saturating_add(1);
                 // U-19 GÖREV 10: helper inline kullanım (Kani Proof 95 ile aynı)
                 if should_watchdog_timeout(t.watchdog_limit, t.watchdog_counter) {
@@ -335,7 +335,7 @@ pub(crate) fn schedule_timer_tick() {
         }
 
         // ─── Faz 2: Bütçe düşümü + politika (mevcut task) ───
-        // budget_cycles == 0 → sınırsız bütçe (bütçe izleme devre dışı)
+        // budget_cycles == 0 -> sınırsız bütçe (bütçe izleme devre dışı)
         let (budget_active, remaining, id_old, dal_old) = {
             let t = &mut TASKS.get_mut()[old];
             if t.budget_cycles > 0 && t.state == TaskState::Running {
@@ -345,7 +345,7 @@ pub(crate) fn schedule_timer_tick() {
                 }
                 (true, t.remaining_cycles, t.id, t.dal)
             } else {
-                (false, 1, 0, 0) // dummy values, budget_active=false → skip
+                (false, 1, 0, 0) // dummy values, budget_active=false -> skip
             }
         }; // t dropped here
         if budget_active && remaining == 0 {
@@ -396,7 +396,7 @@ unsafe fn do_priority_select_and_switch(old: usize) {
         None => return, // Hiç Ready/Running task yok
     };
 
-    // Aynı task, hâlâ çalışıyor → context switch gerekmez
+    // Aynı task, hâlâ çalışıyor -> context switch gerekmez
     if next == old && TASKS.get_mut()[old].state == TaskState::Running {
         return;
     }
@@ -412,6 +412,20 @@ unsafe fn do_priority_select_and_switch(old: usize) {
     {
         let napot_addr = TASKS.get()[next].pmp_addr_napot;
         crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
+
+        // U-22 GÖREV 24 [MP5]: HW PMP write -> shadow update arasında MIE=0
+        // invariant. Eğer bu pencerede interrupt geçerse trap handler tutarsız
+        // PMP state'i görür. Production'da debug_assertions=false -> 0 maliyet.
+        // mstatus.MIE bit 3 (0x8). M-mode interrupts mip & mie & mstatus.MIE.
+        #[cfg(debug_assertions)]
+        {
+            let mstatus = crate::arch::csr::read_mstatus();
+            debug_assert!(
+                mstatus & 0x8 == 0,
+                "MIE must be 0 during PMP shadow update (mstatus bit 3)"
+            );
+        }
+
         // Sprint U-14: shadow wrapper — memory modül sınırları korunur
         crate::kernel::memory::update_task_pmp_shadow(
             napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
@@ -513,6 +527,19 @@ pub(crate) fn start_first_task() -> ! {
         {
             let napot_addr = TASKS.get()[best].pmp_addr_napot;
             crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
+
+            // U-22 GÖREV 24 [MP5]: MIE=0 invariant (start_first_task ekstra path).
+            // boot_init() interrupt'leri açmadan önce çağrılır, dolayısıyla
+            // doğal olarak MIE=0; assert savunmacı.
+            #[cfg(debug_assertions)]
+            {
+                let mstatus = crate::arch::csr::read_mstatus();
+                debug_assert!(
+                    mstatus & 0x8 == 0,
+                    "MIE must be 0 during PMP shadow update (start_first_task path)"
+                );
+            }
+
             // Sprint U-14: shadow wrapper
             crate::kernel::memory::update_task_pmp_shadow(
                 napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
@@ -574,7 +601,7 @@ pub(crate) fn start_first_task() -> ! {
 
 /// Policy kararını uygula
 fn apply_action(task_id: usize, mode: FailureMode) {
-    // Kernel-level event (task_id >= MAX_TASKS, örn. 0xFF) → sadece Shutdown geçerli
+    // Kernel-level event (task_id >= MAX_TASKS, örn. 0xFF) -> sadece Shutdown geçerli
     // PmpIntegrityFail, MultiModuleCrash gibi global event'ler buraya düşer.
     if task_id >= MAX_TASKS {
         if mode == FailureMode::Shutdown {
@@ -633,12 +660,12 @@ fn apply_action(task_id: usize, mode: FailureMode) {
         }
         FailureMode::Failover => {
             // v1.0: Failover = Degrade (hot-standby task mekanizması v2.0'da)
-            // decide_action → Failover → runtime Degrade uygular
+            // decide_action -> Failover -> runtime Degrade uygular
             // Blackbox kaydında PolicyFailover olarak ayrışır (forensics)
             #[cfg(not(kani))]
             {
                 #[cfg(feature = "trace")]
-                crate::arch::uart::println("[POLICY] FAILOVER → DEGRADE (stub)");
+                crate::arch::uart::println("[POLICY] FAILOVER -> DEGRADE (stub)");
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyFailover,
                     // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
@@ -773,7 +800,7 @@ fn try_recover_from_degrade() {
 }
 
 /// Task fault handler — trap handler'dan çağrılır
-/// Sprint U-14: handle_illegal_instruction → handle_task_fault (rename)
+/// Sprint U-14: handle_illegal_instruction -> handle_task_fault (rename)
 /// Kapsam: illegal instruction (mcause=2), PMP violation (mcause=5|7, non-stack),
 /// genel WASM trap. Stack overflow ayrı path'te (StackOverflow event'i kullanıyor).
 pub(crate) fn handle_task_fault() {
@@ -804,7 +831,7 @@ fn isolate_task(id: usize) {
     }
 
     // MultiModuleCrash detection — 2+ task izole olursa global shutdown
-    // Threshold ≥ 2: 8 task'ta %25 kayıp → Shutdown (safety-critical'de
+    // Threshold ≥ 2: 8 task'ta %25 kayıp -> Shutdown (safety-critical'de
     // erken shutdown geç shutdown'dan güvenli)
     #[cfg(not(kani))]
     {
@@ -830,7 +857,7 @@ fn isolate_task(id: usize) {
                 0_u8, // DAL-A
             );
             apply_action(SYSTEM_TASK_INDEX, action);
-            // decide_action(MultiModuleCrash, *, *) → Shutdown
+            // decide_action(MultiModuleCrash, *, *) -> Shutdown
         }
     }
 }
@@ -856,7 +883,7 @@ pub(crate) fn current_task_id() -> u8 {
 
 /// Sprint U-16: Task stack aralığını döndür — is_valid_user_ptr için kapsüllenmiş
 /// U-17 GÖREV 9: Test-only watchdog counter getter — INFO/test için
-/// task_id MAX_TASKS dışı → u32::MAX (sentinel)
+/// task_id MAX_TASKS dışı -> u32::MAX (sentinel)
 #[cfg(feature = "self-test")]
 pub fn test_get_watchdog_counter(task_id: usize) -> u32 {
     if task_id >= MAX_TASKS { return u32::MAX; }
@@ -865,7 +892,7 @@ pub fn test_get_watchdog_counter(task_id: usize) -> u32 {
 }
 
 /// erişim. Caller'ın sadece kendi stack'ine pointer vermesi zorunlu.
-/// Dead/Isolated/uninitialized task → None (default deny).
+/// Dead/Isolated/uninitialized task -> None (default deny).
 pub(crate) fn task_stack_range(task_id: u8) -> Option<(usize, usize)> {
     let idx = task_id as usize;
     // SAFETY: MIE=0 in trap context, single-hart.
@@ -896,7 +923,7 @@ pub(crate) fn watchdog_kick() {
         if current < *TASK_COUNT.get() {
             let counter = TASKS.get_mut()[current].watchdog_counter;
             let window  = TASKS.get_mut()[current].watchdog_window_min;
-            // Windowed: kick çok erken → kontrol akışı bozuk
+            // Windowed: kick çok erken -> kontrol akışı bozuk
             if window > 0 && counter < window {
                 #[cfg(not(kani))]
                 {
@@ -995,7 +1022,7 @@ pub fn select_highest_priority(
 
 // ═══════════════════════════════════════════════════════
 // U-19 GÖREV 10: Pure helper'lar — inline scheduler logic Kani'de testable
-// Önceden Proof 71 (Isolated→Ready Phase 1 reset) ve Proof 95 (watchdog
+// Önceden Proof 71 (Isolated->Ready Phase 1 reset) ve Proof 95 (watchdog
 // limit=0) inline while-loop logic'i çağıramıyordu, tautoloji idi.
 // Bu helper'lar production'da inline kullanılıyor + Kani harness çağırabiliyor.
 // ═══════════════════════════════════════════════════════
@@ -1008,14 +1035,14 @@ pub(crate) fn is_selectable_by_scheduler(state: TaskState) -> bool {
 }
 
 /// Phase 1 periyot reset bu state'e uygulanır mı?
-/// Sadece Suspended → Ready geçişi. Isolated kasıtlı kapsam dışı (kalıcı izolasyon).
+/// Sadece Suspended -> Ready geçişi. Isolated kasıtlı kapsam dışı (kalıcı izolasyon).
 #[inline]
 pub(crate) fn is_period_reset_eligible(state: TaskState) -> bool {
     matches!(state, TaskState::Suspended)
 }
 
 /// Phase 1.5 watchdog timeout tetiklenmeli mi?
-/// limit=0 → watchdog devre dışı. Aksi halde counter >= limit ise tetikle.
+/// limit=0 -> watchdog devre dışı. Aksi halde counter >= limit ise tetikle.
 #[inline]
 pub(crate) fn should_watchdog_timeout(limit: u32, counter: u32) -> bool {
     limit > 0 && counter >= limit
@@ -1085,7 +1112,7 @@ mod verification {
         }
     }
 
-    /// Proof 96: Tüm Dead → select None
+    /// Proof 96: Tüm Dead -> select None
     #[kani::proof]
     fn select_all_dead_returns_none() {
         let states = [TaskState::Dead; MAX_TASKS];
@@ -1107,7 +1134,7 @@ mod verification {
         assert!(result == Some(idx));
     }
 
-    /// Proof 98: Watchdog counter < limit → tetiklenmez
+    /// Proof 98: Watchdog counter < limit -> tetiklenmez
     #[kani::proof]
     fn watchdog_under_limit_no_trigger() {
         let counter: u32 = kani::any();
@@ -1118,7 +1145,7 @@ mod verification {
         assert!(!triggered);
     }
 
-    /// Proof 99: Watchdog counter == limit → tetiklenir
+    /// Proof 99: Watchdog counter == limit -> tetiklenir
     #[kani::proof]
     fn watchdog_at_limit_triggers() {
         let limit: u32 = kani::any();
@@ -1163,7 +1190,7 @@ mod verification {
         assert!(result.is_none());
     }
 
-    /// Proof 130: query_task_info: geçersiz id → 0
+    /// Proof 130: query_task_info: geçersiz id -> 0
     #[kani::proof]
     fn query_task_info_invalid_id() {
         let id: usize = kani::any();
@@ -1172,7 +1199,7 @@ mod verification {
         assert!(info == 0);
     }
 
-    /// Proof 131: count=0 → None
+    /// Proof 131: count=0 -> None
     #[kani::proof]
     fn select_zero_count_returns_none() {
         let states = [TaskState::Ready; MAX_TASKS];
@@ -1232,7 +1259,7 @@ mod verification {
         }
     }
 
-    /// Proof 159: Stack alignment — HERHANGİ bir adres & !0xF → 16-byte aligned
+    /// Proof 159: Stack alignment — HERHANGİ bir adres & !0xF -> 16-byte aligned
     #[kani::proof]
     fn stack_alignment_any_address() {
         let raw: usize = kani::any();

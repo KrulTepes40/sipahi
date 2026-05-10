@@ -3,6 +3,17 @@
 // Sprint 6: 25 formal verification proof
 //
 // Çalıştırma: cargo kani --harness proof_ismi
+//
+// U-22 GÖREV 12 [L6+L7]: doctrine — bu dosya RUNTIME KOD İÇERMEZ.
+// Tüm fonksiyonlar `#[cfg(kani)] mod verification` içinde, sembolik input ile
+// Kani harness olarak çalışır. Kani context'inde:
+//   - unwrap() KABUL EDİLİR (Kani panic'i path divergence olarak ele alır,
+//     production'da unreachable bir invariant'ı zaten kanıtlamış oluruz)
+//   - for ... in iter KABUL EDİLİR (Kani bound'u compile-time bilir,
+//     unwinding sınırı `cargo kani` config'inde)
+//
+// Bu kuralın istisnası: production runtime kodda HER İKİSİ YASAK
+// (Sipahi doctrine: bounded loops + match/if-let, no unwrap, no for-iter).
 
 #[cfg(kani)]
 mod verification {
@@ -70,7 +81,7 @@ mod verification {
         // task_info da scheduler tick'ten küçük olmalı (transitif ama açıkça yaz)
         assert!(WCET_TASK_INFO <= WCET_SCHEDULER_TICK);
 
-        // U-18 GÖREV 4: Sıcak yol → kapasite zinciri.
+        // U-18 GÖREV 4: Sıcak yol -> kapasite zinciri.
         // Token validate (cache miss) > scheduler tick — full broker validate
         // pahalı (BLAKE3 MAC + nonce + expiry). Cache hit (10c) << validate (400c).
         assert!(WCET_TOKEN_CACHE_HIT <= WCET_YIELD); // 10 ≤ 10 (sınır)
@@ -120,7 +131,7 @@ mod verification {
     // Slot verisi ayrı, gerçek struct boyutu ayrı kontrol ediliyor.
     // SORUN 1: SpscChannel = 1028B (4B AtomicU16 overhead + 1024B slot)
     //          8 × 1028 = 8,224B > 8,192B (PMP R3 bütçesi)
-    //          Fix: head/tail'i ilk slot'a göm → Sprint 8 sonrası assert aktif et.
+    //          Fix: head/tail'i ilk slot'a göm -> Sprint 8 sonrası assert aktif et.
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn ipc_pool_size_fits() {
@@ -143,7 +154,7 @@ mod verification {
 
     // ═══════════════════════════════════════════════════════
     // PROOF 8: Bellek bütçesi 4MB RAM'e sığar
-    // Sprint 12'de linker script 512K → 4M oldu (wasmi binary ~700KB).
+    // Sprint 12'de linker script 512K -> 4M oldu (wasmi binary ~700KB).
     // WASM_HEAP_SIZE Sprint 13'te 256KB'a yükseltildi (wasmi 1.0.9 overhead).
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
@@ -220,19 +231,19 @@ mod verification {
     // PROOF 12: Host call overhead bounded
     // Sprint 13'te aktif edildi — WCET_COMPUTE_* config.rs'e eklendi.
     // Doğru metrik: HOST_CALL_LIMIT × max(WCET_COMPUTE_COPY..WCET_COMPUTE_CRC)
-    //   = 16 × 350c (COMPUTE_MAC) = 5,600c < 10,000c ✓
+    //   = 16 × 350c (COMPUTE_MAC) = 5,600c < 10,000c [OK]
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn host_call_budget_bounded() {
         // cap_invoke dispatch overhead (cache hit path)
         let cap_overhead = (HOST_CALL_LIMIT as u64) * (WCET_CAP_INVOKE as u64);
-        assert!(cap_overhead < 100_000); // 16 × 120 = 1,920c ✓
+        assert!(cap_overhead < 100_000); // 16 × 120 = 1,920c [OK]
 
         // Compute service overhead — Sprint U-15: WCET_COMPUTE_CRC artık worst-case
         // (1500c, bit-by-bit CRC32). Önceden COMPUTE_MAC=350c worst-case sayılıyordu
         // ama CRC 12× daha pahalı.
         let compute_overhead = (HOST_CALL_LIMIT as u64) * WCET_COMPUTE_CRC;
-        assert!(compute_overhead < 30_000); // 16 × 1500 = 24,000c < 30,000 ✓
+        assert!(compute_overhead < 30_000); // 16 × 1500 = 24,000c < 30,000 [OK]
 
         // COMPUTE_CRC her zaman en pahalı servis (Sprint U-15)
         assert!(WCET_COMPUTE_CRC >= WCET_COMPUTE_COPY);
@@ -400,14 +411,14 @@ mod verification {
     fn iopmp_disabled_allows_all() {
         use crate::hal::iopmp::IopmpController;
         let ctrl = IopmpController::new();
-        // Kapalı → her adres, her boyut, okuma/yazma serbest
+        // Kapalı -> her adres, her boyut, okuma/yazma serbest
         assert!(ctrl.check_access(0x1000, 4, false));
         assert!(ctrl.check_access(0x2000, 8, true));
         assert!(ctrl.check_access(0, 1, false));
     }
 
     // ═══════════════════════════════════════════════════════
-    // PROOF 24: IOPMP geçersiz index → InvalidParameter
+    // PROOF 24: IOPMP geçersiz index -> InvalidParameter
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn iopmp_invalid_index_rejected() {
@@ -420,14 +431,14 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
-    // PROOF 25: IOPMP etkin + tanımsız bölge → erişim RED
+    // PROOF 25: IOPMP etkin + tanımsız bölge -> erişim RED
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn iopmp_enabled_denies_unknown() {
         use crate::hal::iopmp::IopmpController;
         let mut ctrl = IopmpController::new();
         let _ = ctrl.enable();
-        // Hiç bölge tanımlı değil → tüm erişim reddedilmeli
+        // Hiç bölge tanımlı değil -> tüm erişim reddedilmeli
         assert!(!ctrl.check_access(0x1000, 4, false));
         assert!(!ctrl.check_access(0x2000, 8, true));
     }
@@ -453,7 +464,7 @@ mod verification {
 
     // ═══════════════════════════════════════════════════════
     // PROOF (logic): create_task() stack hizalaması doğru
-    // stack_top & !0xF → her zaman 16-byte aligned, stack_top'tan ≤
+    // stack_top & !0xF -> her zaman 16-byte aligned, stack_top'tan ≤
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn create_task_stack_alignment() {
@@ -470,12 +481,12 @@ mod verification {
     // U-19 GÖREV 10: Tautoloji (kendi if-else simülasyonu) yerine production
     // is_selectable_by_scheduler ve is_period_reset_eligible çağrılıyor.
     // Phase 1 (period reset) Suspended dışı state'leri değiştirmez; Phase 3
-    // (selection) sadece Ready/Running seçer → Isolated her iki yolda da kapsam dışı.
+    // (selection) sadece Ready/Running seçer -> Isolated her iki yolda da kapsam dışı.
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn isolated_task_never_becomes_ready() {
         use crate::kernel::scheduler::{is_selectable_by_scheduler, is_period_reset_eligible};
-        // Isolated → ne seçilir ne periyot reset Ready yapar
+        // Isolated -> ne seçilir ne periyot reset Ready yapar
         assert!(!is_selectable_by_scheduler(TaskState::Isolated));
         assert!(!is_period_reset_eligible(TaskState::Isolated));
         // Karşılaştırma: Dead da seçilmez ama farklı sebeple (kalıcı ölü)
@@ -492,7 +503,7 @@ mod verification {
 
     // ═══════════════════════════════════════════════════════
     // PROOF 72: DAL-A task budget aşımında asla Isolated olmaz
-    // Budget aşımı escalation: RESTART → DEGRADE (Isolate değil)
+    // Budget aşımı escalation: RESTART -> DEGRADE (Isolate değil)
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn dal_a_budget_exhausted_never_isolated() {
@@ -500,7 +511,7 @@ mod verification {
         let event = PolicyEvent::BudgetExhausted as u8;
         let dal   = 0u8; // DAL-A
         let count: u8 = kani::any();
-        // Budget exhausted → RESTART(1) → DEGRADE, hiçbir koşulda ISOLATE değil
+        // Budget exhausted -> RESTART(1) -> DEGRADE, hiçbir koşulda ISOLATE değil
         let action = decide_action(event, count, dal);
         assert!(action != FailureMode::Isolate);
     }
@@ -603,7 +614,7 @@ mod verification {
         let event: u8 = kani::any();
         let rc: u8 = kani::any();
         let dal: u8 = kani::any();
-        // Tüm input domain — pure fonksiyon: aynı (e, rc, dal) → aynı output
+        // Tüm input domain — pure fonksiyon: aynı (e, rc, dal) -> aynı output
         let a1 = decide_action(event, rc, dal);
         let a2 = decide_action(event, rc, dal);
         assert!(a1 as u8 == a2 as u8);
@@ -611,17 +622,17 @@ mod verification {
 
     // --- CAPABILITY ---
 
-    /// Proof 92: Token expiry: expires=0 → asla expired olmaz
+    /// Proof 92: Token expiry: expires=0 -> asla expired olmaz
     /// U-18 GÖREV 2: Tautoloji silindi — production fonksiyonu çağrılır
     #[kani::proof]
     fn token_expiry_zero_means_infinite() {
         use crate::kernel::capability::broker::is_not_expired;
         let current_tick: u64 = kani::any();
-        // expires=0 → her zaman geçerli (sonsuz)
+        // expires=0 -> her zaman geçerli (sonsuz)
         assert!(is_not_expired(0, current_tick));
     }
 
-    /// Proof 93: Token expiry: expires > 0 ve tick > expires → expired
+    /// Proof 93: Token expiry: expires > 0 ve tick > expires -> expired
     /// U-18 GÖREV 2: Tautoloji silindi — production fonksiyonu çağrılır
     #[kani::proof]
     fn token_expiry_detects_expired() {
@@ -630,15 +641,15 @@ mod verification {
         kani::assume(expires > 0);
         let current_tick: u64 = kani::any();
         kani::assume(current_tick > expires as u64);
-        // tick > expires → token expired (is_not_expired = false)
+        // tick > expires -> token expired (is_not_expired = false)
         assert!(!is_not_expired(expires, current_tick));
-        // Boundary: tick == expires → hâlâ geçerli (<=)
+        // Boundary: tick == expires -> hâlâ geçerli (<=)
         assert!(is_not_expired(expires, expires as u64));
     }
 
     // --- SCHEDULER ---
 
-    /// Proof 94: Priority / DAL grubu ilişkisi — prio 0-15 → dal_group 0-3
+    /// Proof 94: Priority / DAL grubu ilişkisi — prio 0-15 -> dal_group 0-3
     #[kani::proof]
     fn task_priority_dal_group_bounded() {
         let prio: u8 = kani::any();
@@ -647,7 +658,7 @@ mod verification {
         assert!(dal_group <= 3);
     }
 
-    /// Proof 95: Watchdog limit=0 → asla tetiklenmez (production helper)
+    /// Proof 95: Watchdog limit=0 -> asla tetiklenmez (production helper)
     /// U-19 GÖREV 10: Tautoloji yerine production should_watchdog_timeout çağrılıyor.
     /// Phase 1.5'teki `if t.watchdog_limit > 0 && t.watchdog_counter >= t.watchdog_limit`
     /// mantığı bu helper'da. Helper'ın production schedule()'da inline kullanımı +
@@ -656,14 +667,14 @@ mod verification {
     fn watchdog_limit_zero_disables() {
         use crate::kernel::scheduler::should_watchdog_timeout;
         let counter: u32 = kani::any();
-        // limit=0 → her counter değeri için disabled
+        // limit=0 -> her counter değeri için disabled
         assert!(!should_watchdog_timeout(0, counter));
-        // limit > 0 ve counter >= limit → tetiklenir (boundary)
+        // limit > 0 ve counter >= limit -> tetiklenir (boundary)
         let limit: u32 = kani::any();
         kani::assume(limit > 0);
         kani::assume(counter >= limit);
         assert!(should_watchdog_timeout(limit, counter));
-        // limit > 0 ve counter < limit → tetiklenmez
+        // limit > 0 ve counter < limit -> tetiklenmez
         let counter2: u32 = kani::any();
         kani::assume(limit > 0);
         kani::assume(counter2 < limit);
@@ -672,7 +683,7 @@ mod verification {
 
     // --- HAL ---
 
-    /// Proof 135: IOPMP new() → disabled, tüm erişim serbest
+    /// Proof 135: IOPMP new() -> disabled, tüm erişim serbest
     #[kani::proof]
     fn iopmp_new_starts_disabled_allows_all() {
         use crate::hal::iopmp::IopmpController;
@@ -695,7 +706,7 @@ mod verification {
 
     // --- CRYPTO ---
 
-    /// Proof 139: BLAKE3 farklı key → farklı hash
+    /// Proof 139: BLAKE3 farklı key -> farklı hash
     #[kani::proof]
     fn blake3_different_key_different_hash() {
         use crate::common::crypto::provider::HashProvider;
@@ -711,7 +722,7 @@ mod verification {
         assert!(!same);
     }
 
-    /// Proof 140: BLAKE3 aynı (key, data) → aynı hash
+    /// Proof 140: BLAKE3 aynı (key, data) -> aynı hash
     #[kani::proof]
     fn blake3_same_input_same_hash() {
         use crate::common::crypto::provider::HashProvider;
@@ -758,7 +769,7 @@ mod verification {
         assert!(core::mem::size_of::<FailureMode>() <= 1);
     }
 
-    /// Proof 154: Farklı token → farklı header (id veya nonce farklıysa)
+    /// Proof 154: Farklı token -> farklı header (id veya nonce farklıysa)
     #[kani::proof]
     fn different_tokens_different_headers() {
         use crate::kernel::capability::Token;
@@ -787,7 +798,7 @@ mod verification {
         assert!(a > b && b > c && c > d);
     }
 
-    /// Proof 163: pack_pmpcfg symbolic entry → extract matches original
+    /// Proof 163: pack_pmpcfg symbolic entry -> extract matches original
     #[kani::proof]
     fn pmp_pack_extract_any_entry() {
         use crate::arch::pmp::pack_pmpcfg;
@@ -801,7 +812,7 @@ mod verification {
         assert!(extracted == val);
     }
 
-    /// Proof 164: Token resource symbolic u16 → LE bytes doğru
+    /// Proof 164: Token resource symbolic u16 -> LE bytes doğru
     #[kani::proof]
     fn token_header_resource_le_encoding() {
         use crate::kernel::capability::Token;
@@ -812,7 +823,7 @@ mod verification {
         assert!(reconstructed == t.resource);
     }
 
-    /// Proof 165: Token expires symbolic u32 → LE bytes doğru
+    /// Proof 165: Token expires symbolic u32 -> LE bytes doğru
     #[kani::proof]
     fn token_header_expires_le_encoding() {
         use crate::kernel::capability::Token;
@@ -828,7 +839,7 @@ mod verification {
     // Sprint U-3: Per-Task PMP (NAPOT) Proofs
     // ═══════════════════════════════════════════════════════
 
-    /// Farklı task ID → farklı stack, farklı NAPOT encoding
+    /// Farklı task ID -> farklı stack, farklı NAPOT encoding
     #[kani::proof]
     fn different_tasks_get_different_stacks() {
         let id_a: usize = kani::any();
@@ -845,7 +856,7 @@ mod verification {
         assert!(napot_a != napot_b);
     }
 
-    /// Task ID → Stack → NAPOT zinciri bounds-safe
+    /// Task ID -> Stack -> NAPOT zinciri bounds-safe
     #[kani::proof]
     fn task_pmp_index_in_bounds() {
         let task_id: usize = kani::any();
@@ -885,7 +896,7 @@ mod verification {
     // validate_full'un iç mantığını pure helper fonksiyonlar üzerinden kanıtla
     // ═══════════════════════════════════════════════════════
 
-    /// Nonce: token_nonce > last → valid
+    /// Nonce: token_nonce > last -> valid
     #[kani::proof]
     fn nonce_greater_than_last_is_valid() {
         let token_nonce: u32 = kani::any();
@@ -894,7 +905,7 @@ mod verification {
         assert!(crate::kernel::capability::broker::is_nonce_valid(token_nonce, last_nonce));
     }
 
-    /// Nonce: token_nonce <= last → invalid (replay)
+    /// Nonce: token_nonce <= last -> invalid (replay)
     #[kani::proof]
     fn nonce_replay_is_rejected() {
         let token_nonce: u32 = kani::any();
@@ -903,14 +914,14 @@ mod verification {
         assert!(!crate::kernel::capability::broker::is_nonce_valid(token_nonce, last_nonce));
     }
 
-    /// Expiry: expires=0 → always valid (sonsuz token)
+    /// Expiry: expires=0 -> always valid (sonsuz token)
     #[kani::proof]
     fn expiry_zero_always_valid() {
         let tick: u64 = kani::any();
         assert!(crate::kernel::capability::broker::is_not_expired(0, tick));
     }
 
-    /// Expiry: current_tick > expires → expired
+    /// Expiry: current_tick > expires -> expired
     #[kani::proof]
     fn expiry_past_is_rejected() {
         let expires: u32 = kani::any();
@@ -920,7 +931,7 @@ mod verification {
         assert!(!crate::kernel::capability::broker::is_not_expired(expires, tick));
     }
 
-    /// Expiry: current_tick <= expires → valid
+    /// Expiry: current_tick <= expires -> valid
     #[kani::proof]
     fn expiry_within_range_is_valid() {
         let expires: u32 = kani::any();
@@ -938,7 +949,7 @@ mod verification {
         assert!(crate::kernel::capability::broker::is_task_id_valid(task_id, MAX_TASKS));
     }
 
-    /// Task ID: >= MAX_TASKS → invalid
+    /// Task ID: >= MAX_TASKS -> invalid
     #[kani::proof]
     fn task_id_out_of_range_is_invalid() {
         let task_id: u8 = kani::any();
@@ -967,7 +978,7 @@ mod verification {
         }
     }
 
-    /// pack_pmpcfg: sıfır configs → sıfır packed
+    /// pack_pmpcfg: sıfır configs -> sıfır packed
     #[kani::proof]
     fn pack_pmpcfg_zeros() {
         let configs = [0u8; 8];

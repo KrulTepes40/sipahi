@@ -21,11 +21,11 @@ pub trait DeviceAccess {
     fn init(&mut self) -> Result<(), SipahiError>;
 
     /// Tek byte oku (non-blocking)
-    /// Veri yoksa → Err(DeviceNotReady)
+    /// Veri yoksa -> Err(DeviceNotReady)
     fn read_byte(&self) -> Result<u8, SipahiError>;
 
     /// Tek byte yaz (non-blocking)
-    /// Buffer doluysa → Err(DeviceNotReady)
+    /// Buffer doluysa -> Err(DeviceNotReady)
     fn write_byte(&self, byte: u8) -> Result<(), SipahiError>;
 
     /// Aygıt hazır mı? (polling, blocking DEĞİL)

@@ -14,7 +14,7 @@ pub use crate::common::config::{
     SYS_YIELD, SYS_TASK_INFO, SYSCALL_COUNT,
 };
 
-/// Ardışık cap_invoke fail sayacı (per-task) — 3 fail → CapViolation
+/// Ardışık cap_invoke fail sayacı (per-task) — 3 fail -> CapViolation
 /// Başarılı cap_invoke sıfırlar. Sadece ardışık fail tetikler.
 #[cfg(not(kani))]
 static CAP_FAIL_COUNT: SingleHartCell<[u8; MAX_TASKS]> = SingleHartCell::new([0u8; MAX_TASKS]);
@@ -99,7 +99,7 @@ fn kernel_start_addr() -> usize {
 /// dormant olarak başarısız olurdu. Yeni versiyon caller'ın stack range'ini sorar
 /// ve sadece o aralığı kabul eder. Cross-task pointer impersonation engellendi.
 ///
-/// ptr == 0 → reject, ptr+size overflow → reject, ptr range != caller stack → reject.
+/// ptr == 0 -> reject, ptr+size overflow -> reject, ptr range != caller stack -> reject.
 #[must_use = "pointer validation result must be checked"]
 fn is_valid_user_ptr(caller_task_id: u8, ptr: usize, size: usize) -> bool {
     if ptr == 0 { return false; }
@@ -110,7 +110,7 @@ fn is_valid_user_ptr(caller_task_id: u8, ptr: usize, size: usize) -> bool {
     // Caller'ın stack aralığı — helper unsafe/aliasing'i kapsüller
     match crate::kernel::scheduler::task_stack_range(caller_task_id) {
         Some((base, top)) => ptr >= base && end <= top,
-        None => false, // Dead/Isolated/uninitialized → default deny
+        None => false, // Dead/Isolated/uninitialized -> default deny
     }
 }
 
@@ -261,7 +261,7 @@ pub fn dispatch(
 // ═══════════════════════════════════════════════════════
 
 fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> usize {
-    // Truncation koruması — usize → u8/u16 dönüşümde veri kaybı
+    // Truncation koruması — usize -> u8/u16 dönüşümde veri kaybı
     if cap > u8::MAX as usize
         || resource > u16::MAX as usize
         || action > u8::MAX as usize
@@ -289,17 +289,17 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
             uart::println(if ok { "OK" } else { "DENIED" });
         }
 
-        // CapViolation detection — 3 ardışık fail → policy tetikle
+        // CapViolation detection — 3 ardışık fail -> policy tetikle
         // SAFETY: MIE=0 in trap context, single-hart.
         unsafe {
             if ok {
-                // Başarılı cap_invoke → fail counter sıfırla
+                // Başarılı cap_invoke -> fail counter sıfırla
                 (*CAP_FAIL_COUNT.get_mut())[caller as usize] = 0;
             } else {
                 let count = &mut (*CAP_FAIL_COUNT.get_mut())[caller as usize];
                 *count = count.saturating_add(1);
                 if *count >= 3 {
-                    // 3 ardışık cap fail → CapViolation policy
+                    // 3 ardışık cap fail -> CapViolation policy
                     *count = 0; // reset (tekrar kuluçka periyodu)
                     crate::ipc::blackbox::log(
                         crate::ipc::blackbox::BlackboxEvent::CapViolation,
@@ -326,6 +326,16 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
 
 /// ipc_send — GERÇEK SPSC entegrasyonu (Sprint 8)
 /// arg0 = channel_id, arg1 = mesaj pointer
+///
+/// CRC POLİTİKASI (U-22 GÖREV 2 [M6]: opt-in by design):
+///   Sender `IpcMessage::set_crc()` çağırırsa son 4 byte'a CRC32 yazılır
+///   (ipc/mod.rs:44). Receiver `verify_crc()` ile bütünlüğü kanıtlayabilir.
+///   Kernel `set_crc()` zorla çağırmaz çünkü:
+///     - WCET etkisi: send 60c -> 1560c (~26x, WCET_COMPUTE_CRC = 1500)
+///     - U-15'te opt-in olarak doktrine bağlandı (high-throughput case için)
+///     - Receiver-only verify yeterli: tampered detection geç olur ama
+///       fail-closed davranır (consumer reject + policy escalation).
+///   Kernel-side mandatory CRC v2.0 SNTM hedefidir (HW CRC engine sonrası).
 fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize {
     if channel_id >= crate::common::config::MAX_IPC_CHANNELS {
         #[cfg(all(not(kani), feature = "trace"))]
@@ -459,7 +469,7 @@ fn sys_yield(_: usize, _: usize, _: usize, _: usize) -> usize {
         uart::println("[SYS] yield");
         // U-21 GÖREV 11 [H5]: schedule_yield() — schedule_timer_tick()
         // değil. Yield path tick state advance yapmaz; sadece context
-        // switch eder. Yield spam → DoS yüzeyi kapalı.
+        // switch eder. Yield spam -> DoS yüzeyi kapalı.
         crate::kernel::scheduler::schedule_yield();
     }
     E_OK
@@ -467,7 +477,7 @@ fn sys_yield(_: usize, _: usize, _: usize, _: usize) -> usize {
 
 /// task_info — gerçek task bilgisi sorgula
 /// arg0 = task_id
-/// Dönüş: (state << 8) | (priority << 4) | dal, geçersiz id → 0
+/// Dönüş: (state << 8) | (priority << 4) | dal, geçersiz id -> 0
 fn sys_task_info(_task_id: usize, _: usize, _: usize, _: usize) -> usize {
     #[cfg(not(kani))]
     {
@@ -559,8 +569,8 @@ mod verification {
 
     #[kani::proof]
     fn unknown_task_pointer_rejected() {
-        // Sprint U-16: Kani'de TASK_COUNT = 0 → task_stack_range her caller için None
-        // → her pointer reddedilir. Default-deny davranışı doğrulandı.
+        // Sprint U-16: Kani'de TASK_COUNT = 0 -> task_stack_range her caller için None
+        // -> her pointer reddedilir. Default-deny davranışı doğrulandı.
         let ptr: usize = kani::any();
         kani::assume(ptr > 0);
         let caller: u8 = kani::any();
@@ -583,7 +593,7 @@ mod verification {
         assert!(SYS_TASK_INFO == config::SYS_TASK_INFO as usize);
     }
 
-    /// Proof 123: Geçersiz syscall ID → E_INVALID_SYSCALL == usize::MAX
+    /// Proof 123: Geçersiz syscall ID -> E_INVALID_SYSCALL == usize::MAX
     #[kani::proof]
     fn dispatch_invalid_syscall_returns_error() {
         let id: usize = kani::any();
@@ -641,7 +651,7 @@ mod verification {
         assert!(!is_valid_user_ptr(caller, 0, size));
     }
 
-    /// Proof 171: RAM üstü adres → reject
+    /// Proof 171: RAM üstü adres -> reject
     #[kani::proof]
     fn ptr_above_ram_rejected() {
         let ptr: usize = kani::any();
@@ -652,7 +662,7 @@ mod verification {
         assert!(!is_valid_user_ptr(caller, ptr, size));
     }
 
-    /// dispatch() geçersiz syscall ID → E_INVALID_SYSCALL
+    /// dispatch() geçersiz syscall ID -> E_INVALID_SYSCALL
     #[kani::proof]
     fn dispatch_rejects_invalid_syscall_id() {
         let sys_id: usize = kani::any();

@@ -1,17 +1,17 @@
-//! 6-mode failure policy engine: RESTART → ISOLATE → DEGRADE → SHUTDOWN.
+//! 6-mode failure policy engine: RESTART -> ISOLATE -> DEGRADE -> SHUTDOWN.
 // Sipahi — Failure Policy Engine (Sprint 10)
 // 6 mod: RESTART, ISOLATE, DEGRADE, FAILOVER, ALERT, SHUTDOWN
 //
 // Escalation tablosu (doküman §FAILURE POLICY ENGINE):
-//   Budget aşımı     → RESTART(1)  → DEGRADE
-//   Stack overflow   → RESTART(3)  → ISOLATE
-//   WASM trap        → RESTART(3)  → ISOLATE
-//   Cap violation    → ISOLATE (anında)
-//   IOPMP violation  → ISOLATE
-//   PMP integrity    → SHUTDOWN (anında)
-//   Watchdog timeout → FAILOVER(1) → DEGRADE
-//   Deadline miss    → DAL'a göre (A=FAILOVER, B/C=ALERT, D=ISOLATE)
-//   Çoklu çöküş      → SHUTDOWN
+//   Budget aşımı     -> RESTART(1)  -> DEGRADE
+//   Stack overflow   -> RESTART(3)  -> ISOLATE
+//   WASM trap        -> RESTART(3)  -> ISOLATE
+//   Cap violation    -> ISOLATE (anında)
+//   IOPMP violation  -> ISOLATE
+//   PMP integrity    -> SHUTDOWN (anında)
+//   Watchdog timeout -> FAILOVER(1) -> DEGRADE
+//   Deadline miss    -> DAL'a göre (A=FAILOVER, B/C=ALERT, D=ISOLATE)
+//   Çoklu çöküş      -> SHUTDOWN
 //
 // Mimari:
 //   decide_action() — saf sabit fonksiyon (Kani doğrulanabilir, yan etki yok)
@@ -57,13 +57,13 @@ pub enum PolicyEvent {
 // Restart sayacı
 // ═══════════════════════════════════════════════════════
 
-/// Budget aşımı için maksimum restart sayısı (1 kez → DEGRADE)
+/// Budget aşımı için maksimum restart sayısı (1 kez -> DEGRADE)
 pub const MAX_RESTART_BUDGET: u8 = 1;
 
-/// Stack overflow / WASM trap için maksimum restart sayısı (3 kez → ISOLATE)
+/// Stack overflow / WASM trap için maksimum restart sayısı (3 kez -> ISOLATE)
 pub const MAX_RESTART_FAULT: u8 = 3;
 
-/// Watchdog timeout için maksimum FAILOVER sayısı (1 kez → DEGRADE)
+/// Watchdog timeout için maksimum FAILOVER sayısı (1 kez -> DEGRADE)
 pub const MAX_RESTART_WATCHDOG: u8 = 1;
 
 /// Task başına restart sayacı — eskalasyon için
@@ -93,7 +93,7 @@ pub(crate) fn get_restart_count(task_id: u8) -> u8 {
 // Saf karar fonksiyonu (Kani doğrulanabilir)
 // ═══════════════════════════════════════════════════════
 
-/// Olay + restart_count + dal → mod (saf fonksiyon, yan etki YOK)
+/// Olay + restart_count + dal -> mod (saf fonksiyon, yan etki YOK)
 /// event: PolicyEvent as u8
 /// dal:   0=A 1=B 2=C 3=D
 /// Kani'de decide_action ile test edilir (apply_policy'nin yan etkileri yok)
@@ -183,7 +183,7 @@ pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureM
         action1
     };
 
-    // RESTART → sayacı artır (doygun — eskalasyon için MAX tutulur)
+    // RESTART -> sayacı artır (doygun — eskalasyon için MAX tutulur)
     if action == FailureMode::Restart && id < MAX_TASKS {
         // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
         unsafe {
@@ -202,7 +202,7 @@ pub(crate) fn apply_policy(task_id: u8, event: PolicyEvent, dal: u8) -> FailureM
 mod verification {
     use super::*;
 
-    /// Proof 47: Budget aşımı → RESTART(1) → DEGRADE eskalasyonu
+    /// Proof 47: Budget aşımı -> RESTART(1) -> DEGRADE eskalasyonu
     #[kani::proof]
     fn budget_exhausted_escalation() {
         let event = PolicyEvent::BudgetExhausted as u8;
@@ -216,7 +216,7 @@ mod verification {
         assert!(decide_action(event, count, 3) == FailureMode::Degrade);
     }
 
-    /// Proof 48: Stack overflow → RESTART(3) → ISOLATE eskalasyonu
+    /// Proof 48: Stack overflow -> RESTART(3) -> ISOLATE eskalasyonu
     #[kani::proof]
     fn stack_overflow_escalation() {
         let event = PolicyEvent::StackOverflow as u8;
@@ -231,7 +231,7 @@ mod verification {
         assert!(decide_action(event, count, 0) == FailureMode::Isolate);
     }
 
-    /// Proof 49: Cap violation → her zaman ISOLATE (sayaç ve DAL önemsiz)
+    /// Proof 49: Cap violation -> her zaman ISOLATE (sayaç ve DAL önemsiz)
     #[kani::proof]
     fn cap_violation_always_isolate() {
         let event = PolicyEvent::CapViolation as u8;
@@ -241,7 +241,7 @@ mod verification {
         assert!(decide_action(event, count, dal) == FailureMode::Isolate);
     }
 
-    /// Proof 50: PMP integrity fail → her zaman SHUTDOWN
+    /// Proof 50: PMP integrity fail -> her zaman SHUTDOWN
     #[kani::proof]
     fn pmp_fail_always_shutdown() {
         let event = PolicyEvent::PmpIntegrityFail as u8;
@@ -256,17 +256,17 @@ mod verification {
     fn deadline_miss_dal_specific() {
         let event = PolicyEvent::DeadlineMiss as u8;
         let count: u8 = kani::any();
-        // DAL-A → her zaman FAILOVER
+        // DAL-A -> her zaman FAILOVER
         assert!(decide_action(event, count, 0) == FailureMode::Failover);
-        // DAL-B → her zaman ALERT
+        // DAL-B -> her zaman ALERT
         assert!(decide_action(event, count, 1) == FailureMode::Alert);
-        // DAL-C → her zaman ALERT
+        // DAL-C -> her zaman ALERT
         assert!(decide_action(event, count, 2) == FailureMode::Alert);
-        // DAL-D → her zaman ISOLATE
+        // DAL-D -> her zaman ISOLATE
         assert!(decide_action(event, count, 3) == FailureMode::Isolate);
     }
 
-    /// Proof 109: PMP fail (event=5) → HER ZAMAN Shutdown
+    /// Proof 109: PMP fail (event=5) -> HER ZAMAN Shutdown
     #[kani::proof]
     fn pmp_fail_always_shutdown_any_input() {
         let rc: u8 = kani::any();
@@ -275,7 +275,7 @@ mod verification {
         assert!(decide_action(5, rc, dal) == FailureMode::Shutdown);
     }
 
-    /// Proof 110: Budget escalation: ilk → Restart, tekrarlı → not Restart
+    /// Proof 110: Budget escalation: ilk -> Restart, tekrarlı -> not Restart
     #[kani::proof]
     fn budget_escalation_restart_then_degrade() {
         let dal: u8 = kani::any();
@@ -284,7 +284,7 @@ mod verification {
         assert!(decide_action(0, 255, dal) != FailureMode::Restart);
     }
 
-    /// Proof 111: CapViolation (event=3) → HER ZAMAN Isolate
+    /// Proof 111: CapViolation (event=3) -> HER ZAMAN Isolate
     #[kani::proof]
     fn cap_violation_always_isolate_any_dal() {
         let rc: u8 = kani::any();
@@ -293,7 +293,7 @@ mod verification {
         assert!(decide_action(3, rc, dal) == FailureMode::Isolate);
     }
 
-    /// Proof 112: MultiModuleCrash (event=8) → Shutdown
+    /// Proof 112: MultiModuleCrash (event=8) -> Shutdown
     #[kani::proof]
     fn multi_module_crash_shutdown() {
         let rc: u8 = kani::any();
@@ -302,7 +302,7 @@ mod verification {
         assert!(decide_action(8, rc, dal) == FailureMode::Shutdown);
     }
 
-    /// Proof 113: Bilinmeyen event (>8) → Isolate (fail-safe default)
+    /// Proof 113: Bilinmeyen event (>8) -> Isolate (fail-safe default)
     #[kani::proof]
     fn unknown_event_defaults_isolate() {
         let event: u8 = kani::any();
@@ -313,7 +313,7 @@ mod verification {
         assert!(decide_action(event, rc, dal) == FailureMode::Isolate);
     }
 
-    /// Proof 153: PMP(5) ve MultiModule(8) → Shutdown (tüm rc/dal)
+    /// Proof 153: PMP(5) ve MultiModule(8) -> Shutdown (tüm rc/dal)
     #[kani::proof]
     fn shutdown_events_always_shutdown() {
         let rc: u8 = kani::any();
@@ -323,19 +323,19 @@ mod verification {
         assert!(decide_action(8, rc, dal) == FailureMode::Shutdown);
     }
 
-    /// Budget Degrade → rc >= MAX_RESTART_BUDGET olmalı
+    /// Budget Degrade -> rc >= MAX_RESTART_BUDGET olmalı
     #[kani::proof]
     fn budget_degrade_requires_exhausted_restarts() {
         let rc: u8 = kani::any();
         let dal: u8 = kani::any();
         kani::assume(dal <= 3);
-        let action = decide_action(0, rc, dal); // event=0 → BudgetExhausted
+        let action = decide_action(0, rc, dal); // event=0 -> BudgetExhausted
         if matches!(action, FailureMode::Degrade) {
             assert!(rc >= MAX_RESTART_BUDGET);
         }
     }
 
-    /// Watchdog Degrade → rc >= MAX_RESTART_WATCHDOG olmalı
+    /// Watchdog Degrade -> rc >= MAX_RESTART_WATCHDOG olmalı
     #[kani::proof]
     fn watchdog_degrade_requires_exhausted_restarts() {
         let rc: u8 = kani::any();

@@ -40,7 +40,7 @@ static TOKEN_CACHE: SingleHartCell<TokenCache> = SingleHartCell::new(TokenCache:
 /// Tekrar çağrı yoksayılır (key rotation Sprint 13)
 #[allow(dead_code)] // Sprint U-16: production'da HSM yolu eklenince tekrar canlı
 pub(crate) fn provision_key(key: &[u8; 32]) {
-    // Sıfır key → güvenli varsayılan: KEY_READY false kalır
+    // Sıfır key -> güvenli varsayılan: KEY_READY false kalır
     let mut all_zero = true;
     let mut j = 0;
     while j < 32 {
@@ -48,6 +48,32 @@ pub(crate) fn provision_key(key: &[u8; 32]) {
         j += 1;
     }
     if all_zero { return; }
+
+    // U-22 GÖREV 25 [MP6]: production-otp build'inde low-entropy reject.
+    // test-keys = [0x5A; 32] (repeated byte) -> distinct=1, OTP'de bu paterndan
+    // gelen anahtar gerçek HSM çıkışı değil; reddet.
+    // Uniform random 32-byte key beklenen distinct ~25 (birthday paradox).
+    // Threshold = 8 -> ultra-low entropy filtresi (gerçek HSM key bunu hep geçer).
+    #[cfg(feature = "production-otp")]
+    {
+        let mut seen = [false; 256];
+        let mut k = 0;
+        while k < 32 {
+            seen[key[k] as usize] = true;
+            k += 1;
+        }
+        let mut distinct: u8 = 0;
+        let mut m = 0;
+        while m < 256 {
+            if seen[m] { distinct = distinct.saturating_add(1); }
+            m += 1;
+        }
+        if distinct < 8 {
+            #[cfg(feature = "debug-boot")]
+            crate::arch::uart::println("[BOOT] WARN: low-entropy key rejected");
+            return; // KEY_READY false kalır -> capability sistemi devre dışı
+        }
+    }
 
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
     unsafe {
@@ -57,6 +83,14 @@ pub(crate) fn provision_key(key: &[u8; 32]) {
                 (*MAC_KEY.get_mut())[i] = key[i];
                 i += 1;
             }
+
+            // U-22 GÖREV 26 [MP7]: Cache flush — eski tokenlerin hash'i yeni
+            // key altında geçersiz, hit'i prevent et. v1.0: provision_key
+            // boot-once -> cache zaten boş, no-op gibi davranır. v2.0+ HSM
+            // key rotation'da gerçek senaryo aktif olur.
+            let cache_mut = TOKEN_CACHE.get_mut();
+            cache_mut.invalidate_all();
+
             *KEY_READY.get_mut() = true;
         }
     }
@@ -76,8 +110,8 @@ pub(crate) const fn is_nonce_valid(token_nonce: u32, last_nonce: u32) -> bool {
 }
 
 /// Expiry kontrolü — pure fonksiyon
-/// expires == 0 → sonsuz geçerli
-/// expires > 0 → current_tick <= expires olmalı
+/// expires == 0 -> sonsuz geçerli
+/// expires > 0 -> current_tick <= expires olmalı
 #[allow(dead_code)]
 pub(crate) const fn is_not_expired(token_expires: u32, current_tick: u64) -> bool {
     if token_expires == 0 { return true; }
@@ -92,7 +126,7 @@ pub(crate) const fn is_task_id_valid(task_id: u8, max_tasks: usize) -> bool {
 }
 
 /// Sprint U-16: Token owner match — capability impersonation engellenmesi.
-/// validate_full bu helper'ı kullanır. Token sahibi != caller → reddedilmeli.
+/// validate_full bu helper'ı kullanır. Token sahibi != caller -> reddedilmeli.
 #[allow(dead_code)] // self-test build dışında validate_full çağrılmaz
 #[inline(always)]
 pub(crate) const fn token_owner_matches(token_task: u8, caller: u8) -> bool {
@@ -100,7 +134,7 @@ pub(crate) const fn token_owner_matches(token_task: u8, caller: u8) -> bool {
 }
 
 /// Cache-only lookup — sys_cap_invoke fast path (~10c)
-/// validate_full ile cache'e eklenmemiş token → false döner
+/// validate_full ile cache'e eklenmemiş token -> false döner
 #[must_use = "cache lookup result must be checked"]
 pub(crate) fn validate_cached(caller_task_id: u8, token_id: u8, resource: u16, action: u8) -> bool {
     // SAFETY: Single-hart, no concurrent access to TOKEN_CACHE/MAC_KEY.
@@ -111,6 +145,23 @@ pub(crate) fn validate_cached(caller_task_id: u8, token_id: u8, resource: u16, a
 }
 
 /// Full token validation — MAC hesapla, nonce kontrol, cache'e ekle (~400c)
+///
+/// VALIDATION ORDERING (U-22 GÖREV 3 [M7]: explicit doc):
+///   1. Cache lookup -> hit ise hızlı dönüş (~10c, branch-free expire check)
+///   2. KEY_READY check -> false ise reject (boot öncesi token'lar geçersiz)
+///   3. token_owner_matches -> caller_task_id != token.task_id ise reject
+///      (capability impersonation guard, U-16 fix)
+///   4. task_id < MAX_TASKS bounds check (LAST_NONCE array safety)
+///   5. token.nonce > LAST_NONCE[task_id] (strict monotonic, replay guard)
+///   6. Expiry check (token.expires > 0 ise tick comparison)
+///   7. MAC compute (BLAKE3 keyed) + ct_eq_16 verify (constant-time)
+///   8. SUCCESS path:
+///      - LAST_NONCE[task_id] = token.nonce  (volatile write)
+///      - cache.insert (caller_task_id, token, ...)
+///      - return true
+///   9. FAIL path: LAST_NONCE DEĞİŞMEZ (replay protection korunur — yanlış
+///      MAC ile nonce ilerletilirse meşru token reject olabilirdi).
+///
 /// Returns: true = geçerli + cache'e eklendi, false = RED (MAC/nonce/key fail)
 #[cfg(feature = "fast-crypto")]
 #[allow(dead_code)] // Sprint U-16: production'da HSM token enroll yolu eklenince çağrılacak
@@ -183,7 +234,7 @@ pub(crate) fn sign_token(token: &mut Token) {
 /// Sprint U-14: Eski invalidate_task(token_id) semantic bug'ıydı — task.id != token.id
 /// olduğunda yanlış entry silinebiliyordu. Artık owner_task_id ile arama yapılıyor.
 pub(crate) fn invalidate_task_capabilities(task_id: u8) {
-    // SAFETY: MIE=0 in trap context (isolate_task → trap handler), single-hart.
+    // SAFETY: MIE=0 in trap context (isolate_task -> trap handler), single-hart.
     unsafe {
         let cache_mut = TOKEN_CACHE.get_mut();
         cache_mut.invalidate_by_owner(task_id);
@@ -210,7 +261,7 @@ fn ct_eq_16(a: &[u8; 16], b: &[u8; 16]) -> bool {
 mod verification {
     use super::*;
 
-    /// Proof 137: ct_eq_16 aynı girdi → true
+    /// Proof 137: ct_eq_16 aynı girdi -> true
     #[kani::proof]
     fn ct_eq_16_same_input_true() {
         let mut a = [0u8; 16];
@@ -220,7 +271,7 @@ mod verification {
         assert!(ct_eq_16(&a, &b));
     }
 
-    /// Proof 138: ct_eq_16 tek byte fark → false
+    /// Proof 138: ct_eq_16 tek byte fark -> false
     #[kani::proof]
     fn ct_eq_16_single_byte_diff_false() {
         let mut a = [0u8; 16];

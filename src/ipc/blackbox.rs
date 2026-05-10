@@ -6,9 +6,9 @@
 //   [MAGIC:4][VER:2][PAD:2][SEQ:4][TS:4][TASK:1][EVENT:1][DATA:42][CRC32:4]
 //
 // Power-loss koruması (v8.0):
-//   Yarım yazılmış kayıt → CRC32 fail → kayıt ATLANIR
-//   Bir önceki kayıt sağlam → oradan devam edilir
-//   SRAM/FRAM yazma <1μs → max 1 kayıt kaybı güç kesilmesinde
+//   Yarım yazılmış kayıt -> CRC32 fail -> kayıt ATLANIR
+//   Bir önceki kayıt sağlam -> oradan devam edilir
+//   SRAM/FRAM yazma <1μs -> max 1 kayıt kaybı güç kesilmesinde
 //
 // Kural: SADECE KERNEL YAZAR — tek yazar, race imkansız
 // Kural: advance_tick() her schedule() başında çağrılır
@@ -51,8 +51,8 @@ pub enum BlackboxEvent {
     IopmpViolation  = 10, // IOPMP ihlali
     DeadlineMiss    = 11, // Deadline aşımı
     WatchdogTimeout = 12, // Watchdog süresi doldu
-    PmpFail         = 13, // PMP bütünlük hatası (→ SHUTDOWN)
-    LockstepFail    = 14, // Policy lockstep mismatch (action1 != action2 → SHUTDOWN)
+    PmpFail         = 13, // PMP bütünlük hatası (-> SHUTDOWN)
+    LockstepFail    = 14, // Policy lockstep mismatch (action1 != action2 -> SHUTDOWN)
 }
 
 // ═══════════════════════════════════════════════════════
@@ -62,15 +62,15 @@ pub enum BlackboxEvent {
 /// Blackbox kaydı — 64B, repr(C) (padding EXPLICIT — Sprint U-14)
 ///
 /// Byte layout (Proof 52 ile doğrulandı):
-///   [0..4]   magic:     [u8;4]   → "SPHI"
-///   [4..6]   version:   u16      → 1
-///   [6..8]   _pad:      [u8;2]   → EXPLICIT padding (u32 alignment için)
-///   [8..12]  seq:       u32      → monoton, u32 wrap (~23 yıl @ 6 rec/sec)
-///   [12..16] timestamp: u32      → boot'tan tick sayısı
-///   [16]     task_id:   u8       → tetikleyen task (0xFF=kernel)
-///   [17]     event:     u8       → BlackboxEvent as u8
-///   [18..60] data:      [u8;42]  → olay verisi (KernelBoot: data[0..2]=epoch)
-///   [60..64] crc:       u32      → CRC32 byte 0..60 üzerinde
+///   [0..4]   magic:     [u8;4]   -> "SPHI"
+///   [4..6]   version:   u16      -> 1
+///   [6..8]   _pad:      [u8;2]   -> EXPLICIT padding (u32 alignment için)
+///   [8..12]  seq:       u32      -> monoton, u32 wrap (~23 yıl @ 6 rec/sec)
+///   [12..16] timestamp: u32      -> boot'tan tick sayısı
+///   [16]     task_id:   u8       -> tetikleyen task (0xFF=kernel)
+///   [17]     event:     u8       -> BlackboxEvent as u8
+///   [18..60] data:      [u8;42]  -> olay verisi (KernelBoot: data[0..2]=epoch)
+///   [60..64] crc:       u32      -> CRC32 byte 0..60 üzerinde
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BlackboxRecord {
@@ -139,7 +139,20 @@ static BB_BUFFER: SingleHartCell<[BlackboxRecord; BLACKBOX_MAX_RECORDS]> =
 /// Sonraki yazma konumu [0, BLACKBOX_MAX_RECORDS)
 static BB_WRITE_POS: SingleHartCell<u8> = SingleHartCell::new(0);
 
-/// Sonraki sıra numarası (u32, ~23 yıl wrap-free @ 6 kayıt/saniye)
+/// Blackbox sıra numarası — u32 monoton artan.
+///
+/// U-22 GÖREV 13 [L8]: WRAP DAVRANIŞI explicit doc.
+///   `wrapping_add(1)` kullanılır (record() son satırı, blackbox.rs:260).
+///   u32::MAX (4_294_967_295) sonrası 0'a döner. 10ms tick + olay başına 1
+///   artış varsayımıyla:
+///     - 1 olay/tick (100/s):   ~497 gün wrap-free
+///     - 6 olay/saniye:        ~23 yıl wrap-free
+///     - 10 olay/tick (1000/s): ~50 gün wrap-free
+///     - 100 olay/tick (10K/s): ~5 gün wrap-free
+///   FORENSIK ANALIZ: monotonicity break = ya wrap ya da reboot.
+///   Reboot'ta `init()` (line 188-191) seq'i sıfırlar; epoch artar — analizci
+///   epoch + seq kombinasyonu ile global ordering kurar.
+///   v2.0 hedef: u64 (asla wrap, ~5.8 milyar yıl @ 100 olay/s).
 static BB_NEXT_SEQ: SingleHartCell<u32> = SingleHartCell::new(0);
 
 /// Boot'tan bu yana geçen tick — schedule() her çağrısında advance_tick() artırır
@@ -201,7 +214,7 @@ pub(crate) fn advance_tick() {
     unsafe {
         let t = vol_read!(BB_TICK -> u32);
         let next = t.wrapping_add(1);
-        // Wrap tespiti: next < t → u32 taştı → epoch artır
+        // Wrap tespiti: next < t -> u32 taştı -> epoch artır
         if next < t {
             let epoch = vol_read!(BB_BOOT_EPOCH -> u16);
             vol_write!(BB_BOOT_EPOCH, epoch.wrapping_add(1));
@@ -222,7 +235,7 @@ pub(crate) fn log(event: BlackboxEvent, task_id: u8, data: &[u8]) {
         // Sprint U-16: Defense-in-depth — Proof 54 BB_WRITE_POS < BLACKBOX_MAX_RECORDS
         // garantisi veriyor, ama runtime corruption (cosmic ray, fault injection)
         // pos'u yine de BLACKBOX_MAX_RECORDS üstüne çıkarabilir. Reset + drop record
-        // → OOB write engellendi, sistem ayakta kalır.
+        // -> OOB write engellendi, sistem ayakta kalır.
         if pos >= BLACKBOX_MAX_RECORDS {
             vol_write!(BB_WRITE_POS, 0u8);
             return; // bu kayıt düşürüldü; gelecek kayıtlar düzgün yazılacak
@@ -337,7 +350,7 @@ mod verification {
         assert!(BLACKBOX_MAX_RECORDS * BLACKBOX_RECORD_SIZE == 8192);
     }
 
-    /// Proof 53: Kayıt yaz → CRC doğrula (set_crc / verify_crc roundtrip)
+    /// Proof 53: Kayıt yaz -> CRC doğrula (set_crc / verify_crc roundtrip)
     #[kani::proof]
     fn record_crc_roundtrip() {
         let mut rec = BlackboxRecord::zeroed();
@@ -377,7 +390,7 @@ mod verification {
         rec.set_crc();
         // Payload'ı boz (yarım yazılmış / bit flip simülasyonu)
         rec.data[0] = rec.data[0].wrapping_add(1);
-        // CRC uyuşmaz → kayıt geçersiz → ATLANIR
+        // CRC uyuşmaz -> kayıt geçersiz -> ATLANIR
         assert!(!rec.verify_crc());
         assert!(!rec.is_valid());
     }
@@ -453,7 +466,7 @@ mod verification {
         assert!(get_tick() == expected);
     }
 
-    /// Proof 105: BlackboxRecord zeroed → seq == 0
+    /// Proof 105: BlackboxRecord zeroed -> seq == 0
     #[kani::proof]
     fn blackbox_zeroed_record_seq_zero() {
         let rec = BlackboxRecord::zeroed();
@@ -462,7 +475,7 @@ mod verification {
         assert!(rec.task_id == 0);
     }
 
-    /// Proof 106: Tick monoton: before < MAX → before + 1 > before
+    /// Proof 106: Tick monoton: before < MAX -> before + 1 > before
     #[kani::proof]
     fn blackbox_tick_monotonic() {
         let before: u64 = kani::any();
@@ -471,7 +484,7 @@ mod verification {
         assert!(after > before);
     }
 
-    /// Proof 107: write_pos wrap — pos < MAX → next < MAX, wrap → 0
+    /// Proof 107: write_pos wrap — pos < MAX -> next < MAX, wrap -> 0
     #[kani::proof]
     fn blackbox_write_pos_wraps_correctly() {
         let pos: u8 = kani::any();
@@ -483,7 +496,7 @@ mod verification {
         }
     }
 
-    /// Proof 166: BlackboxRecord concrete data tamper → CRC fail
+    /// Proof 166: BlackboxRecord concrete data tamper -> CRC fail
     #[kani::proof]
     fn blackbox_record_concrete_tamper_crc_fail() {
         let mut rec = BlackboxRecord::zeroed();
@@ -497,7 +510,7 @@ mod verification {
         assert!(!rec.verify_crc());
     }
 
-    /// Proof: write_pos >= MAX → güvenli 0'a dönüş
+    /// Proof: write_pos >= MAX -> güvenli 0'a dönüş
     #[kani::proof]
     fn blackbox_write_pos_out_of_bounds_safe() {
         let pos: u8 = kani::any();

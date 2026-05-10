@@ -25,8 +25,8 @@ pub use dispatch::{
 // Userspace Syscall Wrappers
 // Task'lardan çağrılır, ecall tetikler
 //
-// Şu an M-mode'da: ecall → mcause=11 → trap handler
-// Sprint 10 U-mode: ecall → mcause=8 → trap handler
+// Şu an M-mode'da: ecall -> mcause=11 -> trap handler
+// Sprint 10 U-mode: ecall -> mcause=8 -> trap handler
 // Wrapper'lar değişmez, trap.S ikisini de destekliyor.
 // ═══════════════════════════════════════════════════════
 

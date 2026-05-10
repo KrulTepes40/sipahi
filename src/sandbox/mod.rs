@@ -13,11 +13,12 @@
 //
 // Kurallar:
 //   1. GlobalAlloc sadece WASM sandbox — kernel asla alloc kullanmaz
-//   2. Arena 64KB sabit — OOM → WasmTrap
+//   2. Arena boyutu config.rs::WASM_HEAP_SIZE (4MB; production'da 16B placeholder
+//      G8 wasm-sandbox feature gate'i ile) — OOM -> WasmTrap
 //   3. Epoch reset: modül değiştiğinde arena sıfırla
 //   4. Fuel metering: sonsuz döngüden korunma
 //   5. Float opcode içeren modüller REJECT
-//   6. #[cfg(not(kani))] — wasmi Kani'de çalışmaz
+//   6. wasm-sandbox feature gate (Kani derlenmez, production derlenmez)
 //   7. assert!/unwrap/panic yok — doktrin uyumlu
 #![allow(dead_code)]
 
@@ -35,15 +36,15 @@ use crate::common::config::{
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum SandboxError {
-    FloatOpcodes     = 0,  // Float opcode tespit edildi → REJECT
-    ModuleTooLarge   = 1,  // Modül > 64KB → REJECT
+    FloatOpcodes     = 0,  // Float opcode tespit edildi -> REJECT
+    ModuleTooLarge   = 1,  // Modül > 64KB -> REJECT
     InvalidMagic     = 2,  // WASM sihirli baytlar geçersiz
     ParseError       = 3,  // Wasmi parse hatası
     InstantiateError = 4,  // Wasmi örnekleme hatası
     FunctionNotFound = 5,  // Export fonksiyonu bulunamadı
     TypeMismatch     = 6,  // Yanlış dönüş tipi
     Trapped          = 7,  // WASM trap (genel)
-    FuelExhausted    = 8,  // Fuel bitti → WCET sınırı aşıldı
+    FuelExhausted    = 8,  // Fuel bitti -> WCET sınırı aşıldı
     NotLoaded        = 9,  // Modül henüz yüklenmedi
     FuelSetError     = 10, // Fuel metering yapılandırma hatası
 }
@@ -60,19 +61,12 @@ const WASM_SECTION_CODE: u8 = 0x0a;
 // Float opcode tarayıcısı — saf fonksiyon, Kani doğrulanabilir
 // ═══════════════════════════════════════════════════════
 
-/// LEB128 u32 oku — (değer, tüketilen bayt sayısı)
+/// LEB128 u32 oku — slice baştan (offset 0).
+/// U-22 GÖREV 20 [Senior]: read_leb128_u32 (line 147) ile DRY merge.
+/// İmza farklı ama logic aynı — bu wrapper, gerçek decoder aşağıda.
+#[inline]
 pub fn read_u32_leb128(bytes: &[u8]) -> Option<(u32, usize)> {
-    let mut result: u32 = 0;
-    let mut shift: u32  = 0;
-    let mut i: usize    = 0;
-    loop {
-        if i >= bytes.len() || i >= 5 { return None; }
-        let b = bytes[i] as u32;
-        result |= (b & 0x7F) << shift;
-        i      += 1;
-        shift  += 7;
-        if b & 0x80 == 0 { return Some((result, i)); }
-    }
+    read_leb128_u32(bytes, 0)
 }
 
 /// WASM binary'sinden kod bölümünü bul
@@ -106,8 +100,8 @@ pub fn find_code_section(bytes: &[u8]) -> Option<&[u8]> {
 /// Float opcode mu? — Kod bölümü byte taraması için
 /// Taranan aralıklar (bit-7 set olanlar güvenli; 0x43/0x44 de dahil):
 ///   0x43: f32.const   0x44: f64.const
-///   0x8b–0xa6: f32/f64 aritmetik (bit-7 set → LEB128 terminali olamaz)
-///   0xa8–0xb1: i32/i64.trunc_f32/f64_s/u (float input → int) — U-17
+///   0x8b–0xa6: f32/f64 aritmetik (bit-7 set -> LEB128 terminali olamaz)
+///   0xa8–0xb1: i32/i64.trunc_f32/f64_s/u (float input -> int) — U-17
 ///   0xb2–0xbf: float/int dönüşüm ve reinterpret
 ///
 /// 0xFC prefix saturating truncation for has_float_opcodes scan loop
@@ -172,24 +166,24 @@ fn skip_instruction(code: &[u8], pos: usize) -> Option<usize> {
     if pos >= code.len() { return None; }
     let op = code[pos];
     match op {
-        // i32.const → signed LEB128 immediate
+        // i32.const -> signed LEB128 immediate
         0x41 => skip_leb128(code, pos + 1),
-        // i64.const → signed LEB128 immediate
+        // i64.const -> signed LEB128 immediate
         0x42 => skip_leb128(code, pos + 1),
-        // f32.const → 4 byte IEEE754
+        // f32.const -> 4 byte IEEE754
         0x43 => if pos + 5 <= code.len() { Some(pos + 5) } else { None },
-        // f64.const → 8 byte IEEE754
+        // f64.const -> 8 byte IEEE754
         0x44 => if pos + 9 <= code.len() { Some(pos + 9) } else { None },
-        // block/loop/if → blocktype (1 byte)
+        // block/loop/if -> blocktype (1 byte)
         0x02..=0x04 => if pos + 2 <= code.len() { Some(pos + 2) } else { None },
-        // br, br_if, call, local.get/set/tee, global.get/set, memory.size/grow → LEB128 index
+        // br, br_if, call, local.get/set/tee, global.get/set, memory.size/grow -> LEB128 index
         0x0C | 0x0D | 0x10 | 0x20..=0x24 | 0x3F | 0x40 => skip_leb128(code, pos + 1),
         // U-17: br_table 0x0E — count LEB128 + (count+1) label LEB128 + default
         0x0E => {
             let (count, b1) = read_leb128_u32(code, pos + 1)?;
             let mut p = pos + 1 + b1;
             // count + 1 labels (count target + 1 default)
-            // count u32 olduğu için count+1 overflow riski → checked_add
+            // count u32 olduğu için count+1 overflow riski -> checked_add
             let total = count.checked_add(1)?;
             let mut j: u32 = 0;
             while j < total {
@@ -198,23 +192,23 @@ fn skip_instruction(code: &[u8], pos: usize) -> Option<usize> {
             }
             Some(p)
         }
-        // load/store → 2× LEB128 (align + offset)
+        // load/store -> 2× LEB128 (align + offset)
         0x28..=0x3E => {
             let p = skip_leb128(code, pos + 1)?;
             skip_leb128(code, p)
         }
         // U-17: 0xFC prefix — saturating truncation (i32/i64.trunc_sat_f32/f64)
         // Sub-opcode 0x00..0x07 = float trunc (REJECT), 0x08+ memory ops (LEB128'lı)
-        // skip_instruction çağrıldığında is_float_opcode hâlâ false → has_float
+        // skip_instruction çağrıldığında is_float_opcode hâlâ false -> has_float
         // scan loop içinde 0xFC ayrı kontrol gerekli (aşağıda has_float_opcodes).
         // Burada sadece skip — sub-opcode + leb128'lar atlanır
         0xFC => {
-            // Sub-opcode (LEB128, ama tipik <128 → 1 byte)
+            // Sub-opcode (LEB128, ama tipik <128 -> 1 byte)
             let (sub, b1) = read_leb128_u32(code, pos + 1)?;
             let mut p = pos + 1 + b1;
             // memory.copy = 0x0A (2 zero byte), memory.fill = 0x0B (1 zero byte)
             // memory.init = 0x08 (data idx LEB + 0), data.drop = 0x09 (data idx LEB)
-            // Konservatif: sub <= 0x07 → 0 immediate (trunc_sat), 0x08+ → LEB'lar
+            // Konservatif: sub <= 0x07 -> 0 immediate (trunc_sat), 0x08+ -> LEB'lar
             match sub {
                 0x00..=0x07 => Some(p), // trunc_sat — no immediate
                 0x08 => {                // memory.init: data idx + reserved
@@ -278,32 +272,41 @@ pub fn validate_module(bytes: &[u8]) -> Result<(), SandboxError> {
 
 // ═══════════════════════════════════════════════════════
 // Compute Servisleri — 4 sabit servis (doküman §HOST_CALL)
-// WCET: COPY ~80c · CRC ~120c · MAC ~350c · MATH ~200c
+// WCET: bkz. config.rs::WCET_COMPUTE_* (CRC=1500c U-15 sonrası,
+// COPY=80, MAC=350, MATH=200) — FPGA ölçümü pending.
 // ═══════════════════════════════════════════════════════
 
 /// Compute servis dispatcher — WASM host_call köprüsü
+// U-22 GÖREV 4 [M8]: Distinct error codes — sandbox-internal i32 schema.
+// Syscall surface'taki usize::MAX-N şemasından (dispatch.rs E_*) ayrıdır,
+// bu kodlar sadece dispatch_compute dönüş değerinde anlamlıdır.
+pub const E_COMPUTE_INVALID_OP: i32 = -1; // Bilinmeyen servis ID
+pub const E_COMPUTE_OVERFLOW:   i32 = -2; // Q32.32 dot-product taşması
+pub const E_COMPUTE_NOT_IMPL:   i32 = -3; // v1.0 stub (compute_copy)
+pub const E_COMPUTE_SHORT_DATA: i32 = -4; // Giriş verisi minimum boy altında
+
 /// service: COMPUTE_COPY/CRC/MAC/MATH
 /// data: En fazla 256B giriş verisi
-/// Dönüş: 0 = başarı, <0 = hata kodu
+/// Dönüş: 0 = başarı, <0 = hata kodu (E_COMPUTE_* sabitleri)
 pub fn dispatch_compute(service: u8, data: &[u8]) -> i32 {
     match service {
         s if s == COMPUTE_COPY => compute_copy(data),
         s if s == COMPUTE_CRC  => compute_crc(data),
         s if s == COMPUTE_MAC  => compute_mac(data),
         s if s == COMPUTE_MATH => compute_math(data),
-        _                      => -1, // Bilinmeyen servis
+        _                      => E_COMPUTE_INVALID_OP,
     }
 }
 
 /// COMPUTE_COPY — v1.0 stub, v2.0'da aktif edilecek
 /// Gerçek WASM linear memory kopyası wasmi Store/Memory API'si gerektirir.
-/// Sprint U-14: Önceden len döndürüyordu (yanıltıcı), artık dürüst -3 döner.
-/// Dönüş: -3 = NotImplemented
+/// Sprint U-14: Önceden len döndürüyordu (yanıltıcı), artık dürüst stub.
+/// Dönüş: E_COMPUTE_NOT_IMPL
 fn compute_copy(_data: &[u8]) -> i32 {
-    -3_i32
+    E_COMPUTE_NOT_IMPL
 }
 
-/// COMPUTE_CRC — CRC32 bütünlük (sabit zaman, WCET ~120c)
+/// COMPUTE_CRC — CRC32 bütünlük (sabit zaman, WCET ~1500c — config.rs::WCET_COMPUTE_CRC)
 fn compute_crc(data: &[u8]) -> i32 {
     // CRC32 hesapla, ipc::crc32 kullan
     let result = crate::ipc::crc32(data);
@@ -312,9 +315,9 @@ fn compute_crc(data: &[u8]) -> i32 {
 
 /// COMPUTE_MAC — BLAKE3 keyed hash (sabit zaman, WCET ~350c)
 /// Giriş: data[0..32] = 32-byte key, data[32..] = mesaj
-/// Dönüş: MAC'in ilk 4 byte'ı i32 olarak (LE)
+/// Dönüş: MAC'in ilk 4 byte'ı i32 olarak (LE), kısa veri -> E_COMPUTE_SHORT_DATA
 fn compute_mac(data: &[u8]) -> i32 {
-    if data.len() < 32 { return -1; }
+    if data.len() < 32 { return E_COMPUTE_SHORT_DATA; }
     let mut key = [0u8; 32];
     let mut i = 0;
     while i < 32 { key[i] = data[i]; i += 1; }
@@ -327,35 +330,36 @@ fn compute_mac(data: &[u8]) -> i32 {
 }
 
 /// COMPUTE_MATH — Q32.32 vektör dot product (sabit zaman, WCET ~200c)
-/// Dönüş: Q32.32 sonuç (i32), -1 = kısa veri, -2 = overflow
+/// Dönüş: Q32.32 sonuç (i32), E_COMPUTE_SHORT_DATA, E_COMPUTE_OVERFLOW
 fn compute_math(data: &[u8]) -> i32 {
-    if data.len() < 16 { return -1; }
+    if data.len() < 16 { return E_COMPUTE_SHORT_DATA; }
     let a = i64::from_le_bytes([data[0],data[1],data[2],data[3],data[4],data[5],data[6],data[7]]);
     let b = i64::from_le_bytes([data[8],data[9],data[10],data[11],data[12],data[13],data[14],data[15]]);
     match a.checked_mul(b) {
         Some(result) => (result >> 32) as i32,
-        None => -2, // overflow
+        None => E_COMPUTE_OVERFLOW,
     }
 }
 
 // ═══════════════════════════════════════════════════════
 // WasmSandbox — Wasmi Entegrasyonu
-// #[cfg(not(kani))] — wasmi Kani'de çalışmaz
+// U-22 GÖREV 8 [M14]: feature-gated `wasm-sandbox` — production'da DERLENMEZ.
+// Kani'de derlenmez (wasmi model checking kapsamını aşar).
 // ═══════════════════════════════════════════════════════
 
 /// Host state — wasmi Store'a bağlı uygulama verisi
-#[cfg(not(kani))]
+#[cfg(all(not(kani), feature = "wasm-sandbox"))]
 pub struct HostData;
 
 /// WASM Sandbox — tek modül/slot, sıralı (doküman §WASM politika 6)
-#[cfg(not(kani))]
+#[cfg(all(not(kani), feature = "wasm-sandbox"))]
 pub struct WasmSandbox {
     engine:   wasmi::Engine,
     store:    Option<wasmi::Store<HostData>>,
     instance: Option<wasmi::Instance>,
 }
 
-#[cfg(not(kani))]
+#[cfg(all(not(kani), feature = "wasm-sandbox"))]
 impl WasmSandbox {
     /// Yeni sandbox — arena epoch reset ile başlar
     pub fn new() -> Self {
@@ -366,7 +370,7 @@ impl WasmSandbox {
         WasmSandbox { engine, store: None, instance: None }
     }
 
-    /// Modül yükle: float tara → parse → linker → instance
+    /// Modül yükle: float tara -> parse -> linker -> instance
     /// Dönüş: Ok(modül_boyutu) veya Err
     pub fn load_module(&mut self, bytes: &[u8]) -> Result<usize, SandboxError> {
         // 1. Ön-doğrulama (float tarama + boyut kontrolü)
@@ -482,7 +486,7 @@ mod verification {
     #[kani::proof]
     fn epoch_reset_clears_state() {
         // AtomicUsize::store(0) sonucunu kanıtla
-        let after_reset: usize = 0; // epoch_reset() → store(0)
+        let after_reset: usize = 0; // epoch_reset() -> store(0)
         assert!(after_reset == 0);
         assert!(after_reset < WASM_HEAP_SIZE);
     }
@@ -568,14 +572,14 @@ mod verification {
         assert!(result.is_none());
     }
 
-    /// Proof 63: Modül > 64KB → ModuleTooLarge hatası
+    /// Proof 63: Modül > 64KB -> ModuleTooLarge hatası
     #[kani::proof]
     fn oversized_module_rejected() {
         // WASM magic geçerli ama boyut aşımı simülasyonu
         // validate_module boyut kontrolünü yapar
         let size: usize = kani::any();
         kani::assume(size > WASM_HEAP_SIZE);
-        // Boyut kontrolü: bytes.len() > WASM_HEAP_SIZE → Err
+        // Boyut kontrolü: bytes.len() > WASM_HEAP_SIZE -> Err
         let too_large = size > WASM_HEAP_SIZE;
         assert!(too_large);
     }
@@ -621,7 +625,7 @@ mod verification {
         }
     }
 
-    /// Proof 122: Geçersiz magic bytes → Err
+    /// Proof 122: Geçersiz magic bytes -> Err
     #[kani::proof]
     fn invalid_magic_rejected() {
         let data = [0x00u8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
@@ -629,14 +633,14 @@ mod verification {
         assert!(result.is_err());
     }
 
-    /// Proof 141: skip_instruction: boş slice → None
+    /// Proof 141: skip_instruction: boş slice -> None
     #[kani::proof]
     fn skip_instruction_empty_none() {
         let data: [u8; 0] = [];
         assert!(skip_instruction(&data, 0).is_none());
     }
 
-    /// Proof 142: skip_instruction: pos >= len → None
+    /// Proof 142: skip_instruction: pos >= len -> None
     #[kani::proof]
     fn skip_instruction_out_of_bounds() {
         let data = [0x00u8; 4];
@@ -644,7 +648,7 @@ mod verification {
         assert!(skip_instruction(&data, 100).is_none());
     }
 
-    /// Proof 143: skip_instruction: 1-byte opcode → pos + 1
+    /// Proof 143: skip_instruction: 1-byte opcode -> pos + 1
     #[kani::proof]
     fn skip_instruction_single_byte() {
         let data = [0x00u8, 0x01, 0x0B];
@@ -652,7 +656,7 @@ mod verification {
         assert!(result == Some(1));
     }
 
-    /// Proof 144: validate_module: kısa girdi → Err
+    /// Proof 144: validate_module: kısa girdi -> Err
     #[kani::proof]
     fn validate_module_too_short() {
         let data = [0x00u8, 0x61, 0x73];
@@ -660,7 +664,7 @@ mod verification {
         assert!(result.is_err());
     }
 
-    /// Proof 145: dispatch_compute: service=0 (COPY) → -3 (Sprint U-14 stub)
+    /// Proof 145: dispatch_compute: service=0 (COPY) -> -3 (Sprint U-14 stub)
     /// Sprint U-14: compute_copy artık dürüst stub (wasmi Store/Memory API v2.0).
     #[kani::proof]
     fn dispatch_compute_empty_data() {
@@ -681,7 +685,7 @@ mod verification {
         assert!(!is_float_opcode(op));
     }
 
-    /// Proof 167: skip_instruction f32.const → +5, f64.const → +9
+    /// Proof 167: skip_instruction f32.const -> +5, f64.const -> +9
     #[kani::proof]
     fn skip_instruction_float_const_sizes() {
         let data = [0x43u8, 0x00, 0x00, 0x80, 0x3F, 0x0B];
@@ -690,7 +694,7 @@ mod verification {
         assert!(skip_instruction(&data2, 0) == Some(9));
     }
 
-    /// Proof 168: validate_module geçerli minimal WASM → Ok
+    /// Proof 168: validate_module geçerli minimal WASM -> Ok
     #[kani::proof]
     fn validate_module_valid_minimal_wasm() {
         let wasm: [u8; 36] = [

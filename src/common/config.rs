@@ -28,7 +28,7 @@ pub const CHANNEL_UNASSIGNED: u8 = 0xFF;
 pub const TICK_PERIOD_US: u32 = 10_000; // 10ms
 
 /// Kernel stack boyutu (byte)
-/// Sprint 13: 4KB → 16KB — Ed25519-dalek + BLAKE3 test frame'leri 4KB'ı aşıyordu
+/// Sprint 13: 4KB -> 16KB — Ed25519-dalek + BLAKE3 test frame'leri 4KB'ı aşıyordu
 pub const KERNEL_STACK_SIZE: usize = 16384; // 16KB
 
 /// Task stack boyutu (byte)
@@ -90,7 +90,7 @@ pub const CPU_FREQ_HZ: u64 = 10_000_000; // 10MHz (QEMU)
 // QEMU TCG modunda rdcycle gerçek donanım cycle'ı DEĞİL,
 // instruction count döner. WCET ölçümü için mtime (sabit frekanslı
 // timer) daha tutarlı. rdcycle sadece göreli karşılaştırma için
-// kullanılabilir. Kesin WCET ölçümü → FPGA'da (v1.5).
+// kullanılabilir. Kesin WCET ölçümü -> FPGA'da (v1.5).
 
 // ═══════════════════════════════════════════════════════
 // WCET hedefleri (cycle, @100MHz)
@@ -230,6 +230,23 @@ pub const WCET_COMPUTE_MAC: u64 = 350;
 
 /// COMPUTE_MATH WCET hedefi (cycle) — Q32.32 vektör dot product
 pub const WCET_COMPUTE_MATH: u64 = 200;
+
+// U-22 GÖREV 6 [M10]: WCET zincir -> tick budget invariant.
+// wcet_ordering_consistent (verify.rs:60) tautolojikti (sabitleri kendine
+// kıyaslıyordu). GERÇEK invariant: en kötü senaryoda tek tick içinde
+// scheduler + token validate + en pahalı compute + IPC + task_info
+// hepsi sığmalı, yoksa scheduler overrun -> DeadlineMiss policy.
+//
+// Bu compile-time assert; Kani gerekmez, her build'de doğrular.
+const _: () = assert!(
+    (WCET_SCHEDULER_TICK
+        + WCET_TOKEN_VALIDATE
+        + WCET_COMPUTE_CRC
+        + WCET_IPC_SEND
+        + WCET_TASK_INFO) < CYCLES_PER_TICK as u64,
+    "WCET worst-case syscall chain exceeds CYCLES_PER_TICK budget — \
+     scheduler overrun risk, DAL bütçesi yeniden hesaplanmalı"
+);
 
 // ═══════════════════════════════════════════════════════
 // Blackbox sabitleri (Sprint 11)

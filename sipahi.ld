@@ -99,4 +99,21 @@ SECTIONS {
     . = ALIGN(8);
     __clear_end = .;
     _end = .;
+
+    /* U-22 GÖREV 17 [L14]: bare-metal'de gereksiz bölümleri kaldır.
+       eh_frame/eh_frame_hdr — Rust unwind tabloları (panic=abort'ta gereksiz).
+       got/got.plt — dynamic linking yok, bare-metal binary.
+       comment/note — ABI/version strings, runtime kullanmıyor.
+       dynsym/dynstr — dynamic loader yok.
+       Production binary'sini şişiren ölü bölümleri linker silsin. */
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.eh_frame_hdr)
+        *(.got)
+        *(.got.plt)
+        *(.comment)
+        *(.note*)
+        *(.dynsym)
+        *(.dynstr)
+    }
 }

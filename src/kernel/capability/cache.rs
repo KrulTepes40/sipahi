@@ -52,8 +52,8 @@ impl TokenCache {
         while i < CACHE_SLOTS {
             let e = &self.entries[i];
             // Branch-free expiry check:
-            // expires == 0 → sonsuz (is_infinite=1, not_expired irrelevant)
-            // expires > 0 → now <= expires ise geçerli
+            // expires == 0 -> sonsuz (is_infinite=1, not_expired irrelevant)
+            // expires > 0 -> now <= expires ise geçerli
             let expires = e.expires as u64;
             let is_infinite = (expires == 0) as u8;
             let not_expired = (now <= expires) as u8;
@@ -88,6 +88,21 @@ impl TokenCache {
             if self.entries[i].token_id == token_id {
                 self.entries[i] = CacheEntry::empty();
             }
+            i += 1;
+        }
+    }
+
+    /// U-22 GÖREV 26 [MP7]: Tüm cache slot'larını invalidate.
+    /// Key rotation senaryosunda eski token hash'leri yeni MAC_KEY altında
+    /// geçersiz; cache hit'i prevent etmek için flush zorunlu.
+    /// v1.0: provision_key boot-once -> bu yol pratikte runtime'da
+    /// tetiklenmiyor (cache zaten boş). v2.0+ HSM key rotation'da aktif olur.
+    /// CACHE_SLOTS sabit (4) -> constant-time scan, branch-free.
+    #[allow(dead_code)] // v1.0'da provision_key sonrası boş cache, v2.0'da aktif
+    pub fn invalidate_all(&mut self) {
+        let mut i = 0;
+        while i < CACHE_SLOTS {
+            self.entries[i] = CacheEntry::empty();
             i += 1;
         }
     }

@@ -88,7 +88,7 @@ impl IopmpController {
     /// Erişim kontrolü (STUB: bölge tanımlıysa izin ver)
     pub fn check_access(&self, addr: usize, size: usize, write: bool) -> bool {
         if !self.enabled {
-            return true; // IOPMP kapalı → tüm erişim serbest
+            return true; // IOPMP kapalı -> tüm erişim serbest
         }
         let mut i = 0;
         while i < IOPMP_MAX_REGIONS {
@@ -96,11 +96,11 @@ impl IopmpController {
                 // Overflow koruması — safety-critical'da zorunlu
                 let end = match region.base.checked_add(region.size) {
                     Some(e) => e,
-                    None => { i += 1; continue; } // overflow → bu bölgeyi atla
+                    None => { i += 1; continue; } // overflow -> bu bölgeyi atla
                 };
                 let access_end = match addr.checked_add(size) {
                     Some(e) => e,
-                    None => return false, // erişim adresi overflow → RED
+                    None => return false, // erişim adresi overflow -> RED
                 };
                 // Bölge içinde mi?
                 if addr >= region.base && access_end <= end {
@@ -112,7 +112,7 @@ impl IopmpController {
             }
             i += 1;
         }
-        false // Tanımsız bölge → erişim RED
+        false // Tanımsız bölge -> erişim RED
     }
 
     /// IOPMP etkin mi?
@@ -125,7 +125,7 @@ impl IopmpController {
 mod verification {
     use super::*;
 
-    /// Proof 169: IOPMP bölge ekle → okuma izinli, yazma red, dışarı red
+    /// Proof 169: IOPMP bölge ekle -> okuma izinli, yazma red, dışarı red
     #[kani::proof]
     fn iopmp_region_enforces_boundary() {
         let mut ctrl = IopmpController::new();

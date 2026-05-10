@@ -129,7 +129,7 @@ impl SpscChannel {
         let msg = unsafe { (*self.slots.get())[tail as usize] };
 
         // U-19 GÖREV 9: send'deki `head.wrapping_add(1)` ile tutarlı.
-        // u16 overflow-checks=true → düz `+` u16::MAX'ta panic atar; SPSC
+        // u16 overflow-checks=true -> düz `+` u16::MAX'ta panic atar; SPSC
         // ring buffer head/tail u16 wrap'i normal davranış.
         let next_tail = tail.wrapping_add(1) % (IPC_CHANNEL_SLOTS as u16);
         self.tail.store(next_tail, Ordering::Release);
@@ -182,12 +182,12 @@ pub fn get_channel(id: usize) -> Option<&'static SpscChannel> {
 // ═══════════════════════════════════════════════════════
 // Sprint U-16: Channel ownership — SPSC garantisi tek üretici/tek tüketici
 // gerçekten zorlanır. Default deny: assign edilmemiş kanal hiç kimse erişemez.
-// Boot sequence sonrası seal_channels() çağrılır → reassign engellenir.
+// Boot sequence sonrası seal_channels() çağrılır -> reassign engellenir.
 // ═══════════════════════════════════════════════════════
 
 /// Channel sahipliği — (producer_task_id, consumer_task_id).
 /// CHANNEL_UNASSIGNED (0xFF) = atanmamış. CHANNEL_UNASSIGNED asla geçerli
-/// task_id olamaz (MAX_TASKS = 8) → default deny.
+/// task_id olamaz (MAX_TASKS = 8) -> default deny.
 static CHANNEL_OWNERS: SingleHartCell<[(u8, u8); MAX_IPC_CHANNELS]> =
     SingleHartCell::new([(
         crate::common::config::CHANNEL_UNASSIGNED,
@@ -253,7 +253,7 @@ mod ownership_verify {
         assert!(!can_recv(ch, caller));
     }
 
-    /// Channel id out-of-bounds → false.
+    /// Channel id out-of-bounds -> false.
     #[kani::proof]
     fn channel_id_oob_denies() {
         let caller: u8 = kani::any();
@@ -270,7 +270,7 @@ mod ownership_verify {
 
 /// CRC32 (IEEE 802.3) — bit-by-bit, no lookup table
 /// Deterministic: WCET = O(n × 8), n = veri uzunluğu
-/// 60 byte payload → 60 × 8 = 480 iterasyon (bounded)
+/// 60 byte payload -> 60 × 8 = 480 iterasyon (bounded)
 pub const fn crc32(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
     let mut i = 0;
@@ -302,7 +302,7 @@ const _: () = assert!(IPC_CHANNEL_SLOTS > 0);
 mod verification {
     use super::*;
 
-    /// Proof 33: Boş kanaldan recv → None
+    /// Proof 33: Boş kanaldan recv -> None
     #[kani::proof]
     fn empty_channel_recv_none() {
         let ch = SpscChannel::new();
@@ -312,7 +312,7 @@ mod verification {
         assert!(ch.len() == 0);
     }
 
-    /// Proof 34: Send sonra recv → aynı veri (&self API)
+    /// Proof 34: Send sonra recv -> aynı veri (&self API)
     #[kani::proof]
     fn send_recv_roundtrip() {
         let ch = SpscChannel::new();
@@ -358,7 +358,7 @@ mod verification {
         assert!(msg.verify_crc());
     }
 
-    /// Proof 38: Bozuk CRC → verify false
+    /// Proof 38: Bozuk CRC -> verify false
     #[kani::proof]
     fn crc_tampered_fails() {
         let mut msg = IpcMessage::zeroed();
@@ -387,14 +387,14 @@ mod verification {
         assert!(ch.len() == 0);
     }
 
-    /// Proof 102: Yeni kanal recv → None
+    /// Proof 102: Yeni kanal recv -> None
     #[kani::proof]
     fn new_channel_recv_none() {
         let ch = SpscChannel::new();
         assert!(ch.recv().is_none());
     }
 
-    /// Proof 103: CRC32 boş girdi → 0x00000000
+    /// Proof 103: CRC32 boş girdi -> 0x00000000
     #[kani::proof]
     fn crc32_empty_returns_zero() {
         let data: [u8; 0] = [];
@@ -402,7 +402,7 @@ mod verification {
         assert!(result == 0x0000_0000);
     }
 
-    /// Proof 104: IpcMessage zeroed → set_crc → verify_crc true
+    /// Proof 104: IpcMessage zeroed -> set_crc -> verify_crc true
     #[kani::proof]
     fn ipc_message_zeroed_crc_roundtrip() {
         let mut msg = IpcMessage::zeroed();
@@ -412,7 +412,7 @@ mod verification {
         assert!(msg.verify_crc());
     }
 
-    /// Proof 132: Geçersiz channel ID → None
+    /// Proof 132: Geçersiz channel ID -> None
     #[kani::proof]
     fn get_channel_invalid_id_none() {
         let id: usize = kani::any();
@@ -420,7 +420,7 @@ mod verification {
         assert!(get_channel(id).is_none());
     }
 
-    /// Proof 155: CRC roundtrip — concrete data ile set→verify true
+    /// Proof 155: CRC roundtrip — concrete data ile set->verify true
     #[kani::proof]
     fn ipc_crc_concrete_data_roundtrip() {
         let mut msg = IpcMessage::zeroed();
@@ -443,7 +443,7 @@ mod verification {
         assert!(!msg.verify_crc());
     }
 
-    /// AtomicU16 wrap → fiziksel slot index her zaman < IPC_CHANNEL_SLOTS
+    /// AtomicU16 wrap -> fiziksel slot index her zaman < IPC_CHANNEL_SLOTS
     #[kani::proof]
     fn ipc_ring_buffer_wrap_never_exceeds_slots() {
         let head_val: u16 = kani::any();

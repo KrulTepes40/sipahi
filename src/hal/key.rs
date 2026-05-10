@@ -10,12 +10,12 @@
 //
 //   Factory provisioning süreci (production v2.0):
 //     1. HSM içinde Ed25519 key pair üret
-//     2. Public key → OTP fuse'a yaz (bir kere, geri alınamaz)
-//     3. Private key → HSM'de kalır (cihaza YAZILMAZ)
-//     4. JTAG fuse yak → debug port kapat
+//     2. Public key -> OTP fuse'a yaz (bir kere, geri alınamaz)
+//     3. Private key -> HSM'de kalır (cihaza YAZILMAZ)
+//     4. JTAG fuse yak -> debug port kapat
 //
-//   v1.0 basitleştirme: QEMU'da OTP yok → key compile-time sabit
-//   FPGA v2.0: OTP emülasyonu → fuse benzeri davranış
+//   v1.0 basitleştirme: QEMU'da OTP yok -> key compile-time sabit
+//   FPGA v2.0: OTP emülasyonu -> fuse benzeri davranış
 //
 // Kani Proof 64: OTP_KEY_SIZE == 32 (Ed25519 public key boyutu)
 // Kani Proof 65: get_root_public_key pointer bounded — her byte erişilebilir

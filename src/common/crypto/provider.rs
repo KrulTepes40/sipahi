@@ -1,12 +1,12 @@
 //! Crypto trait definitions: HashProvider and SignatureVerifier.
 // Kripto provider trait'leri
-// Rust monomorphization → runtime branching YOK
+// Rust monomorphization -> runtime branching YOK
 // Seçilmeyen provider binary'de yer KAPLAMAZ
 
 /// Hash/MAC provider trait
 pub trait HashProvider {
     /// Keyed hash hesapla (token MAC için)
-    /// Input: key + data → 16 byte MAC
+    /// Input: key + data -> 16 byte MAC
     /// WCET: sabit (constant-time)
     fn keyed_hash(key: &[u8; 32], data: &[u8]) -> [u8; 16];
 }

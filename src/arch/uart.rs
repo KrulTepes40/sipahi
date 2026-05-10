@@ -2,7 +2,7 @@
 // Sipahi — UART Driver (Sprint 1)
 // QEMU virt: ns16550a @ 0x10000000
 //
-// NOT: Donanım erişimi → Kani'de derlenmez
+// NOT: Donanım erişimi -> Kani'de derlenmez
 
 #[cfg(not(kani))]
 use crate::common::config::UART_BASE;

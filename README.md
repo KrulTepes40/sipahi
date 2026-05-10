@@ -14,7 +14,7 @@ Sipahi is a bare-metal microkernel applying DO-178C DAL-A **design principles** 
 
 - **U-mode task isolation** — tasks run in User mode, kernel in Machine mode (mret transition, mscratch swap)
 - **Zero heap in kernel** — bump allocator confined to WASM sandbox only
-- **Formal verification** — 200 Kani bounded-model-checking harnesses + 7/7 TLA+ specs (35,770 distinct states) + 8+ compile-time const asserts. See ARCHITECTURE.md "Formal Verification Scope & Limitations" for what is and is not covered.
+- **Formal verification** — 200 Kani bounded-model-checking harnesses + 7/7 TLA+ specs (35,770 distinct states) + 11 compile-time const asserts. See ARCHITECTURE.md "Formal Verification Scope & Limitations" for what is and is not covered.
 - **PMP hardware protection** — 4 L-bit locked kernel regions (text RX, rodata R, data RW, UART RW) + per-task NAPOT stack isolation (Entry 8)
 - **Task memory isolation** — task stacks and WASM arena outside Entry 5 PMP coverage (Sprint U-5)
 - **Capability-based access control** — BLAKE3-keyed tokens with per-task nonce, cache TTL, replay guard, task-id isolated cache
@@ -83,7 +83,7 @@ make kani           # Formal verification (requires Kani)
 | `cargo clippy -- -D warnings` | 0 warnings |
 | Kani harnesses | 200 (~100 symbolic, ~100 concrete/compile-time) |
 | TLA+ specifications | 7/7 verified with TLC v2.19 (35,770 distinct states) |
-| Compile-time asserts | 8+ const asserts |
+| Compile-time asserts | 11 const asserts |
 | Production binary | ~33 KB (`riscv64imac-unknown-none-elf` release, no UART trace) |
 | LOC | ~9.1 K Rust + ~321 ASM (RISC-V) |
 | `no_std` + `no alloc` in kernel | enforced |

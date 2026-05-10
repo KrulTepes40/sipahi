@@ -10,8 +10,8 @@
 //   a6 = orijinal a3 (arg3)
 //
 // Dönüş: usize
-//   ecall → syscall sonucu (trap.S saved a0'a yazar)
-//   interrupt → 0 (trap.S saved a0'a dokunmaz)
+//   ecall -> syscall sonucu (trap.S saved a0'a yazar)
+//   interrupt -> 0 (trap.S saved a0'a dokunmaz)
 
 #[cfg(all(not(kani), feature = "debug-boot"))]
 use crate::arch::uart;
@@ -138,7 +138,7 @@ pub extern "C" fn trap_handler(
                 if mcause == ECALL_U {
                     verify_mpp_is_user_mode();
                 }
-                // ecall → syscall dispatch
+                // ecall -> syscall dispatch
                 // mepc+4 trap.S'de yapıldı, burada yapılmaz
                 crate::kernel::syscall::dispatch(syscall_id, arg0, arg1, arg2, arg3)
             }
@@ -148,7 +148,7 @@ pub extern "C" fn trap_handler(
                 {
                     uart::puts("[TRAP] Illegal instruction at 0x");
                     print_hex(_mepc);
-                    uart::println(" → policy");
+                    uart::println(" -> policy");
                 }
                 crate::ipc::blackbox::log(
                     crate::ipc::blackbox::BlackboxEvent::PolicyIsolate,
@@ -159,8 +159,8 @@ pub extern "C" fn trap_handler(
             }
             5 | 7 => {
                 // Load/StoreAccessFault — PMP violation
-                // Fault adresi task stacks bölgesinde → StackOverflow (policy path)
-                // Dışında → genel PmpFail (WasmTrap via handle_task_fault)
+                // Fault adresi task stacks bölgesinde -> StackOverflow (policy path)
+                // Dışında -> genel PmpFail (WasmTrap via handle_task_fault)
                 let fault_addr = crate::arch::csr::read_mtval();
                 let task_id = crate::kernel::scheduler::current_task_id();
 
@@ -213,12 +213,12 @@ pub extern "C" fn trap_handler(
             }
             // U-21 GÖREV 4 [H6]: Unknown exception triage — fail-closed.
             // Önceden default arm `_ => 0` dönüyordu; ecall dışında trap.S
-            // mepc += 4 yapmadığı için faulting instruction'a dönüyor →
+            // mepc += 4 yapmadığı için faulting instruction'a dönüyor ->
             // sonsuz trap loop / livelock DoS. Şimdi her exception class
             // için explicit dispatch:
-            //   - Task fault'lar (misaligned, breakpoint) → handle_task_fault
-            //   - Hardware integrity (bus error, page fault) → SHUTDOWN
-            //   - Bilinmeyen → fail-closed SHUTDOWN
+            //   - Task fault'lar (misaligned, breakpoint) -> handle_task_fault
+            //   - Hardware integrity (bus error, page fault) -> SHUTDOWN
+            //   - Bilinmeyen -> fail-closed SHUTDOWN
             0 => {
                 // Instruction misaligned — RV64IMAC C-extension ile imkansız
                 // (16-bit instructions allowed); fail-closed isolate

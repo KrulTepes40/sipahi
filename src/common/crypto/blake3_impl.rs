@@ -7,14 +7,14 @@
 //
 // BLAKE3 garantileri:
 //   - Kriptografik: Modern PRF, güçlü anahtar bağımlılığı
-//   - Deterministik: aynı (key, data) → aynı çıkış (her zaman, her platformda)
+//   - Deterministik: aynı (key, data) -> aynı çıkış (her zaman, her platformda)
 //   - Sabit zamanlı: BLAKE3 timing attack dirençli (Merkle ağacı, sabit iş yükü)
-//   - Key bağımlı: farklı key → farklı çıkış (PRF güvenliği)
+//   - Key bağımlı: farklı key -> farklı çıkış (PRF güvenliği)
 //   - Hızlı: ~350 cycle/32B token input (CVA6 tahmini)
-//   - no_std uyumlu: std feature kapalı → alloc gerektirmez
+//   - no_std uyumlu: std feature kapalı -> alloc gerektirmez
 //
 // NOT: CNSA 2.0 uyumlu DEĞİL (BLAKE3 NIST listesinde yok)
-//      → v2.0'da SHA-384/Zknh ile değiştirilecek (tek flag)
+//      -> v2.0'da SHA-384/Zknh ile değiştirilecek (tek flag)
 //
 // Kani Proof 69: keyed_hash çıkışı 16 byte, panik yok
 // Kani Proof 70: Boş data ile keyed_hash panik YOK (edge case)
@@ -32,11 +32,11 @@ impl HashProvider for Blake3Provider {
     /// BLAKE3 XOF (extendable output): herhangi bir prefix uniform random.
     /// Token MAC: 16 byte yeterli (128-bit güvenlik düzeyi).
     fn keyed_hash(key: &[u8; 32], data: &[u8]) -> [u8; 16] {
-        // blake3::keyed_hash → 32 byte Hash (sabit boyut, yığın üzerinde)
+        // blake3::keyed_hash -> 32 byte Hash (sabit boyut, yığın üzerinde)
         let hash = blake3::keyed_hash(key, data);
         let bytes = hash.as_bytes(); // &[u8; 32]
 
-        // İlk 16 byte → MAC çıkışı
+        // İlk 16 byte -> MAC çıkışı
         // copy_from_slice yerine bounded while — no_std + clippy uyumlu
         let mut result = [0u8; 16];
         let mut i = 0;
@@ -116,7 +116,7 @@ mod kani_proofs {
     }
 
     // ─────────────────────────────────────────────────────
-    // U-18 GÖREV 2: Yeni proof — stub deterministic (aynı input → aynı output)
+    // U-18 GÖREV 2: Yeni proof — stub deterministic (aynı input -> aynı output)
     // Bu, HashProvider trait kontratının testidir. Gerçek BLAKE3 davranışı değil,
     // ama stub'ın da pure fonksiyon olduğunu kanıtlar (Kani için anlamlı: lockstep
     // / cache invariant testlerinin geçerli olması için pure fonksiyon şart).
@@ -129,7 +129,7 @@ mod kani_proofs {
         let h1 = Blake3Provider::keyed_hash(&key, &data);
         let h2 = Blake3Provider::keyed_hash(&key, &data);
 
-        // Pure fonksiyon: aynı input → bit-bit aynı output
+        // Pure fonksiyon: aynı input -> bit-bit aynı output
         let mut i = 0;
         while i < 16 {
             assert!(h1[i] == h2[i]);

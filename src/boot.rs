@@ -13,7 +13,7 @@ extern "C" {
 // U-21 GÖREV 6 [H2]: Production OTP key provisioning stub (v2.0 hedefi).
 // Bu extern fonksiyon HSM driver veya silikon-spesifik OTP read implementasyonu
 // ile sağlanır. v1.0 build'de production-otp feature aktifse linker bu sembolü
-// arar — tanımsız sembol → link error → unintended production deploy engellenir.
+// arar — tanımsız sembol -> link error -> unintended production deploy engellenir.
 #[cfg(feature = "production-otp")]
 extern "C" {
     /// HSM/OTP'den root MAC key'i oku. true = başarılı, false = donanım hatası.
@@ -40,7 +40,7 @@ fn provision_production_key() {
 /// Kontrol kapsamı:
 /// 1. mtvec doğru kuruldu mu (boot.rs::init başında write_mtvec yapıldı)
 /// 2. mtvec mode bits = 0 (direct mode — vectored modunu önle)
-/// 3. CLINT mtime ilerliyor mu (timer ölü → tüm safety mekanizması ölü)
+/// 3. CLINT mtime ilerliyor mu (timer ölü -> tüm safety mekanizması ölü)
 /// 4. misa = RV64IMAC mı (donanım identity manipülasyonu)
 /// 5. medeleg/mideleg = 0 (M-only kernel'de delegation yok)
 /// 6. mcounteren = 0 (U-mode timing side-channel kapalı)
@@ -196,9 +196,9 @@ pub fn init() {
     }
 
     // ─── Sprint U-16: IPC Channel ownership assignment ───
-    // Channel 0: A → B (producer=A, consumer=B)
-    // Channel 1: B → A (producer=B, consumer=A)
-    // Diğer kanallar (2-7) atanmamış kalır → default deny.
+    // Channel 0: A -> B (producer=A, consumer=B)
+    // Channel 1: B -> A (producer=B, consumer=A)
+    // Diğer kanallar (2-7) atanmamış kalır -> default deny.
     if let (Some(a), Some(b)) = (id_a, id_b) {
         let ok_0 = ipc::assign_channel(0, a, b);
         let ok_1 = ipc::assign_channel(1, b, a);
@@ -206,7 +206,7 @@ pub fn init() {
             crate::common::halt_system("[BOOT] FATAL: IPC channel assignment failed — HALT");
         }
         #[cfg(feature = "debug-boot")]
-        arch::uart::println("[BOOT] IPC ch0: A→B, ch1: B→A");
+        arch::uart::println("[BOOT] IPC ch0: A->B, ch1: B->A");
     } else {
         crate::common::halt_system("[BOOT] FATAL: task creation failed — HALT");
     }

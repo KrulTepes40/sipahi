@@ -1,0 +1,14 @@
+=== SipahiScheduler ===
+PASS — 13 distinct states found
+=== SipahiCapability ===
+PASS — 2,348 distinct states found
+=== SipahiPolicy ===
+PASS — 27,556 distinct states found
+=== SipahiWatchdog ===
+PASS — 611 distinct states found
+=== SipahiDegradeRecover ===
+PASS — 100 distinct states found
+=== SipahiBudgetFairness ===
+PASS — 5,120 distinct states found
+=== SipahiIPC ===
+PASS — 22 distinct states found

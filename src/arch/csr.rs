@@ -8,7 +8,7 @@
 // Sprint 2-3: mtvec, mcause, mepc, mstatus, mie okuma/yazma
 //
 // NOT: Bu fonksiyonlar RISC-V asm! kullanır.
-// Kani x86_64'te çalışır → #[cfg(not(kani))] ile korunur.
+// Kani x86_64'te çalışır -> #[cfg(not(kani))] ile korunur.
 
 #[cfg(not(kani))]
 use core::arch::asm;
@@ -119,7 +119,7 @@ pub fn read_mideleg() -> usize {
 #[cfg(not(kani))]
 #[inline(always)]
 pub fn write_mtvec(addr: usize) {
-    // U-21 GÖREV 10 [M3]: Mode bits [1:0] explicit clear → direct mode (0).
+    // U-21 GÖREV 10 [M3]: Mode bits [1:0] explicit clear -> direct mode (0).
     // mtvec[1:0]=1 (vectored) ya da ≥2 (reserved) yanlışlıkla set edilirse
     // trap dispatch yanlış adrese atlar. Linker/symbol re-alignment veya
     // ileride alt-bit kullanan entry adresi için savunmacı maskeleme.

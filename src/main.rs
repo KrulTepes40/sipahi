@@ -10,7 +10,7 @@
 extern crate alloc;
 
 // U-21 GÖREV 6 [H2]: Capability MAC key provisioning şart. Pre-fix default
-// build secure_boot + provision_key'i sessizce compile-out ediyordu →
+// build secure_boot + provision_key'i sessizce compile-out ediyordu ->
 // production binary'de capability sistemi devre dışı kalıyordu.
 // `test-keys` (development/QEMU) veya `production-otp` (HSM/OTP, v2.0 stub)
 // VEYA Kani build (verification — runtime path yok) zorunlu.
@@ -95,7 +95,7 @@ pub extern "C" fn rust_main() -> ! {
     #[cfg(feature = "debug-boot")]
     {
         arch::uart::println("=============================");
-        arch::uart::println("  Sipahi Microkernel v1.0");
+        arch::uart::println("  Sipahi Microkernel v1.1.0");
         arch::uart::println("  RISC-V 64 · RV64IMAC");
         arch::uart::println("  Safety-Critical RTOS");
         arch::uart::println("=============================");
