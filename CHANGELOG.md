@@ -105,5 +105,4 @@ Initial release. Sipahi microkernel v1.0:
 - ~9.1K LOC + ~321 ASM
 - 200 Kani proofs, 7 TLA+ specs (35,770 distinct states)
 - RISC-V RV64IMAC, no_std + alloc-only-in-WASM
-- Multi-pass audit (Codex + Claude Code) clean
-- DO-178C DAL-A design principles (NOT certified)
+- DO-178C DAL-A design principles
