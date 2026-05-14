@@ -136,16 +136,31 @@ pub fn read_pmpaddr(index: usize) -> usize {
 /// 1. pmpcfg2 = 0 (eski config temizle)
 /// 2. pmpaddr8 = NAPOT encoded adres
 /// 3. pmpcfg2 = config (NAPOT RW)
+/// 4. sfence.vma — PMP CSR ordering barrier (U-22.5 G5)
 ///
 /// Caller: scheduler context switch + start_first_task
 /// Interrupt: trap context'inde çağrılır, MIE=0
+///
+/// U-22.5 G5: SFENCE.VMA spec compliance (RISC-V Privileged Spec §3.7.2).
+/// PMP CSR write'lar memory pipeline'daki erişimlerle sıralı değil;
+/// CVA6 ve gerçek RISC-V çekirdeklerde speculative execution + memory
+/// pipeline var → fence olmadan U-mode geri dönüşte eski PMP değerleri
+/// kısa pencerede geçerli kalabilir → izolasyon ihlali.
+///
+/// QEMU TCG modu PMP fence enforce etmiyor (sessiz geçer), production
+/// silikonda BUG. v1.1.1 patch'i SNTM'den bağımsız.
 #[cfg(not(kani))]
 pub fn write_per_task_napot(napot_addr: usize, cfg_val: usize) {
     // SAFETY: CSR write in M-mode, interrupt disabled (trap context).
+    // sfence.vma zero, zero: tüm address translation cache flush
+    // (PMP + virtual memory aynı barrier). M-mode + no paging → minimal etki,
+    // sadece sıralama garantisi.
     unsafe {
         asm!("csrw pmpcfg2, zero");
         asm!("csrw pmpaddr8, {}", in(reg) napot_addr);
         asm!("csrw pmpcfg2, {}", in(reg) cfg_val);
+        // U-22.5 G5: SFENCE.VMA zorunlu (PMP CSR ordering barrier)
+        asm!("sfence.vma zero, zero");
     }
 }
 

@@ -88,13 +88,9 @@ mod verification {
         assert!(WCET_TOKEN_CACHE_HIT <= WCET_TOKEN_VALIDATE);
         assert!(WCET_SCHEDULER_TICK <= WCET_TOKEN_VALIDATE);
 
-        // Compute servisi sıralama: copy < math < MAC < CRC (worst-case)
-        assert!(WCET_COMPUTE_COPY <= WCET_COMPUTE_MATH);
-        assert!(WCET_COMPUTE_MATH <= WCET_COMPUTE_MAC);
-        assert!(WCET_COMPUTE_MAC <= WCET_COMPUTE_CRC);
-        // Token validate hâlâ CRC'den ucuz (CRC bit-by-bit deterministik
-        // ama uzun; validate BLAKE3 hızlı + nonce/expiry sabit)
-        assert!(WCET_TOKEN_VALIDATE <= WCET_COMPUTE_CRC);
+        // U-22.5 G1: Compute service WCET ordering assertions removed.
+        // dispatch_compute fonksiyonu ve COMPUTE_* sabitleri sprint U-22.5'te
+        // silindi (WASM-tied orphan code). Ordering invariant artık geçersiz.
     }
 
     // ═══════════════════════════════════════════════════════
@@ -114,17 +110,9 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
-    // PROOF 6: Compute service ID'leri benzersiz
+    // PROOF 6: REMOVED in U-22.5 G1 (compute_ids_unique)
+    // dispatch_compute fonksiyonu silindi → COMPUTE_* sabitleri yok.
     // ═══════════════════════════════════════════════════════
-    #[kani::proof]
-    fn compute_ids_unique() {
-        let ids = [COMPUTE_COPY, COMPUTE_CRC, COMPUTE_MAC, COMPUTE_MATH];
-        for i in 0..ids.len() {
-            for j in (i + 1)..ids.len() {
-                assert!(ids[i] != ids[j]);
-            }
-        }
-    }
 
     // ═══════════════════════════════════════════════════════
     // PROOF 7: IPC kanal bellek hesabı
@@ -228,28 +216,11 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
-    // PROOF 12: Host call overhead bounded
-    // Sprint 13'te aktif edildi — WCET_COMPUTE_* config.rs'e eklendi.
-    // Doğru metrik: HOST_CALL_LIMIT × max(WCET_COMPUTE_COPY..WCET_COMPUTE_CRC)
-    //   = 16 × 350c (COMPUTE_MAC) = 5,600c < 10,000c [OK]
+    // PROOF 12: REMOVED in U-22.5 G1 (host_call_budget_bounded — compute path)
+    // dispatch_compute + WCET_COMPUTE_* sabitleri sprint U-22.5'te silindi.
+    // cap_invoke overhead invariant'ı verify.rs'in başka yerinde kalır (HOST_CALL_LIMIT
+    // hâlâ kullanılır, sadece COMPUTE_* tied path silindi).
     // ═══════════════════════════════════════════════════════
-    #[kani::proof]
-    fn host_call_budget_bounded() {
-        // cap_invoke dispatch overhead (cache hit path)
-        let cap_overhead = (HOST_CALL_LIMIT as u64) * (WCET_CAP_INVOKE as u64);
-        assert!(cap_overhead < 100_000); // 16 × 120 = 1,920c [OK]
-
-        // Compute service overhead — Sprint U-15: WCET_COMPUTE_CRC artık worst-case
-        // (1500c, bit-by-bit CRC32). Önceden COMPUTE_MAC=350c worst-case sayılıyordu
-        // ama CRC 12× daha pahalı.
-        let compute_overhead = (HOST_CALL_LIMIT as u64) * WCET_COMPUTE_CRC;
-        assert!(compute_overhead < 30_000); // 16 × 1500 = 24,000c < 30,000 [OK]
-
-        // COMPUTE_CRC her zaman en pahalı servis (Sprint U-15)
-        assert!(WCET_COMPUTE_CRC >= WCET_COMPUTE_COPY);
-        assert!(WCET_COMPUTE_CRC >= WCET_COMPUTE_MAC);
-        assert!(WCET_COMPUTE_CRC >= WCET_COMPUTE_MATH);
-    }
 
     // ═══════════════════════════════════════════════════════
     // PROOF 13: Stack hizalama RISC-V ABI uyumlu (16-byte)

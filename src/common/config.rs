@@ -156,14 +156,11 @@ pub const SYS_YIELD: usize = 3;
 pub const SYS_TASK_INFO: usize = 4;
 pub const SYSCALL_COUNT: usize = 5;
 
-// ═══════════════════════════════════════════════════════
-// Compute service ID'leri (Sprint 12'de kullanılacak)
-// ═══════════════════════════════════════════════════════
-
-pub const COMPUTE_COPY: u8 = 0; // Bellek kopyala, WCET ~80c (U-14: stub)
-pub const COMPUTE_CRC: u8 = 1; // CRC32 bütünlük, WCET ~1500c (bit-by-bit)
-pub const COMPUTE_MAC: u8 = 2; // BLAKE3 keyed hash, WCET ~350c
-pub const COMPUTE_MATH: u8 = 3; // Q32.32 vektör dot, WCET ~200c
+// U-22.5 G2: COMPUTE_* ID sabitleri silindi (4 sabit).
+// dispatch_compute fonksiyonu WASM-tied orphan code'du; SNTM v1.5'te
+// task-side typed IPC ile değişiyor. Historical WCET değerleri:
+//   COMPUTE_COPY ~80c, COMPUTE_CRC ~1500c, COMPUTE_MAC ~350c, COMPUTE_MATH ~200c
+// (SIPAHI_V1_TO_V2_TRANSITION.md historical note olarak korunur.)
 
 // ═══════════════════════════════════════════════════════
 // Capability WCET hedefleri (Sprint 9)
@@ -211,25 +208,12 @@ pub const WATCHDOG_WINDOW_MIN: u32 = 3;
 /// 0 = devre dışı. 100 tick = 1 saniye @ 10ms/tick
 pub const WATCHDOG_LIMIT: u32 = 100;
 
-// ═══════════════════════════════════════════════════════
-// Compute service WCET hedefleri (Sprint 13 aktivasyonu)
-// Doküman: COMPUTE_COPY ~80c, COMPUTE_CRC ~120c, COMPUTE_MAC ~350c, COMPUTE_MATH ~200c
-// Proof 12 bu sabitlerle aktif edildi (verify.rs).
-// ═══════════════════════════════════════════════════════
-
-/// COMPUTE_COPY WCET hedefi (cycle) — 64B bellek bloğu kopyalama
-pub const WCET_COMPUTE_COPY: u64 = 80;
-
-/// COMPUTE_CRC WCET — estimated at 1500c, FPGA pending.
-/// CRC32 bit-by-bit: 64B × 8 bits × ~3c/bit ≈ 1536c.
-/// Sprint U-15: önceki 120c değeri 12× düşüktü.
-pub const WCET_COMPUTE_CRC: u64 = 1500;
-
-/// COMPUTE_MAC WCET hedefi (cycle) — BLAKE3 keyed hash (32B token input)
-pub const WCET_COMPUTE_MAC: u64 = 350;
-
-/// COMPUTE_MATH WCET hedefi (cycle) — Q32.32 vektör dot product
-pub const WCET_COMPUTE_MATH: u64 = 200;
+// U-22.5 G2: WCET_COMPUTE_* sabitleri silindi (4 sabit).
+// Compute service WCET hedefleri WASM dispatch_compute path'i için vardı.
+// Historical reference (FPGA pending):
+//   WCET_COMPUTE_COPY = 80c, WCET_COMPUTE_CRC = 1500c (bit-by-bit),
+//   WCET_COMPUTE_MAC = 350c (BLAKE3), WCET_COMPUTE_MATH = 200c (Q32.32 dot)
+// SIPAHI_V1_TO_V2_TRANSITION.md historical note olarak korunur.
 
 // U-22 GÖREV 6 [M10]: WCET zincir -> tick budget invariant.
 // wcet_ordering_consistent (verify.rs:60) tautolojikti (sabitleri kendine
@@ -238,10 +222,12 @@ pub const WCET_COMPUTE_MATH: u64 = 200;
 // hepsi sığmalı, yoksa scheduler overrun -> DeadlineMiss policy.
 //
 // Bu compile-time assert; Kani gerekmez, her build'de doğrular.
+// U-22.5 G3: WCET_COMPUTE_CRC silinince yerine WCET_CONTEXT_SWITCH (worst-case
+// kernel hot path component). Chain re-balanced for post-WASM Sipahi baseline.
 const _: () = assert!(
     (WCET_SCHEDULER_TICK
         + WCET_TOKEN_VALIDATE
-        + WCET_COMPUTE_CRC
+        + WCET_CONTEXT_SWITCH
         + WCET_IPC_SEND
         + WCET_TASK_INFO) < CYCLES_PER_TICK as u64,
     "WCET worst-case syscall chain exceeds CYCLES_PER_TICK budget — \

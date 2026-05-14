@@ -5,6 +5,68 @@ All notable changes to Sipahi microkernel.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-05-15
+
+### Cleanup (U-22.5 — Pre-SNTM)
+- **Removed**: `COMPUTE_COPY/CRC/MAC/MATH` ID constants (4, orphan).
+- **Removed**: `WCET_COMPUTE_COPY/CRC/MAC/MATH` constants (4).
+- **Removed**: `dispatch_compute()` + 4 helpers (`compute_copy/crc/mac/math`)
+  in `src/sandbox/mod.rs` (WASM-tied orphan code).
+- **Removed**: `E_COMPUTE_*` sabitleri (4 sandbox-internal error codes).
+- **Removed**: Kani Proof 145 (`dispatch_compute_empty_data`).
+- **Removed**: 2 verify.rs Kani proofs (`compute_ids_unique`,
+  `host_call_budget_bounded` — both compute-path-tied).
+- **Removed**: 4 `wcet_ordering_consistent` assertions (compute service ordering).
+- **Updated**: `config.rs` tick budget `const_assert` — replaced
+  `WCET_COMPUTE_CRC` with `WCET_CONTEXT_SWITCH` (worst-case kernel
+  hot path component, re-balanced for post-WASM baseline).
+
+### Fixed (Spec Compliance — SNTM-independent v1.0 bug)
+- **`src/arch/pmp.rs::write_per_task_napot`**: Added missing
+  `sfence.vma zero, zero` after PMP CSR writes (RISC-V Privileged Spec
+  §3.7.2). QEMU TCG silently passes without it but CVA6 and production
+  silicon require ordering barrier — fence prevents speculative execution
+  from using stale PMP values across U-mode transition.
+  **This is a Sipahi v1.0 bug fix independent of SNTM**, surfaced during
+  SNTM design review (Codex 3rd round).
+
+### Added (SNTM v0.7 Infrastructure)
+- **`sipahi_api`** crate scaffolding (workspace member, empty modules
+  `syscall`, `crc`, `ipc`). Implementation in Sprint U-23 (v1.5).
+- **Cargo workspace** root manifest with `sipahi_api` member.
+- **`sntm`** + **`sntm-safe`** umbrella feature flags (empty bodies,
+  v1.5/v1.6+ targets, default-off — no partial SNTM in production).
+- **`coverage.toml`**: Feature ↔ test/proof mapping (14 features mapped:
+  2 active + 9 deferred + 3 non-safety; 7 grandfather entries;
+  SNTM v0.7 §18.4 + §18.7 compliant; verified pre-existing).
+- **`scripts/check_coverage.sh`**: Mechanical enforcement (symmetry,
+  stale guard, name existence, deferred discipline, 3-comment rule,
+  requirement traceability; verified pre-existing).
+- **`scripts/check_proof_quality.sh`**: Light tautology detector
+  (7 pattern, informational scan; verified pre-existing).
+- **`scripts/sntm_sprint_gate.sh`**: SNTM sprint gate with graceful
+  degrade (E0 coverage + E0b proof quality + baseline U-22 + E1-E9
+  SNTM-specific; verified pre-existing).
+- **`SIPAHI_V1_TO_V2_TRANSITION.md`**: Standalone transition planning
+  doc, references SNTM v0.7 sprint roadmap + grandfather list.
+
+### Documentation
+- **ed25519-dalek**: Annotation about v2.0 migration to `ed25519-compact`
+  (no_alloc alternative). Migration sprint: U-29.
+- **WCET historical notes**: Compute service WCET values
+  (COPY=80c, CRC=1500c, MAC=350c, MATH=200c) preserved in
+  `SIPAHI_V1_TO_V2_TRANSITION.md` as historical benchmark reference.
+- **`src/sandbox/mod.rs`** stale comments updated (`64KB` → `WASM_HEAP_SIZE`).
+
+### Verification
+- Kani proof count: 200 → 197 (3 compute-tied removed).
+- All existing tests pass (ALL TESTS PASSED + 6 negative regression).
+- Coverage map symmetric (14 features mapped, sntm/sntm-safe added).
+- Proof quality scan: 0 warnings (197 proof clean, 4 grandfather).
+- sntm_sprint_gate.sh PASS (E1-E9 SKIP — graceful, SNTM v1.5+ hedef).
+- Production binary unchanged (no functional code modified outside
+  removals and sfence.vma fix).
+
 ## [1.1.0] - 2026-05-10
 
 ### Security (U-22)

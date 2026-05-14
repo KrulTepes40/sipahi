@@ -24,9 +24,7 @@
 
 pub mod allocator;
 
-use crate::common::config::{
-    WASM_HEAP_SIZE, COMPUTE_COPY, COMPUTE_CRC, COMPUTE_MAC, COMPUTE_MATH,
-};
+use crate::common::config::WASM_HEAP_SIZE;
 
 // ═══════════════════════════════════════════════════════
 // Hata tipleri
@@ -37,7 +35,7 @@ use crate::common::config::{
 #[repr(u8)]
 pub enum SandboxError {
     FloatOpcodes     = 0,  // Float opcode tespit edildi -> REJECT
-    ModuleTooLarge   = 1,  // Modül > 64KB -> REJECT
+    ModuleTooLarge   = 1,  // Modül > WASM_HEAP_SIZE (4MB) -> REJECT
     InvalidMagic     = 2,  // WASM sihirli baytlar geçersiz
     ParseError       = 3,  // Wasmi parse hatası
     InstantiateError = 4,  // Wasmi örnekleme hatası
@@ -270,76 +268,10 @@ pub fn validate_module(bytes: &[u8]) -> Result<(), SandboxError> {
     Ok(())
 }
 
-// ═══════════════════════════════════════════════════════
-// Compute Servisleri — 4 sabit servis (doküman §HOST_CALL)
-// WCET: bkz. config.rs::WCET_COMPUTE_* (CRC=1500c U-15 sonrası,
-// COPY=80, MAC=350, MATH=200) — FPGA ölçümü pending.
-// ═══════════════════════════════════════════════════════
-
-/// Compute servis dispatcher — WASM host_call köprüsü
-// U-22 GÖREV 4 [M8]: Distinct error codes — sandbox-internal i32 schema.
-// Syscall surface'taki usize::MAX-N şemasından (dispatch.rs E_*) ayrıdır,
-// bu kodlar sadece dispatch_compute dönüş değerinde anlamlıdır.
-pub const E_COMPUTE_INVALID_OP: i32 = -1; // Bilinmeyen servis ID
-pub const E_COMPUTE_OVERFLOW:   i32 = -2; // Q32.32 dot-product taşması
-pub const E_COMPUTE_NOT_IMPL:   i32 = -3; // v1.0 stub (compute_copy)
-pub const E_COMPUTE_SHORT_DATA: i32 = -4; // Giriş verisi minimum boy altında
-
-/// service: COMPUTE_COPY/CRC/MAC/MATH
-/// data: En fazla 256B giriş verisi
-/// Dönüş: 0 = başarı, <0 = hata kodu (E_COMPUTE_* sabitleri)
-pub fn dispatch_compute(service: u8, data: &[u8]) -> i32 {
-    match service {
-        s if s == COMPUTE_COPY => compute_copy(data),
-        s if s == COMPUTE_CRC  => compute_crc(data),
-        s if s == COMPUTE_MAC  => compute_mac(data),
-        s if s == COMPUTE_MATH => compute_math(data),
-        _                      => E_COMPUTE_INVALID_OP,
-    }
-}
-
-/// COMPUTE_COPY — v1.0 stub, v2.0'da aktif edilecek
-/// Gerçek WASM linear memory kopyası wasmi Store/Memory API'si gerektirir.
-/// Sprint U-14: Önceden len döndürüyordu (yanıltıcı), artık dürüst stub.
-/// Dönüş: E_COMPUTE_NOT_IMPL
-fn compute_copy(_data: &[u8]) -> i32 {
-    E_COMPUTE_NOT_IMPL
-}
-
-/// COMPUTE_CRC — CRC32 bütünlük (sabit zaman, WCET ~1500c — config.rs::WCET_COMPUTE_CRC)
-fn compute_crc(data: &[u8]) -> i32 {
-    // CRC32 hesapla, ipc::crc32 kullan
-    let result = crate::ipc::crc32(data);
-    result as i32
-}
-
-/// COMPUTE_MAC — BLAKE3 keyed hash (sabit zaman, WCET ~350c)
-/// Giriş: data[0..32] = 32-byte key, data[32..] = mesaj
-/// Dönüş: MAC'in ilk 4 byte'ı i32 olarak (LE), kısa veri -> E_COMPUTE_SHORT_DATA
-fn compute_mac(data: &[u8]) -> i32 {
-    if data.len() < 32 { return E_COMPUTE_SHORT_DATA; }
-    let mut key = [0u8; 32];
-    let mut i = 0;
-    while i < 32 { key[i] = data[i]; i += 1; }
-    let msg = &data[32..];
-
-    use crate::common::crypto::provider::HashProvider;
-    use crate::common::crypto::Blake3Provider;
-    let mac = Blake3Provider::keyed_hash(&key, msg);
-    i32::from_le_bytes([mac[0], mac[1], mac[2], mac[3]])
-}
-
-/// COMPUTE_MATH — Q32.32 vektör dot product (sabit zaman, WCET ~200c)
-/// Dönüş: Q32.32 sonuç (i32), E_COMPUTE_SHORT_DATA, E_COMPUTE_OVERFLOW
-fn compute_math(data: &[u8]) -> i32 {
-    if data.len() < 16 { return E_COMPUTE_SHORT_DATA; }
-    let a = i64::from_le_bytes([data[0],data[1],data[2],data[3],data[4],data[5],data[6],data[7]]);
-    let b = i64::from_le_bytes([data[8],data[9],data[10],data[11],data[12],data[13],data[14],data[15]]);
-    match a.checked_mul(b) {
-        Some(result) => (result >> 32) as i32,
-        None => E_COMPUTE_OVERFLOW,
-    }
-}
+// U-22.5 G4: dispatch_compute + compute_{copy,crc,mac,math} fonksiyonları silindi.
+// E_COMPUTE_* sabitleri de silindi (sadece bu fonksiyonların dönüş değeri).
+// WASM-tied orphan code; SNTM v1.5'te task-side typed IPC ile değişiyor.
+// Proof 145 (dispatch_compute_empty_data) `mod verification` içinde silindi.
 
 // ═══════════════════════════════════════════════════════
 // WasmSandbox — Wasmi Entegrasyonu
@@ -572,7 +504,7 @@ mod verification {
         assert!(result.is_none());
     }
 
-    /// Proof 63: Modül > 64KB -> ModuleTooLarge hatası
+    /// Proof 63: Modül > WASM_HEAP_SIZE (4MB) -> ModuleTooLarge hatası
     #[kani::proof]
     fn oversized_module_rejected() {
         // WASM magic geçerli ama boyut aşımı simülasyonu
@@ -664,14 +596,8 @@ mod verification {
         assert!(result.is_err());
     }
 
-    /// Proof 145: dispatch_compute: service=0 (COPY) -> -3 (Sprint U-14 stub)
-    /// Sprint U-14: compute_copy artık dürüst stub (wasmi Store/Memory API v2.0).
-    #[kani::proof]
-    fn dispatch_compute_empty_data() {
-        let data: [u8; 0] = [];
-        let result = dispatch_compute(0, &data);
-        assert!(result == -3);
-    }
+    // U-22.5 G4: Proof 145 (dispatch_compute_empty_data) silindi.
+    // dispatch_compute fonksiyonu kaldırıldı (WASM-tied orphan code).
 
     /// Proof 146: 0x00-0x29 ve 0x2c-0x37 ve 0x3a-0x42 aralığında opcode float değil
     /// Sprint U-14: 0x2a/0x2b (f32/f64.load) ve 0x38/0x39 (f32/f64.store)

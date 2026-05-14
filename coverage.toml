@@ -1,0 +1,197 @@
+# Sipahi Feature Coverage Map — Mechanical Lazy-Bypass Guard
+#
+# WARNING: Bu dosya GERÇEK COVERAGE KANITI DEĞİLDİR. İsim-tabanlı mekanik
+# guard'dır. Amacı: feature eklendi ama matching negative test / Kani proof
+# eklenmedi → gate fail. Test/proof body'sinin yeterliliği MANUEL review işi.
+#
+# Senkron kuralları (scripts/check_coverage.sh enforce eder):
+#   1. Cargo.toml [features]'taki her flag burada [feature.NAME] olmalı.
+#   2. Burada olan her [feature.NAME] Cargo.toml'da var olmalı (stale fail).
+#   3. required_negative_tests isimleri src/tests/mod.rs'te `fn NAME(`.
+#   4. required_kani_proofs isimleri src/'da `fn NAME(` (kani::proof üstte).
+#   5. Deferred entry zorunlu fields: deferred + deferred_reason + deferred_target.
+#   6. non_safety = true → test/proof check skipped (diagnostic/meta feature).
+
+[meta]
+schema_version    = 1
+last_audit        = "2026-05-13"
+last_audit_sprint = "v1.1.0 (U-22)"
+purpose           = "Catch lazy bypass: new feature without matching test/proof"
+
+# ═══════════════════════════════════════════════════════════════════════
+# Active features (Cargo.toml [features] aynası)
+# ═══════════════════════════════════════════════════════════════════════
+
+[feature.fast-crypto]
+description = "BLAKE3 hash/MAC keyed (v1.0)"
+required_negative_tests = [
+    "test_token_owner_mismatch_neg",
+    "test_cross_task_pointer_rejected",
+]
+required_kani_proofs = [
+    "token_owner_mismatch_always_rejected",
+    "ct_eq_16_same_input_true",
+    "ct_eq_16_single_byte_diff_false",
+]
+
+[feature.fast-sign]
+description = "Ed25519 signature verify (v1.0, no_std + alloc)"
+required_negative_tests = []
+required_kani_proofs    = []
+deferred                = "test+proof"
+deferred_reason         = "Ed25519 ed25519-dalek crate'inde, runtime tampered-sig negative test FPGA + secure boot integration sprint'inde; Kani ed25519 model checking kapsamı dışı (LLVM bitcode boyutu)"
+deferred_target         = "v2.0 secure boot full integration (HSM enrollment + boot signature verify)"
+
+[feature.cnsa-crypto]
+description = "SHA-384 + Zknh HW accel (v2.0 stub)"
+required_negative_tests = []
+required_kani_proofs    = []
+deferred                = "test+proof"
+deferred_reason         = "v2.0 hardware Zknh extension gerektirir, mevcut implementasyon yok"
+deferred_target         = "v2.0 crypto upgrade sprint"
+
+[feature.cnsa-sign]
+description = "LMS post-quantum signature (v2.0 stub)"
+required_negative_tests = []
+required_kani_proofs    = []
+deferred                = "test+proof"
+deferred_reason         = "v2.0 PQ stub, RustCrypto lms-rs olgunluk bekliyor"
+deferred_target         = "v2.0 PQ signature sprint"
+
+[feature.iopmp]
+description = "IOPMP DMA bus-master isolation (v2.0)"
+required_negative_tests = []
+required_kani_proofs    = []
+deferred                = "test+proof"
+deferred_reason         = "QEMU virt'te IOPMP modellenmemiş, hardware DMA test gerektirir"
+deferred_target         = "v2.0 IOPMP integration sprint (real silicon)"
+
+[feature.trace]
+description = "Debug UART trace output gating"
+required_negative_tests = []
+required_kani_proofs    = []
+non_safety              = true
+
+[feature.debug-boot]
+description = "Boot-time [DBG] diagnostic output gating"
+required_negative_tests = []
+required_kani_proofs    = []
+non_safety              = true
+
+[feature.test-keys]
+description = "QEMU test MAC_KEY=[0x5A; 32] gate (development/CI)"
+required_negative_tests = []
+required_kani_proofs    = []
+deferred                = "test+proof"
+deferred_reason         = "test-keys build-time const key gate, runtime entropy check production-otp altında (U-22 G25); compile_error! guard main.rs:17 — test_post_runs_in_production negatif test'i bunu da kapsıyor (existence probe)"
+deferred_target         = "DAL waiver acceptable — no separate test needed (covered by compile_error guard)"
+
+[feature.production-otp]
+description = "HSM/OTP key provisioning + low-entropy reject (v2.0 scaffold)"
+required_negative_tests = []
+required_kani_proofs    = []
+deferred                = "negative_test"
+deferred_reason         = "external linker symbol (production_provision_from_otp) gerektirir, build-only stub mevcut; runtime entropy reject test'i mock HSM integration sprint'inde"
+deferred_target         = "v2.0 HSM integration sprint"
+
+[feature.v2-hal]
+description = "v2.0 HAL abstraction (device.rs feature-gated, U-22 G5)"
+required_negative_tests = []
+required_kani_proofs    = []
+deferred                = "test+proof"
+deferred_reason         = "v1.x'te hiç callsite yok, dead feature gate (U-22 G5 kararı: SPI/I2C/GPIO v2.0 expansion için scaffolded)"
+deferred_target         = "v2.0 HAL implementation sprint (SPI/I2C/GPIO concrete impls)"
+
+[feature.wasm-sandbox]
+description = "WASM sandbox (deprecated v1.5 — SNTM ile değişiyor)"
+required_negative_tests = [
+    "test_allocator_overflow",
+]
+required_kani_proofs = [
+    "bump_allocator_offsets_never_overlap",
+]
+sunset_target = "v1.5 SNTM Aşama 1.5 (U-22.5) sprint'inde kaldırılır; coverage.toml entry'si o sprint'te silinir"
+
+[feature.self-test]
+description = "Meta feature: test-keys + trace + debug-boot + wasm-sandbox"
+required_negative_tests = []
+required_kani_proofs    = []
+non_safety              = true  # meta feature only
+
+# ═══════════════════════════════════════════════════════════════════════
+# SNTM phased rollout (U-22.5 G9 — umbrella feature scaffold)
+# ═══════════════════════════════════════════════════════════════════════
+
+[feature.sntm]
+description     = "SNTM base — task loader, typed IPC, manifest (v1.5+)"
+deferred        = "test+proof"
+deferred_reason = "Umbrella feature, body Sprint U-23'te (SNTM Phase 1) doldurulacak"
+deferred_target = "v1.5 SNTM Phase 1 (Sprint U-23)"
+
+[feature.sntm-safe]
+description     = "SNTM-SAFE — task-lint, binary verifier, certificate (v1.6+)"
+deferred        = "test+proof"
+deferred_reason = "Umbrella feature, body SAFE-1..4 sprint'lerinde doldurulacak"
+deferred_target = "v1.6 SAFE-1 (Safe Native Profile)"
+
+# ═══════════════════════════════════════════════════════════════════════
+# FUTURE entries (placeholder — actual entries added when feature lands)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# [feature.cfi-hardware]    — v2.5+ Zicfilp/Zicfiss olduğunda
+
+# ═══════════════════════════════════════════════════════════════════════
+# Grandfather list — §18.7 quality gate exemption
+# ═══════════════════════════════════════════════════════════════════════
+# Bu listedeki test/proof isimleri §18.7 3-yorum kuralından muaftır:
+# VERIFIES / CALLS / FAILS-IF yorumları zorunlu değil. Sebep: pre-2026-05-13
+# baseline'da yazıldılar, U-18'de Kani proof quality audit'i geçtiler
+# (Kategori A pure / B production / C rewritten sınıflandırması mevcut).
+#
+# YENİ test/proof isimleri (post-2026-05-13) buraya EKLENMEZ. Yeni eklenenler
+# §18.7 3-yorum kuralına tabidir; coverage.toml'a sadece required_* listelerine
+# eklenir, [grandfather] büyümez.
+#
+# Bu liste sadece coverage.toml'daki required_* girişleri için anlamlı.
+# (200 Kani proof'un tamamı buraya eklenmedi — sadece coverage map'te
+# zorunlu olarak listelenen isimler exempt sayılıyor.)
+
+[grandfather]
+exempted_until = "2026-05-13"
+exempted_reason = "Pre-§18.7 baseline; U-18 quality audit'i geçti"
+
+proofs = [
+    "token_owner_mismatch_always_rejected",
+    "ct_eq_16_same_input_true",
+    "ct_eq_16_single_byte_diff_false",
+    "bump_allocator_offsets_never_overlap",
+]
+
+tests = [
+    "test_token_owner_mismatch_neg",
+    "test_cross_task_pointer_rejected",
+    "test_allocator_overflow",
+]
+
+# ═══════════════════════════════════════════════════════════════════════
+# Requirement IDs — §18.7 traceability (placeholder schema)
+# ═══════════════════════════════════════════════════════════════════════
+# SNTM ve sonraki sprint'ler için requirement → test/proof traceability.
+# Her requirement ID şu bilgileri taşır:
+#   description    : tek cümle invariant açıklaması
+#   required_tests : bu invariant'ı runtime'da kanıtlayan test isimleri
+#   required_proofs: Kani veya const_assert ile compile-time kanıtlayan isimler
+#   fault_model    : invariant bozulduğunda hangi gözlemlenebilir failure çıkar
+#                    (test/proof'un bu fault'u yakalaması beklenir)
+#
+# Source kodda her test/proof üzerinde "// VERIFIES: SNTM-Rx" yorumu zorunlu
+# (grandfather list dışındakiler için).
+#
+# Şu an placeholder — SNTM v1.5 sprint'inde SNTM-R1, R2, ... eklenir.
+#
+# Örnek schema:
+# [requirement.SNTM-R1]
+# description    = "Task regions must not overlap kernel regions"
+# required_tests = ["test_task_kernel_overlap_rejected"]
+# required_proofs = ["sntm_kernel_overlap_rejected_for_any_region"]
+# fault_model    = "regions_overlap() always returns false → overlap silently accepted"
