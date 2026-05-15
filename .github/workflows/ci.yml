@@ -14,6 +14,10 @@ jobs:
   build:
     name: Clippy + Build
     runs-on: ubuntu-latest
+    # U-23: KERNEL_RUSTFLAGS Makefile'a taşındı (.cargo/config.toml inheritance
+    # task crate'lere sızıyordu). CI direkt `cargo` çağırdığı için env burada.
+    env:
+      RUSTFLAGS: "-C link-arg=-Tsipahi.ld"
 
     steps:
       - name: Checkout
@@ -82,6 +86,8 @@ jobs:
     name: QEMU Boot Test
     runs-on: ubuntu-latest
     needs: build
+    env:
+      RUSTFLAGS: "-C link-arg=-Tsipahi.ld"  # U-23: kernel linker script
 
     steps:
       - name: Checkout
@@ -350,6 +356,8 @@ jobs:
     name: ct_eq Constant-Time Verification
     runs-on: ubuntu-latest
     needs: build
+    env:
+      RUSTFLAGS: "-C link-arg=-Tsipahi.ld"  # U-23: kernel linker script
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust + RISC-V target
@@ -409,6 +417,8 @@ jobs:
     name: Binary Safety Invariants
     runs-on: ubuntu-latest
     needs: build
+    env:
+      RUSTFLAGS: "-C link-arg=-Tsipahi.ld"  # U-23: kernel linker script
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust + RISC-V target
@@ -499,3 +509,45 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
       - name: Run feature matrix
         run: bash scripts/feature_matrix.sh
+
+  # U-24 GÖREV 12: SNTM manifest validator host tool.
+  # HOST target explicit gerekli — root .cargo/config.toml RISC-V'e zorlar,
+  # bu tool x86_64 host build'i.
+  sntm-validate:
+    name: SNTM Manifest Validator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust + RISC-V target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          targets: riscv64imac-unknown-none-elf
+          components: rust-src
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      # U-24 G14 fix: sntm-validate sub-workspace (root workspace `-Z build-std`
+      # ile serde'yi RISC-V'e derliyordu). cd ile invoke + explicit HOST target.
+      - name: Build sntm-validate (host target, sub-workspace)
+        working-directory: tools/sntm-validate
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          cargo build --target "$HOST" --release
+      - name: Run integration tests (host target, sub-workspace)
+        working-directory: tools/sntm-validate
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          cargo test --target "$HOST" --release
+      - name: Validate sipahi.toml (host target)
+        working-directory: tools/sntm-validate
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          cargo run --target "$HOST" --release -- \
+            --manifest ../../sipahi.toml

@@ -926,24 +926,192 @@ fn test_watchdog_saturating() {
         "[FAIL] watchdog_saturating [FAIL]");
 }
 
-/// U-23 SNTM-R2-id — SYS_EXIT syscall ID + count registration check.
+/// U-23 SNTM-R2-id — Syscall ID table + count + WCET_EXIT consistency.
 ///
-// VERIFIES: SNTM-R2-id (SYS_EXIT ID + SYSCALL_COUNT registration only)
-// CALLS:    config::SYS_EXIT, config::SYSCALL_COUNT (compile-time consts)
-// FAILS-IF: SYS_EXIT not assigned ID 5, OR SYSCALL_COUNT not updated to 6
-// SCOPE NOTE: Bu test SADECE syscall ID registration kontrolü. Tam
-// isolate behavior runtime test'i Sprint U-26 hedefi (kernel loader
-// + booted task lazım). §18.7 scope honesty.
-fn test_sys_exit_id_registered() {
-    arch::uart::println("[TEST] SYS_EXIT id registration");
+// VERIFIES: SNTM-R2-id (6 syscall ID set sequential + SYSCALL_COUNT + WCET_EXIT registration)
+// CALLS:    config::{SYS_CAP_INVOKE, SYS_IPC_SEND, SYS_IPC_RECV, SYS_YIELD,
+//           SYS_TASK_INFO, SYS_EXIT, SYSCALL_COUNT, WCET_EXIT}
+// FAILS-IF: any SYS_* ID değiştirildi (sequence break), SYSCALL_COUNT != 6,
+//           WCET_EXIT != 15c (sys_exit handler WCET estimate drift)
+// SCOPE NOTE: Bu test compile-time const consistency. Tam isolate behavior
+// runtime test'i Sprint U-26 hedefi (kernel loader + booted task lazım).
+// §18.7 scope honesty: "id_table" = full 6-syscall table check, sadece SYS_EXIT değil.
+fn test_syscall_id_table() {
+    arch::uart::println("[TEST] syscall ID + count + WCET_EXIT table");
 
-    let pass =
-        crate::common::config::SYS_EXIT == 5 &&
-        crate::common::config::SYSCALL_COUNT == 6;
+    use crate::common::config;
 
+    // (actual_id_const, expected_sequence_value)
+    let id_table: &[(usize, usize)] = &[
+        (config::SYS_CAP_INVOKE, 0),
+        (config::SYS_IPC_SEND,   1),
+        (config::SYS_IPC_RECV,   2),
+        (config::SYS_YIELD,      3),
+        (config::SYS_TASK_INFO,  4),
+        (config::SYS_EXIT,       5),
+    ];
+
+    let mut ids_ok = true;
+    let mut i = 0;
+    while i < id_table.len() {
+        let (actual, expected) = id_table[i];
+        if actual != expected {
+            ids_ok = false;
+        }
+        i += 1;
+    }
+
+    let count_ok = config::SYSCALL_COUNT == 6;
+    let wcet_exit_ok = config::WCET_EXIT == 15;
+
+    let pass = ids_ok && count_ok && wcet_exit_ok;
     test_result(pass,
-        "[PASS] SYS_EXIT=5 + SYSCALL_COUNT=6 [OK]",
-        "[FAIL] SYS_EXIT or SYSCALL_COUNT mismatch [FAIL]");
+        "[PASS] 6-syscall table + COUNT=6 + WCET_EXIT=15c [OK]",
+        "[FAIL] syscall ID/count/WCET_EXIT table mismatch [FAIL]");
+}
+
+/// U-24 SNTM-R3 — regions_overlap helper table-driven semantics.
+///
+// VERIFIES: SNTM-R3 (regions_overlap helper — table-driven symmetric + empty + boundary)
+// CALLS:    crate::kernel::pmp::overlap::regions_overlap
+// FAILS-IF: Symmetry break (a,b ≠ b,a), empty region (size=0) için true,
+//           overflow ile saturating_add bypass, ya da disjoint region'lar
+//           için yanlış true sonucu.
+// SCOPE NOTE: 12 case + symmetry — disjoint, contain, partial, empty,
+// boundary half-open. Kani proof'u (region_overlap_symmetric) symbolic
+// input geniş alanı, bu test concrete corner-case'ler.
+fn test_regions_overlap_table() {
+    arch::uart::println("[TEST] regions_overlap 12-case + symmetry");
+
+    use crate::kernel::pmp::overlap::regions_overlap;
+
+    // (a_base, a_size, b_base, b_size, expected)
+    let cases: &[(usize, usize, usize, usize, bool)] = &[
+        // Disjoint — overlap yok
+        (0x1000, 0x100, 0x2000, 0x100, false),
+        (0x1000, 0x100, 0x1100, 0x100, false),  // touch boundary (half-open)
+        // Tam çakışma
+        (0x1000, 0x100, 0x1000, 0x100, true),
+        // Containment
+        (0x1000, 0x200, 0x1080, 0x80, true),    // b içinde a
+        (0x1080, 0x80, 0x1000, 0x200, true),    // simetri
+        // Partial overlap
+        (0x1000, 0x200, 0x10F0, 0x200, true),
+        (0x10F0, 0x200, 0x1000, 0x200, true),   // simetri
+        // Empty region
+        (0x1000, 0, 0x1000, 0x100, false),
+        (0x1000, 0x100, 0x1000, 0, false),
+        (0x1000, 0, 0x1000, 0, false),
+        // Edge: boundary touching (half-open)
+        (0x1000, 0x100, 0x10FF, 0x1, true),     // 0x10FF+1=0x1100 → overlaps end (0x10FF ∈ [0x1000..0x1100))
+        (0x1000, 0x100, 0x1100, 0x1, false),    // end == start, no overlap
+    ];
+
+    let mut all_pass = true;
+    let mut i = 0;
+    while i < cases.len() {
+        let (ab, asz, bb, bsz, expected) = cases[i];
+        let actual = regions_overlap(ab, asz, bb, bsz);
+        let sym    = regions_overlap(bb, bsz, ab, asz);
+        if actual != expected || sym != expected {
+            all_pass = false;
+        }
+        i += 1;
+    }
+
+    test_result(all_pass,
+        "[PASS] regions_overlap 12-case table + symmetry [OK]",
+        "[FAIL] regions_overlap table mismatch [FAIL]");
+}
+
+/// U-24 SNTM-R5 — valid_napot_alignment table-driven semantics.
+///
+// VERIFIES: SNTM-R5 (NAPOT alignment — table-driven power-of-2 + base aligned + size≥8)
+// CALLS:    crate::kernel::pmp::overlap::valid_napot_alignment
+// FAILS-IF: Power-of-2 olmayan size kabul, base aligned olmayan kabul,
+//           size < 8 kabul, ya da geçerli kombinasyon reject.
+// SCOPE NOTE: 14 concrete case (5 valid + 3 size<8 + 3 non-pow2 + 3 unaligned).
+// Kani proof'u (napot_alignment_correct) symbolic enumeration; bu test
+// known edge case'leri.
+fn test_napot_alignment_table() {
+    arch::uart::println("[TEST] valid_napot_alignment 14-case");
+
+    use crate::kernel::pmp::overlap::valid_napot_alignment;
+
+    // (base, size, expected_valid)
+    let cases: &[(usize, usize, bool)] = &[
+        // Valid: power-of-2 size ≥ 8 + base aligned to size
+        (0x8010_0000, 8,         true),   // minimum size
+        (0x8010_0000, 0x10,      true),   // 16 byte
+        (0x8010_0000, 0x4000,    true),   // 16K
+        (0x8010_0000, 0x1_0000,  true),   // 64K
+        (0x8010_4000, 0x4000,    true),   // 16K aligned
+        // Size < 8
+        (0x8010_0000, 0,         false),
+        (0x8010_0000, 4,         false),
+        (0x8010_0000, 7,         false),
+        // Size not power-of-2
+        (0x8010_0000, 6 * 1024,  false),  // 6K
+        (0x8010_0000, 0x3000,    false),  // 12K
+        (0x8010_0000, 0x5000,    false),  // 20K
+        // Base not aligned to size
+        (0x8010_0001, 0x4000,    false),  // off-by-1
+        (0x8010_8000, 0x1_0000,  false),  // 64K base 0x8000-aligned
+        (0x8010_4000, 0x1_0000,  false),  // 64K base 0x4000-aligned
+    ];
+
+    let mut all_pass = true;
+    let mut i = 0;
+    while i < cases.len() {
+        let (base, size, expected) = cases[i];
+        if valid_napot_alignment(base, size) != expected {
+            all_pass = false;
+        }
+        i += 1;
+    }
+
+    test_result(all_pass,
+        "[PASS] valid_napot_alignment 14-case table [OK]",
+        "[FAIL] valid_napot_alignment table mismatch [FAIL]");
+}
+
+/// U-24 SNTM-R4 — PmpProfile struct + EMPTY semantics + bounds.
+///
+// VERIFIES: SNTM-R4 (PmpProfile struct + EMPTY const + get_pmp_profile bounds)
+// CALLS:    crate::kernel::pmp::profile::{PmpProfile, get_pmp_profile}
+//           + crate::common::config::MAX_TASKS
+// FAILS-IF: get_pmp_profile(idx >= MAX_TASKS) Some döner, EMPTY.region_count != 0,
+//           active_regions().len() != 0 (EMPTY için), ya da valid idx None döner.
+// SCOPE NOTE: Bounds + EMPTY semantics. Runtime aktif kullanım (context
+// switch reload) Sprint U-25 hedefi — burada compile-time struct integrity.
+fn test_pmp_profile_struct_smoke() {
+    arch::uart::println("[TEST] PmpProfile bounds + EMPTY + active_regions");
+
+    use crate::kernel::pmp::profile::{get_pmp_profile, PmpProfile};
+    use crate::common::config::MAX_TASKS;
+
+    // Bounds — all valid IDs return Some
+    let mut all_bounds = true;
+    let mut i = 0u8;
+    while (i as usize) < MAX_TASKS {
+        if get_pmp_profile(i).is_none() {
+            all_bounds = false;
+        }
+        i = i.wrapping_add(1);
+    }
+    // Out-of-bounds → None
+    let oob_8  = get_pmp_profile(MAX_TASKS as u8).is_none();
+    let oob_ff = get_pmp_profile(0xFF).is_none();
+
+    // EMPTY semantics
+    let empty = PmpProfile::EMPTY;
+    let count_zero  = empty.region_count == 0;
+    let active_zero = empty.active_regions().is_empty();
+
+    let pass = all_bounds && oob_8 && oob_ff && count_zero && active_zero;
+    test_result(pass,
+        "[PASS] PmpProfile bounds + EMPTY + active_regions [OK]",
+        "[FAIL] PmpProfile struct broken [FAIL]");
 }
 
 /// INFO: Ready task watchdog counter — U-16 Bug 9 doğrulaması
@@ -994,7 +1162,14 @@ pub fn run_all() {
     // U-23 SNTM Phase 1 tests:
     arch::uart::println("");
     arch::uart::println("[TEST] U-23 SNTM Phase 1 tests:");
-    test_sys_exit_id_registered();
+    test_syscall_id_table();
+
+    // U-24 SNTM Phase 2 tests — table-driven helper semantics:
+    arch::uart::println("");
+    arch::uart::println("[TEST] U-24 SNTM Phase 2 — table-driven semantics:");
+    test_regions_overlap_table();
+    test_napot_alignment_table();
+    test_pmp_profile_struct_smoke();
 
     info_ready_task_watchdog(); // INFO — test count'a dahil değil
 

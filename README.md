@@ -1,146 +1,226 @@
 # Sipahi
 
-A safety-critical hard real-time microkernel for RISC-V, written in Rust.
+Sipahi is an experimental bare-metal microkernel for RISC-V, written in Rust.
+It is built around deterministic scheduling, hardware memory isolation, small
+trusted components, and explicit verification gates.
 
-**Target:** CVA6 (RISC-V RV64IMAC), QEMU `virt` machine
-**License:** Apache-2.0
-**Toolchain:** Rust nightly (`riscv64imac-unknown-none-elf`, `build-std=core,alloc`)
+The project is currently developed against QEMU `virt` and a CVA6-style
+RV64IMAC target. It is **not certified** and should be read as a research and
+engineering prototype, not as a deployable safety-critical product.
 
----
+## Current Status
 
-## Overview
+- Target ISA: `riscv64imac-unknown-none-elf`
+- Execution model: Machine-mode kernel, User-mode tasks
+- Primary platform today: QEMU `virt`, single hart
+- Kernel version: `1.1.1`
+- License: Apache-2.0
+- Toolchain: pinned Rust nightly with `build-std=core,alloc`
 
-Sipahi is a bare-metal microkernel applying DO-178C DAL-A **design principles** for avionics workloads (not certified — see ARCHITECTURE.md "Formal Verification Scope & Limitations"). It provides:
+Implemented in the current tree:
 
-- **U-mode task isolation** — tasks run in User mode, kernel in Machine mode (mret transition, mscratch swap)
-- **Zero heap in kernel** — bump allocator confined to WASM sandbox only
-- **Formal verification** — 200 Kani bounded-model-checking harnesses + 7/7 TLA+ specs (35,770 distinct states) + 11 compile-time const asserts. See ARCHITECTURE.md "Formal Verification Scope & Limitations" for what is and is not covered.
-- **PMP hardware protection** — 4 L-bit locked kernel regions (text RX, rodata R, data RW, UART RW) + per-task NAPOT stack isolation (Entry 8)
-- **Task memory isolation** — task stacks and WASM arena outside Entry 5 PMP coverage (Sprint U-5)
-- **Capability-based access control** — BLAKE3-keyed tokens with per-task nonce, cache TTL, replay guard, task-id isolated cache
-- **Fixed-priority preemptive scheduler** — DAL budget enforcement, windowed watchdog, graceful degradation, auto-recovery
-- **WASM sandbox** — wasmi 1.0.9, float-opcode rejection (instruction-level v2), fuel metering, 4 MB bump arena
-- **Secure boot** — Ed25519 signature verification (RFC 8032, RUSTSEC-2022-0093 patched), key provisioning, MAC key test-keys gate
-- **5+1-mode failure policy engine** — RESTART/ISOLATE/DEGRADE/FAILOVER(=Degrade stub)/ALERT/SHUTDOWN with lockstep verification + LockstepFail forensics event
-- **Blackbox flight recorder** — 8 KB CRC32-protected circular buffer, u32 seq (decades at typical event rates), u64 monotonic tick (u16 epoch + u32 tick → ~89K years @ 10ms tick)
-- **Power-On Self Test** — CRC32 engine, PMP integrity, policy engine, mstatus, mtvec, BLAKE3 determinism, Ed25519 known-vector, CLINT timer advance, misa ISA identity
-- **QEMU fault injection tests** — IPC CRC corruption (FI-3), MAC forgery (FI-4), budget exhaustion escalation (FI-7)
-- **IPC rate limiting** — per-task send quota, pointer validation, alignment check
-- **Kernel pointer sanitization** — syscall return values scrubbed for kernel address leaks
-- **Supply chain hygiene** — `cargo audit` (0 CVE) + `cargo deny` (license/bans/sources)
+- Boot, trap entry, timer interrupt, context switch, and U-mode entry path
+- Fixed-priority scheduler with budget accounting, watchdog logic, and task
+  state transitions
+- PMP-based kernel and task memory isolation
+- Six syscall IDs: capability invoke, IPC send, IPC receive, yield, task info,
+  and task exit
+- Capability broker with keyed MAC tokens, nonce checks, owner checks, and a
+  small validation cache
+- SPSC IPC channels with ownership assignment, sealing, CRC support, and rate
+  limiting
+- Policy engine for restart/isolate/degrade/alert/shutdown style actions
+- Blackbox flight recorder with CRC-protected records
+- Secure-boot verification path using Ed25519 in the current prototype
+- Optional WASM sandbox path behind `wasm-sandbox`; this is being phased out
+  in favor of SNTM
+- SNTM Phase 1 scaffolding: `sipahi_api`, `task_hello`, `sipahi.toml`, and
+  task-side syscall wrappers
 
----
+## What Sipahi Is Not
 
-## Architecture
+Sipahi is not a certified RTOS, not a seL4 replacement, and not a production
+DAL-A kernel. The code applies several safety-critical design practices, but
+certification requires artifacts that are outside this repository today:
 
+- hardware WCET measurements
+- independent review
+- requirements traceability to a formal safety case
+- tool qualification
+- hardware fault-injection campaigns
+- target-board driver maturity
+- certification evidence and process documents
+
+The repository is intentionally explicit about these limits.
+
+## Repository Layout
+
+```text
+src/
+  arch/                 RISC-V boot, trap, CSR, PMP, CLINT, UART, context switch
+  common/               Configuration, formatting, sync primitives, crypto helpers
+  hal/                  Device abstraction, IOPMP/key/secure-boot stubs
+  ipc/                  SPSC channels and blackbox recorder
+  kernel/
+    capability/         Token, broker, and validation cache
+    memory/             PMP setup and shadow checks
+    policy/             Failure-policy engine
+    scheduler/          Task table, scheduling, budget, watchdog
+    syscall/            Syscall ABI, dispatch table, WCET tracking
+  sandbox/              WASM prototype path, gated by `wasm-sandbox`
+  tests/                Self-test and regression harness
+  verify.rs             Cross-module Kani harnesses
+
+sipahi_api/             Task-side SNTM API crate
+tasks/task_hello/       Standalone native task scaffold
+Tla+/                   TLA+ specs and TLC run artifacts
+scripts/                Sprint, coverage, proof-quality, and feature gates
+.github/workflows/     CI jobs
 ```
-sipahi/
-├── src/
-│   ├── main.rs        # Entry point, task definitions
-│   ├── boot.rs        # Boot sequence (PMP, HAL, task creation, timer)
-│   ├── tests/         # Integration tests + POST
-│   ├── arch/          # RISC-V boot, UART, PMP, CLINT, CSR, trap, context switch
-│   ├── hal/           # Device trait, IOPMP, Ed25519 secure boot, key store
-│   ├── kernel/
-│   │   ├── scheduler/ # Fixed-priority + budget + watchdog + U-mode trampoline
-│   │   ├── capability/# Token broker, BLAKE3 MAC, 4-slot cache with TTL
-│   │   ├── syscall/   # 5-handler dispatch, WCET tracking, pointer validation
-│   │   ├── policy/    # 6-mode failure engine with lockstep
-│   │   └── memory/    # PMP region setup + shadow integrity check
-│   ├── ipc/           # SPSC lock-free channels (&self API), blackbox recorder
-│   ├── sandbox/       # WASM sandbox (wasmi), bump allocator, compute services
-│   └── common/        # Config, types, error, crypto, fmt, sync, diagnostic
-├── sipahi.ld          # Linker script (8 MB RAM, 16 KB kernel stack, per-section PMP layout)
-├── ARCHITECTURE.md    # Layer structure and security model
-├── deny.toml          # cargo-deny supply chain policy
-├── Tla+/              # 7 TLA+ specifications (all verified)
-└── .github/workflows/ # CI pipeline (build + qemu-test + audit + kani)
-```
 
----
+Key top-level files:
 
-## Build & Run
+- `Cargo.toml`: workspace, features, dependency policy
+- `Makefile`: kernel build/run/check commands
+- `sipahi.ld`: kernel linker script
+- `sipahi.toml`: SNTM manifest scaffold
+- `coverage.toml`: feature to test/proof traceability map
+- `CHANGELOG.md`: sprint history and release notes
+- `ARCHITECTURE.md`: deeper design notes and limitations
 
-**Prerequisites:** Rust nightly, `riscv64imac-unknown-none-elf` target, QEMU >= 7.0
+## Build And Run
+
+Install the Rust target and `rust-src`:
 
 ```bash
 rustup target add riscv64imac-unknown-none-elf
 rustup component add rust-src
-
-make build          # Release build
-make run            # Run on QEMU virt (Ctrl+A then X to exit)
-make debug          # Debug build + GDB attach
-make check          # cargo clippy -D warnings
-make kani           # Formal verification (requires Kani)
 ```
 
----
+Common commands:
 
-## Quality Gates
+```bash
+make build          # release kernel build
+make run            # run production build in QEMU
+make run-self-test  # run POST + integration/self-test build
+make check          # clippy with warnings denied
+make kani           # run Kani harnesses
+```
 
-| Check | Status |
-|---|---|
-| `cargo clippy -- -D warnings` | 0 warnings |
-| Kani harnesses | 200 (~100 symbolic, ~100 concrete/compile-time) |
-| TLA+ specifications | 7/7 verified with TLC v2.19 (35,770 distinct states) |
-| Compile-time asserts | 11 const asserts |
-| Production binary | ~33 KB (`riscv64imac-unknown-none-elf` release, no UART trace) |
-| LOC | ~9.1 K Rust + ~321 ASM (RISC-V) |
-| `no_std` + `no alloc` in kernel | enforced |
-| Panic-free kernel | enforced (`overflow-checks = true`, no `unwrap`) |
-| `static mut` | 0 (all via `SingleHartCell<T>`) |
-| U-mode task isolation | active (MPP=U, mret transition, mscratch swap) |
-| Per-task PMP | active (NAPOT Entry 8, reprogrammed on context switch) |
-| `cargo audit` | 0 CVE |
-| `cargo deny check` | advisories/bans/licenses/sources OK |
-| QEMU boot + test suite | ALL TESTS PASSED + 6 negative regression tests + 1 INFO check |
-| Negative regression tests | cross-task pointer / token owner / IPC ownership / PMP integrity / blackbox safe / allocator overflow |
-| CI jobs | clippy+build, QEMU self-test, cargo audit/deny, Kani full (master), Kani critical subset (PR) |
-| Production NF (nested fault) | 0 (U-18 task_trampoline mscratch/sp restore fix) |
+The kernel linker script is passed through `Makefile` via `KERNEL_RUSTFLAGS`.
+This keeps the root Cargo config from leaking the kernel linker script into
+native SNTM task crates.
 
----
+## Verification And Development Gates
 
-## Sprint History
+Sipahi uses several layers of checking. None of them alone proves the kernel
+correct; the point is to catch different classes of mistakes early.
 
-| Sprint | Description |
-|---|---|
-| 0 | Project setup: Rust nightly, `riscv64imac-unknown-none-elf`, bare-metal boot stub |
-| 1 | UART driver, BSS clear loop, `_start` -> `rust_main`, memory map |
-| 2 | PMP: 4 L-bit locked hardware regions |
-| 3 | CLINT timer, `mtvec` trap vector, `trap_entry.S`, drift-free mtimecmp scheduling |
-| 4 | Round-robin scheduler, callee-saved context switch (RISC-V ASM) |
-| 5 | Syscall interface: ECALL handler, `cap_invoke` / `ipc_send` / `ipc_recv` / `yield` |
-| 6 | HAL device trait (static dispatch), IOPMP stub |
-| 7 | SPSC lock-free IPC channels (8 channels, 16 slots, 64 B, &self API) |
-| 8 | Capability system: token broker, BLAKE3-keyed MAC, 4-slot TTL cache, `ct_eq` |
-| 9 | Compute service: COPY / CRC32 / BLAKE3 MAC / Q32.32 vector dot-product |
-| 10 | Fixed-priority preemptive scheduler: DAL budget, period, failure policy engine |
-| 11 | Blackbox flight recorder: 8 KB circular buffer, CRC32, u64 monotonic tick |
-| 12 | WASM sandbox: wasmi 1.0.9, float-opcode rejection v2, fuel limit, bump allocator |
-| 13 | Secure boot: Ed25519 (RFC 8032), real BLAKE3 MAC (no-std), key provisioning |
-| 14 | `TaskState::Isolated`, GitHub Actions CI, debug-boot feature |
-| 1.5 | U-mode tasks, per-task PMP (NAPOT), windowed watchdog, policy lockstep, graceful degradation, POST, 177 Kani proofs (historical — post-U sprints: 200) |
-| U-3 | Per-task PMP NAPOT activation, context-switch reprogramming |
-| U-4 | Lockstep CSE fix (black_box fence), boot capability, cache owner_task_id, pmpaddr shadow |
-| U-5 | PMP Entry 5 narrowing, `.task_stacks` + `.wasm_arena` sections, trap handler fault arms |
-| U-6 | Cache branch-free expiry, pmp.rs wrapper (raw asm out of scheduler), scheduler phase refactor, blackbox seq u32 |
-| U-7 | (skipped — merged into U-6) |
-| U-8 | Test HALT-on-failure, POST expansion (mstatus/mtvec/BLAKE3/Ed25519), FI-3/4/7, 10 new Kani proofs (broker helpers + pack_pmpcfg) |
-| U-9 | **CRITICAL** mscratch swap (trap runs on kernel stack, cross-task corruption fix), MAC key `test-keys` gate, context.S user_sp via fixed trap-frame address |
-| U-10 | Syscall trace feature gate, trap fault debug-boot gate, UART putc bounded loop, WCET_CONTEXT_SWITCH constant |
-| U-11 | 5+1-mode failure policy (Failover honesty), 8/9 PolicyEvent triggerable (StackOverflow/CapViolation/PmpIntegrity/DeadlineMiss/MultiModuleCrash) |
-| U-12 | 7/7 TLA+ verified (TLC 2026.04 compat: tick bound→StateConstraint, integer sentinel, NoLivelock via `terminated`), PolicyLockstepFail blackbox event |
-| U-13 | CI 4-job (clippy+build, qemu-test, audit, kani), `deny.toml`, Post-Sprint Checklist, branch fix (main→master) |
-| U-14 | WASM float scanner v2 (load/store + comparisons), `compute_copy` stub guard, capability cache split (`invalidate_by_token` / `invalidate_by_owner`), blackbox `_pad` field, ct-eq audit script |
-| U-15 | WCET recalibration (TRAP 30→80, SCHED 80→350, CRC 120→1500), POST CLINT timer + misa, MPP verify before dispatch, IPC CRC opt-in clarification, metric sweep |
-| U-16 | IPC channel ownership (producer/consumer assigned, sealed at boot), token owner enforcement, ready-task watchdog fix, task-specific user pointer validation |
-| U-17 | Determinism + UART gating (production binary 42 KB → 33 KB), policy lockstep `black_box` fence, WASM float scanner extension (i32/i64.trunc + 0xFC saturating), 6 negative regression tests, 4 new Kani proofs (LEB128 + trunc) |
-| U-18 | **NF root cause fix** (task_trampoline mscratch/sp restore — production was nested-faulting on first context switch), Kani proof quality upgrade (4 tautologies → real production fn calls, +2 proofs: lockstep purity + BLAKE3 stub determinism), TLA+ scope strengthened (IsolatedNeverScheduled temporal permanence, InvalidatedNotFound bidirectional consistency) |
-| U-19 | Magic numbers → config constants (`SYSTEM_TASK_ID`, `KERNEL_BOOT_ID`, `CHANNEL_UNASSIGNED`), `halt_system()` helper consolidation (~11 sites), blanket `dead_code` cleanup, allocator SAFETY rewrite, defensive bounds on `print_*`, `pub mod ipc` tightening, IPC tail wrapping consistency, scheduler pure helpers (`is_selectable_by_scheduler`, `should_watchdog_timeout`) used by both production and Kani Proofs 71 + 95, `task_trampoline` caller-saved register clear (info-leak hardening) |
-| U-20 | WASM float scanner doc with explicit opcode ranges + limitations, `WCET_TASK_INFO` constant + ordering proof extension, Kani PR fast-path CI job (5 critical proofs), formal verification scope/limitations section, README/ARCHITECTURE metric refresh — Sipahi v1.0 final polish |
+Current verification assets:
 
----
+- 198 Kani harnesses in the current tree
+- 7 TLA+ models under `Tla+/`
+- self-test and regression suite under `src/tests/`
+- feature-matrix builds for supported feature combinations
+- coverage map checks for feature/test/proof drift
+- light proof-quality scan for trivial or stale Kani harnesses
+- CI checks for build, QEMU smoke tests, Kani, audit/deny, binary guards, and
+  constant-time helper inspection
+
+Useful gate commands:
+
+```bash
+bash scripts/sipahi_sprint_gate.sh
+bash scripts/sntm_sprint_gate.sh
+bash scripts/check_coverage.sh
+bash scripts/check_proof_quality.sh
+bash scripts/feature_matrix.sh
+```
+
+Important caveat: name-based coverage checks are mechanical guards. They do not
+prove that a test or proof is semantically strong. New verification items should
+state the requirement they verify, the production functions they call, and the
+fault model that would make them fail.
+
+## SNTM Transition
+
+Sipahi is moving away from the WASM prototype path toward SNTM: a native-task
+model that keeps isolation in hardware and pushes as much validation as possible
+to build time.
+
+Current SNTM pieces:
+
+- `sipahi_api`: `no_std` task-side syscall API
+- `tasks/task_hello`: standalone native task scaffold
+- `sipahi.toml`: manifest scaffold for task memory layout and metadata
+- `SYS_EXIT`: sixth syscall for voluntary task termination
+- `sntm` and `sntm-safe`: default-off feature flags
+
+Not implemented yet:
+
+- manifest validator (`sntm-validate`)
+- generated PMP profile tables
+- native task image packing and loading
+- runtime multi-region PMP reload from SNTM profiles
+- typed IPC generation
+- binary verifier and task certificate flow
+- full SNTM runtime tests with booted native tasks
+
+The current rule is simple: partial SNTM work must remain default-off and must
+not silently change the production kernel path.
+
+## Security Model Summary
+
+Sipahi relies on a small set of explicit mechanisms:
+
+- kernel code runs in Machine mode
+- task code runs in User mode
+- PMP protects kernel memory and task memory regions
+- syscalls are routed through a fixed dispatch table
+- task pointers are validated before kernel use
+- capabilities bind authority to a task owner
+- IPC channels have assigned producer/consumer ownership
+- scheduler state and watchdog behavior are checked by tests and Kani harnesses
+
+The project currently assumes a single-hart runtime. Multi-hart work is tracked
+separately in AMCI/SNTM design documents and is not part of the current kernel
+runtime.
+
+## Known Limitations
+
+- Hardware WCET numbers are estimates until measured on target silicon.
+- QEMU does not model all cache, bus, PMP, and platform-interference behavior.
+- `test-keys` is enabled in the default development build; production key
+  provisioning is a separate target path.
+- WASM support is prototype-only and gated by `wasm-sandbox`.
+- SNTM is incomplete; the current code contains Phase 1 scaffolding, not a full
+  native-task deployment pipeline.
+- IOPMP, SPMP, WorldGuard, CLIC, hardware CFI, and CHERI-style work are roadmap
+  topics, not current runtime guarantees.
+
+## Feature Flags
+
+Common flags:
+
+- `self-test`: enables POST, integration tests, trace, debug boot output, and
+  WASM sandbox support for tests
+- `trace`: verbose runtime tracing
+- `debug-boot`: boot-time diagnostic output
+- `wasm-sandbox`: optional WASM prototype path
+- `v2-hal`: HAL/device abstraction work
+- `sntm`: SNTM base work, default-off
+- `sntm-safe`: future SNTM hardening layers, default-off
+- `production-otp`: production key provisioning path; requires deployment-side
+  integration
+
+## Documentation
+
+- `ARCHITECTURE.md`: architecture, isolation model, verification scope
+- `CHANGELOG.md`: sprint history and release notes
+- `STRUCTURE.md`: repository structure
+- `SIPAHI_V1_TO_V2_TRANSITION.md`: migration notes toward SNTM and v2 work
+- `Tla+/results/README.md`: TLA+ run notes
 
 ## License
 
-Apache-2.0 -- see [LICENSE](LICENSE)
+Apache-2.0. See [LICENSE](LICENSE).

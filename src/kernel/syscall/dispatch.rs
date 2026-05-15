@@ -165,11 +165,21 @@ fn wcet_update(id: usize, cycles: u64) {
 #[cfg(not(kani))]
 pub fn print_wcet_stats() {
     uart::println("[WCET] Syscall cycle stats:");
-    let names = ["cap_invoke", "ipc_send  ", "ipc_recv  ", "yield     ", "task_info "];
+    // U-23 SNTM Phase 1: compile-time array size check ile SYSCALL_COUNT
+    // değiştikçe array da güncellenmiş olmalı (yoksa compile fail).
+    // Codex review fix — out-of-bounds erişim engellenir.
+    const SYSCALL_NAMES: [&str; SYSCALL_COUNT] = [
+        "cap_invoke",
+        "ipc_send  ",
+        "ipc_recv  ",
+        "yield     ",
+        "task_info ",
+        "exit      ",   // U-23 SYS_EXIT
+    ];
     let mut i = 0usize;
     while i < SYSCALL_COUNT {
         uart::puts("  ");
-        uart::puts(names[i]);
+        uart::puts(SYSCALL_NAMES[i]);
         uart::puts(": last=");
         // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
         let (last, max) = unsafe { ((*WCET_LAST.get())[i], (*WCET_MAX.get())[i]) };

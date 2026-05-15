@@ -14,7 +14,16 @@ authors = ["gzhno"]
 # Kernel (.) crate'inin Cargo.toml [dependencies]'ine sipahi_api EKLENMEZ —
 # task_hello kendi Cargo.toml'unda direct path dep ile alır (mimari ayrım,
 # Codex review fix). sntm feature default-off; production unaffected.
+#
+# U-24 SNTM Phase 2: tools/sntm-validate HOST tool — kernel workspace'inde
+# DEĞİL (workspace.exclude ile ayrıldı). Sebep: workspace unified dep
+# resolution + `-Z build-std` kombinasyonu sntm-validate'in serde/toml
+# dep'lerini RISC-V target'a derlemeye çalışıyordu (no_std fail). Şu an
+# ayrı sub-workspace olarak `cargo {build,test,run}` ile invocation
+# tools/sntm-validate/ cwd'sinde yapılır (kendi .cargo/config.toml'u host
+# target'ı zorlar).
 members = [".", "sipahi_api", "tasks/task_hello"]
+exclude = ["tools/sntm-validate"]
 resolver = "2"
 
 [features]

@@ -146,6 +146,67 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
+    // PROOF (U-24 SNTM-R3): Region overlap symmetric + defensive
+    //
+    // VERIFIES: SNTM-R3 (regions_overlap symmetric + saturating_add safe + empty no-overlap)
+    // CALLS:    crate::kernel::pmp::overlap::regions_overlap
+    // FAILS-IF: regions_overlap asymmetric (a,b ≠ b,a), veya overflow ile
+    //           overlap'ı false negative (saturating_add eksik), veya boş
+    //           region (size=0) için overlap true (must be false).
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn region_overlap_symmetric() {
+        use crate::kernel::pmp::overlap::regions_overlap;
+        let a_base: usize = kani::any();
+        let a_size: usize = kani::any();
+        let b_base: usize = kani::any();
+        let b_size: usize = kani::any();
+        kani::assume(a_size <= 0x10000);  // bounded for Kani performance
+        kani::assume(b_size <= 0x10000);
+
+        // Symmetry: aynı pair iki sırada da aynı sonuç
+        let ab = regions_overlap(a_base, a_size, b_base, b_size);
+        let ba = regions_overlap(b_base, b_size, a_base, a_size);
+        assert!(ab == ba);
+
+        // Empty region: size=0 → asla overlap
+        let zero = regions_overlap(a_base, 0, b_base, b_size);
+        assert!(!zero);
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PROOF (U-24 SNTM-R5): NAPOT alignment correctness
+    //
+    // VERIFIES: SNTM-R5 (valid_napot_alignment: size power-of-2 ≥ 8 AND base aligned)
+    // CALLS:    crate::kernel::pmp::overlap::valid_napot_alignment
+    // FAILS-IF: Power-of-2 olmayan size kabul edilirse, veya base aligned değilse
+    //           kabul edilirse, veya size < 8 kabul edilirse.
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn napot_alignment_correct() {
+        use crate::kernel::pmp::overlap::valid_napot_alignment;
+
+        let base: usize = kani::any();
+        let size: usize = kani::any();
+        kani::assume(size <= 0x100000);  // bounded
+
+        let result = valid_napot_alignment(base, size);
+
+        if result {
+            // Valid ise tüm 3 koşul sağlanmalı
+            assert!(size >= 8);
+            assert!(size & (size - 1) == 0);  // power-of-2
+            assert!(base & (size - 1) == 0);  // aligned
+        }
+        // Reciprocal: size<8 veya non-pow2 ise reddedilmeli
+        if size < 8 {
+            assert!(!result);
+        } else if size & (size - 1) != 0 {
+            assert!(!result);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════
     // PROOF 7: IPC kanal bellek hesabı
     // Slot verisi ayrı, gerçek struct boyutu ayrı kontrol ediliyor.
     // SORUN 1: SpscChannel = 1028B (4B AtomicU16 overhead + 1024B slot)

@@ -40,6 +40,26 @@ pub const PMP_NAPOT_RW: usize = 0x1B;
 pub const PMP_NAPOT_MASK_8KB: usize = 0x3FF;
 
 // ═══════════════════════════════════════════════════════
+// PMP Encoding Type (U-24 SNTM Phase 2 — design v0.8 §4.5.4)
+// ═══════════════════════════════════════════════════════
+
+/// PMP encoding türü — NAPOT (1 entry) veya TOR çifti (2 entry).
+/// SNTM design v0.5 §4.5.1 packing algorithm. Manifest'ten sntm-validate
+/// üretir (Phase 4); kernel build-time const PMP_PROFILES tüketir.
+///
+/// U-24 SNTM Phase 2: type definition + arch::pmp layer'da kalır,
+/// kernel/pmp/profile.rs `use crate::arch::pmp::PmpEncoding` ile import eder.
+#[allow(dead_code)] // U-24: placeholder profile EMPTY, U-25 runtime tüketimi
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PmpEncoding {
+    /// NAPOT — tek entry, size power-of-2, base size-aligned
+    Napot { addr: usize, size_log2: u8 },
+    /// TOR — iki entry (lo=OFF, hi=TOR), NAPOT-uyumsuz layout'lar için
+    Tor { lo: usize, hi: usize },
+}
+
+// ═══════════════════════════════════════════════════════
 // PMP Address Register Yazma (pmpaddr0-7)
 // ═══════════════════════════════════════════════════════
 

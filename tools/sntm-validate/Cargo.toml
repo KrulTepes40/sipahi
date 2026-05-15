@@ -1,0 +1,26 @@
+[package]
+name = "sntm-validate"
+version = "0.1.0"
+edition = "2021"
+description = "Sipahi SNTM manifest validator (host tool)"
+license = "Apache-2.0"
+
+# U-24 G14 fix: bağımsız workspace — kernel workspace ile dep resolution
+# paylaşmıyor (root workspace `-Z build-std` ile serde'yi RISC-V'e
+# derlemeye çalışıyordu). Bu crate cd tools/sntm-validate ile invoke edilir.
+[workspace]
+
+[[bin]]
+name = "sntm-validate"
+path = "src/main.rs"
+
+[dependencies]
+# U-24 NEW DEP: TOML parser — sadece HOST tool, kernel'e EKLENMEZ.
+# Exact pin (U-22 G11 doctrine).
+# Note: toml 0.8.x newer toml_edit ile API incompatibility var → 1.x kullan.
+# serde 1.0.228 toml 1.1.2 transitive requirement.
+toml = "=1.1.2"
+serde = { version = "=1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "=3.12.0"

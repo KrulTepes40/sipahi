@@ -12,3 +12,4 @@ pub mod memory;
 pub mod syscall;    // Sprint 7
 pub mod capability; // Sprint 9
 pub mod policy;     // Sprint 10
+pub mod pmp;        // U-24 SNTM Phase 2 — PMP profile types + pure helpers

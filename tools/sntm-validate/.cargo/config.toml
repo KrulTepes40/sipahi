@@ -1,0 +1,12 @@
+# U-24 SNTM Phase 2: sntm-validate HOST tool — kendi workspace, kendi target.
+#
+# Root .cargo/config.toml `[build] target = "riscv64imac-unknown-none-elf"`
+# zorlar; bu local config override eder (cargo working dir'den yukarı
+# arar, en yakın config kazanır).
+#
+# CI ve sprint gate her zaman explicit `--target $HOST` geçer; local dev
+# user `cd tools/sntm-validate && cargo build` çalıştırırsa cargo'nun
+# default host target'ı kullanılır (config'de unset, command-line ile set).
+
+# Empty section — root [build] target shadow için placeholder.
+# (Cargo doesn't support `target = ""` to unset; explicit --target zorunlu.)

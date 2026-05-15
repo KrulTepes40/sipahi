@@ -5,6 +5,57 @@ All notable changes to Sipahi microkernel.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - U-24 SNTM Phase 2
+
+### Added (SNTM Phase 2 — manifest validator + PmpProfile types)
+- **`src/arch/pmp.rs`**: `PmpEncoding` enum (NAPOT/TOR variants),
+  HW-level encoding type per SNTM design v0.8 §4.5.4. `#[allow(dead_code)]`
+  while runtime consumers (U-25) pending.
+- **`src/kernel/pmp/`** module (yeni dizin): `mod.rs` (re-export profile+overlap),
+  `profile.rs` (`Permission` RX/R/RW/NONE + `Region` + `PmpProfile`
+  region_count + 6-region array, `EMPTY` const, `active_regions()`),
+  `static PMP_PROFILES: [PmpProfile; MAX_TASKS]` placeholder + `get_pmp_profile(task_id) -> Option<&'static>`.
+- **`src/kernel/pmp/overlap.rs`**: `regions_overlap()` + `valid_napot_alignment()`
+  pure helpers (no_std, const fn, saturating_add). Kani-proven (R3, R5).
+- **`tools/sntm-validate`** HOST tool (kendi sub-workspace — root workspace
+  `-Z build-std` ile serde'yi RISC-V'e derliyordu, ayrı tutuldu):
+  - `manifest.rs`: serde Deserialize structs (Manifest, KernelEntry,
+    PlatformEntry, TaskEntry, RegionEntry).
+  - `main.rs`: TOML parser + CLI (`--manifest <path>`), exit 0=PASS, 1=FAIL.
+  - `validate.rs`: 6 invariant check — task ID uniqueness, NAPOT alignment,
+    intra-task overlap, cross-task overlap, **kernel-task overlap** (SNTM
+    design §4.5.2 shadow-attack koruma), PMP budget.
+  - `tests/integration.rs`: 6 integration test (1 valid + 5 fault injection).
+- **CI**: `sntm-validate` yeni job (build + integration tests + `sipahi.toml`
+  validation, all on explicit HOST target).
+- **`sntm_sprint_gate.sh` E4**: aktive edildi, `cd tools/sntm-validate &&
+  cargo run --target $HOST` invocation pattern.
+
+### Verification (§18.7 + §18.4 quality gates)
+- Kani proof count: 198 → 200 (+`region_overlap_symmetric` SNTM-R3,
+  +`napot_alignment_correct` SNTM-R5)
+- Kernel self-test: 3 yeni (`test_regions_overlap_table` 12-case + symmetry,
+  `test_napot_alignment_table` 14-case, `test_pmp_profile_struct_smoke`
+  bounds + EMPTY). Hepsi table-driven semantics, scope-honest.
+- Tool integration: 6 test (negative tests TOOL-SIDE — gerçek "manifest
+  reject" senaryoları). Kernel self-test scope: pure helper semantics.
+- Test-first discipline: G3 (kernel tests) + G4 (Kani proofs) HELPER'LARDAN
+  ÖNCE yazıldı. `cargo check` `unresolved import crate::kernel::pmp::overlap`
+  RED gözlemlendi → G5 helper implement → GREEN.
+- §18.7 3-yorum: 5 yeni isim için VERIFIES/CALLS/FAILS-IF zorunlu, hepsi compliant.
+- `coverage.toml`: 14 feature, 5 requirement (SNTM-R1, R2-id, R3, R4, R5).
+- Tautology scan: 200 proof, 0 tautoloji.
+- Production binary: unchanged (sntm-validate HOST tool, kernel binary
+  PMP_PROFILES placeholder EMPTY — U-25 runtime integration).
+
+### Carry-forward to U-25 (SNTM Phase 3)
+- `src/kernel/pmp/generated.rs`: sntm-validate-üretilen PMP_PROFILES tablo
+  (şu an placeholder EMPTY).
+- `--output-rs` flag to sntm-validate (manifest → generated.rs codegen).
+- `scheduler/mod.rs`: context switch'te multi-region PMP profile reload.
+- `is_valid_user_ptr`: multi-region awareness (SNTM design §5.2).
+- TLA+ spec: `SipahiSNTM.tla` task lifecycle.
+
 ## [Unreleased] - U-23 SNTM Phase 1
 
 ### Added (SNTM Phase 1 — sipahi_api body + task_hello scaffold)
@@ -35,7 +86,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Verification (§18.7 + §18.4 quality gates)
 - Kani proof count: 197 → 198 (+`syscall_id_set_complete`, SNTM-R1)
-- Negative test: `test_sys_exit_id_registered` (SNTM-R2-id, scope-honest)
+- Kernel self-test: `test_syscall_id_table` (SNTM-R2-id, table-driven —
+  6 sequential IDs + SYSCALL_COUNT + WCET_EXIT consistency)
 - Test-first discipline: G3 (test+proof) WROTE FIRST, saw RED
   (compile error: SYS_EXIT not in config), G4 (kernel SYS_EXIT) made GREEN.
 - Both new entries 3-yorum compliant (VERIFIES/CALLS/FAILS-IF).

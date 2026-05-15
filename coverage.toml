@@ -123,12 +123,23 @@ non_safety              = true  # meta feature only
 # ═══════════════════════════════════════════════════════════════════════
 
 [feature.sntm]
-description             = "SNTM base — sipahi_api body + task_hello scaffold (v1.5-rc1)"
-required_negative_tests = ["test_sys_exit_id_registered"]
-required_kani_proofs    = ["syscall_id_set_complete"]
+description             = "SNTM base — sipahi_api + task_hello + manifest validator (v1.5+, U-24 Phase 2)"
+required_negative_tests = [
+    "test_syscall_id_table",
+    "test_regions_overlap_table",
+    "test_napot_alignment_table",
+    "test_pmp_profile_struct_smoke",
+]
+required_kani_proofs = [
+    "syscall_id_set_complete",
+    "region_overlap_symmetric",
+    "napot_alignment_correct",
+]
 # U-23: deferred kaldırıldı; SNTM Phase 1 sipahi_api + 6th syscall (SYS_EXIT)
-# eklendi. Kernel-side native task loader Phase 4 (Sprint U-26) hedef —
-# o noktada sntm feature production'da aktif edilir. Şu an default-off.
+# eklendi. U-24 SNTM Phase 2: sntm-validate host tool + PmpProfile/Region
+# tip definition'ları + pure overlap/NAPOT alignment helper'ları (Kani-proven).
+# Kernel-side native task loader Phase 4 (Sprint U-26) hedef — o noktada sntm
+# feature production'da aktif edilir. Şu an default-off.
 
 [feature.sntm-safe]
 description     = "SNTM-SAFE — task-lint, binary verifier, certificate (v1.6+)"
@@ -207,10 +218,10 @@ required_proofs = ["syscall_id_set_complete"]
 fault_model     = "Yeni syscall eklenip SYSCALL_COUNT güncellenmediği zaman task-side ABI break (sipahi_api wrapper'ları yanlış ID kullanır)"
 
 [requirement.SNTM-R2-id]
-description     = "SYS_EXIT registered: id=5, SYSCALL_COUNT=6"
-required_tests  = ["test_sys_exit_id_registered"]
+description     = "Syscall ID table consistency: 6 sequential IDs (0..5) + SYSCALL_COUNT=6 + WCET_EXIT=15c"
+required_tests  = ["test_syscall_id_table"]
 required_proofs = []
-fault_model     = "SYS_EXIT sabiti eksikse compile fail; SYSCALL_COUNT eski (5) kalırsa runtime ABI mismatch"
+fault_model     = "Any SYS_* ID out of sequence (0..5), SYSCALL_COUNT != 6, ya da WCET_EXIT estimate drift (!= 15c)"
 
 # SNTM-R2-full (isolate behavior runtime): DEFERRED — Sprint U-26 hedefi.
 # Bu requirement coverage.toml'a U-26 başlamadan EKLENMEZ; placeholder
@@ -219,3 +230,23 @@ fault_model     = "SYS_EXIT sabiti eksikse compile fail; SYSCALL_COUNT eski (5) 
 #   description = "exit syscall task'ı isolate eder ve scheduler atlar"
 #   deferred = "runtime test needs kernel loader (Phase 4)"
 #   deferred_target = "Sprint U-26 (kernel native task loader)"
+
+# ─── U-24 SNTM Phase 2 Requirements ─────────────────────────────────────
+
+[requirement.SNTM-R3]
+description     = "Region overlap symmetric + saturating safe + empty region (size=0) no overlap"
+required_tests  = ["test_regions_overlap_table"]
+required_proofs = ["region_overlap_symmetric"]
+fault_model     = "regions_overlap asymmetric, overflow ile false negative (saturating_add bypass), boş region (size=0) için true (must be false), ya da disjoint için yanlış true"
+
+[requirement.SNTM-R4]
+description     = "PmpProfile bounds + MAX_TASKS guard + EMPTY const semantics"
+required_tests  = ["test_pmp_profile_struct_smoke"]
+required_proofs = []
+fault_model     = "get_pmp_profile(idx >= MAX_TASKS) Some döner, PmpProfile::EMPTY.region_count != 0, ya da active_regions() empty değil"
+
+[requirement.SNTM-R5]
+description     = "NAPOT alignment: size power-of-2 ≥ 8 byte AND base size-aligned"
+required_tests  = ["test_napot_alignment_table"]
+required_proofs = ["napot_alignment_correct"]
+fault_model     = "Power-of-2 olmayan size kabul, unaligned base kabul, size < 8 kabul, ya da geçerli kombinasyon reject"

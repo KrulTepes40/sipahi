@@ -115,10 +115,15 @@ elif [ "$PHASE" != "base" ]; then
     echo ""
 fi
 
-# ─── E4: sntm-validate manifest check (SNTM v1.5+) ──────────────────
-if command -v sntm-validate > /dev/null 2>&1 && [ -f "sipahi.toml" ]; then
-    run_check "E4" "sntm-validate --manifest sipahi.toml" \
-        "sntm-validate --manifest sipahi.toml 2>&1 | tail -5" \
+# ─── E4: sntm-validate manifest check (SNTM v1.5+ / U-24 SNTM Phase 2) ─
+# sntm-validate kendi sub-workspace'inde (root workspace dep resolution
+# `-Z build-std` ile serde'yi RISC-V'e derlemeye çalışıyordu — U-24 G14 fix).
+# Invocation: cd + explicit HOST target.
+if [ -f "sipahi.toml" ] && [ -d "tools/sntm-validate" ]; then
+    HOST=$(rustc -vV | sed -n 's/^host: //p')
+    run_check "E4" "sntm-validate --manifest sipahi.toml (target=$HOST)" \
+        "(cd tools/sntm-validate && cargo run --target \"$HOST\" --release \
+            -- --manifest ../../sipahi.toml) 2>&1 | tail -5" \
         "base"
 else
     echo "[E4] SKIP — sntm-validate tool veya sipahi.toml manifest henüz yok"
