@@ -123,10 +123,12 @@ non_safety              = true  # meta feature only
 # ═══════════════════════════════════════════════════════════════════════
 
 [feature.sntm]
-description     = "SNTM base — task loader, typed IPC, manifest (v1.5+)"
-deferred        = "test+proof"
-deferred_reason = "Umbrella feature, body Sprint U-23'te (SNTM Phase 1) doldurulacak"
-deferred_target = "v1.5 SNTM Phase 1 (Sprint U-23)"
+description             = "SNTM base — sipahi_api body + task_hello scaffold (v1.5-rc1)"
+required_negative_tests = ["test_sys_exit_id_registered"]
+required_kani_proofs    = ["syscall_id_set_complete"]
+# U-23: deferred kaldırıldı; SNTM Phase 1 sipahi_api + 6th syscall (SYS_EXIT)
+# eklendi. Kernel-side native task loader Phase 4 (Sprint U-26) hedef —
+# o noktada sntm feature production'da aktif edilir. Şu an default-off.
 
 [feature.sntm-safe]
 description     = "SNTM-SAFE — task-lint, binary verifier, certificate (v1.6+)"
@@ -195,3 +197,25 @@ tests = [
 # required_tests = ["test_task_kernel_overlap_rejected"]
 # required_proofs = ["sntm_kernel_overlap_rejected_for_any_region"]
 # fault_model    = "regions_overlap() always returns false → overlap silently accepted"
+
+# ─── U-23 SNTM Phase 1 Requirements ─────────────────────────────────────
+
+[requirement.SNTM-R1]
+description     = "Syscall ID set complete: 0..SYSCALL_COUNT benzersiz + sıralı"
+required_tests  = []
+required_proofs = ["syscall_id_set_complete"]
+fault_model     = "Yeni syscall eklenip SYSCALL_COUNT güncellenmediği zaman task-side ABI break (sipahi_api wrapper'ları yanlış ID kullanır)"
+
+[requirement.SNTM-R2-id]
+description     = "SYS_EXIT registered: id=5, SYSCALL_COUNT=6"
+required_tests  = ["test_sys_exit_id_registered"]
+required_proofs = []
+fault_model     = "SYS_EXIT sabiti eksikse compile fail; SYSCALL_COUNT eski (5) kalırsa runtime ABI mismatch"
+
+# SNTM-R2-full (isolate behavior runtime): DEFERRED — Sprint U-26 hedefi.
+# Bu requirement coverage.toml'a U-26 başlamadan EKLENMEZ; placeholder
+# olarak doc-only:
+#   [requirement.SNTM-R2-full]
+#   description = "exit syscall task'ı isolate eder ve scheduler atlar"
+#   deferred = "runtime test needs kernel loader (Phase 4)"
+#   deferred_target = "Sprint U-26 (kernel native task loader)"

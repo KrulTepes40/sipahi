@@ -11,7 +11,7 @@ use crate::common::config::MAX_TASKS;
 
 pub use crate::common::config::{
     SYS_CAP_INVOKE, SYS_IPC_SEND, SYS_IPC_RECV,
-    SYS_YIELD, SYS_TASK_INFO, SYSCALL_COUNT,
+    SYS_YIELD, SYS_TASK_INFO, SYS_EXIT, SYSCALL_COUNT,
 };
 
 /// Ardışık cap_invoke fail sayacı (per-task) — 3 fail -> CapViolation
@@ -124,11 +124,12 @@ pub(crate) fn test_is_valid_user_ptr(caller: u8, ptr: usize, size: usize) -> boo
 type SyscallHandler = fn(usize, usize, usize, usize) -> usize;
 
 static SYSCALL_TABLE: [SyscallHandler; SYSCALL_COUNT] = [
-    sys_cap_invoke,
-    sys_ipc_send,
-    sys_ipc_recv,
-    sys_yield,
-    sys_task_info,
+    sys_cap_invoke,   // 0 SYS_CAP_INVOKE
+    sys_ipc_send,     // 1 SYS_IPC_SEND
+    sys_ipc_recv,     // 2 SYS_IPC_RECV
+    sys_yield,        // 3 SYS_YIELD
+    sys_task_info,    // 4 SYS_TASK_INFO
+    sys_exit,         // 5 SYS_EXIT — U-23 SNTM Phase 1
 ];
 
 #[cfg(not(kani))]
@@ -194,6 +195,7 @@ pub fn check_wcet_limits() -> bool {
         config::WCET_IPC_RECV,    // SYS_IPC_RECV (2)
         config::WCET_YIELD,       // SYS_YIELD (3)
         config::WCET_TASK_INFO,   // SYS_TASK_INFO (4)
+        config::WCET_EXIT,        // SYS_EXIT (5) — U-23 SNTM Phase 1
     ];
     // SAFETY: Single-hart, no concurrent mutation.
     unsafe {
@@ -496,11 +498,41 @@ fn sys_task_info(_task_id: usize, _: usize, _: usize, _: usize) -> usize {
     0
 }
 
+/// SYS_EXIT — task voluntary termination (U-23 SNTM Phase 1).
+/// arg0 = exit code (u8), 0=normal, >0=error.
+///
+/// Davranış:
+///   1. caller_task_id alınır.
+///   2. isolate_task(caller) — TaskState::Isolated + capability invalidate
+///      (mevcut scheduler::isolate_task, U-23 pub(crate)).
+///   3. schedule_yield() — scheduler Isolated task'ı atlar.
+///   4. Buraya teorik olarak ulaşılmaz; defensive E_OK fallback.
+fn sys_exit(_exit_code: usize, _: usize, _: usize, _: usize) -> usize {
+    #[cfg(not(kani))]
+    {
+        let caller = crate::kernel::scheduler::current_task_id();
+        let _code = (_exit_code & 0xFF) as u8;
+
+        #[cfg(feature = "trace")]
+        {
+            uart::puts("[SYS] exit(task=");
+            print_u64(caller as u64);
+            uart::puts(", code=");
+            print_u64(_code as u64);
+            uart::println(")");
+        }
+
+        crate::kernel::scheduler::isolate_task(caller as usize);
+        crate::kernel::scheduler::schedule_yield();
+    }
+    E_OK
+}
+
 #[cfg(not(kani))]
 use crate::common::fmt::print_u64;
 
-// Compile-time guarantee
-const _: () = assert!(SYSCALL_COUNT == 5);
+// Compile-time guarantee — U-23: 5 → 6 (SYS_EXIT eklendi)
+const _: () = assert!(SYSCALL_COUNT == 6);
 
 // ═══════════════════════════════════════════════════════
 // Kani — Sprint 7 proof'ları (değişmedi)
@@ -543,7 +575,8 @@ mod verification {
     #[kani::proof]
     fn syscall_table_size() {
         assert!(SYSCALL_TABLE.len() == SYSCALL_COUNT);
-        assert!(SYSCALL_COUNT == 5);
+        // U-23 SNTM Phase 1: SYSCALL_COUNT 5 → 6 (SYS_EXIT eklendi)
+        assert!(SYSCALL_COUNT == 6);
     }
 
     #[kani::proof]
@@ -591,6 +624,7 @@ mod verification {
         assert!(SYS_IPC_RECV == config::SYS_IPC_RECV as usize);
         assert!(SYS_YIELD == config::SYS_YIELD as usize);
         assert!(SYS_TASK_INFO == config::SYS_TASK_INFO as usize);
+        assert!(SYS_EXIT == config::SYS_EXIT as usize);  // U-23 SNTM Phase 1
     }
 
     /// Proof 123: Geçersiz syscall ID -> E_INVALID_SYSCALL == usize::MAX

@@ -1,0 +1,20 @@
+[package]
+name = "task_hello"
+version = "0.1.0"
+edition = "2021"
+description = "Sipahi SNTM Phase 1 minimal task — yield + exit loop"
+license = "Apache-2.0"
+
+[[bin]]
+name = "task_hello"
+path = "src/main.rs"
+
+# Codex review fix: kernel'in dep ağacında sipahi_api YOK.
+# task_hello sipahi_api'yi DIRECT PATH DEP olarak alır.
+# Mimari ayrım: kernel sipahi_api'ye bağımlı OLMAMALI.
+[dependencies]
+sipahi_api = { path = "../../sipahi_api" }
+
+# NOT: [profile.release] workspace root'tan inherit edilir
+# (Cargo.toml: opt-level="s", lto=true, codegen-units=1, panic="abort",
+# overflow-checks=true). Task için aynı profil ideal.

@@ -5,6 +5,51 @@ All notable changes to Sipahi microkernel.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - U-23 SNTM Phase 1
+
+### Added (SNTM Phase 1 — sipahi_api body + task_hello scaffold)
+- **`sipahi_api` body**: Error enum (8 variant + `from_kernel(usize) -> Option<Error>`),
+  `ipc::Message` (64B repr(C), kernel binary-compatible), 6 syscall wrapper
+  (cap_invoke/ipc_send/ipc_recv/yield_cpu/task_info/exit) + ecall0-3 trampolines.
+- **6th syscall — `SYS_EXIT`** (id=5): kernel-side handler in `dispatch.rs::sys_exit`
+  + new `WCET_EXIT = 15c` config sabit + `SYSCALL_COUNT` 5→6 +
+  `SYSCALL_TABLE` 6 element + `check_wcet_limits` array 6 element +
+  `syscall_ids_match_config` Kani proof SYS_EXIT line.
+- **`scheduler::isolate_task`** visibility: `fn` → `pub(crate) fn` —
+  mevcut helper kernel-side sys_exit'ten çağrılır (yeni yazılmadı).
+- **`tasks/task_hello`** standalone crate: Cargo.toml + TASK-SCOPED
+  `.cargo/config.toml` (kernel build etkilenmez) + `build.rs`
+  (CARGO_MANIFEST_DIR absolute path linker arg) + `task_hello.ld`
+  per-task linker script + `src/main.rs` (_start + yield loop + exit).
+  ELF builds at `.text` 0x80100000, 5040 bytes, eh_frame/got discarded.
+- **`sipahi.toml`** manifest scaffold (kernel + 1 task + 4 PMP regions);
+  sntm-validate aktif Sprint U-24'te.
+- **Cargo workspace** members: `[".", "sipahi_api", "tasks/task_hello"]`.
+  Kernel Cargo.toml [dependencies] sipahi_api EKLEMEDİ (mimari ayrım).
+
+### Refactored
+- **Kernel linker script** `-Tsipahi.ld` `.cargo/config.toml`'dan Makefile
+  RUSTFLAGS'a taşındı (kernel-only, task build'lere `union` merge ile
+  sızmasın). `make build`/`check`/`debug`/`run-self-test` + feature_matrix.sh
+  +KERNEL_RUSTFLAGS.
+
+### Verification (§18.7 + §18.4 quality gates)
+- Kani proof count: 197 → 198 (+`syscall_id_set_complete`, SNTM-R1)
+- Negative test: `test_sys_exit_id_registered` (SNTM-R2-id, scope-honest)
+- Test-first discipline: G3 (test+proof) WROTE FIRST, saw RED
+  (compile error: SYS_EXIT not in config), G4 (kernel SYS_EXIT) made GREEN.
+- Both new entries 3-yorum compliant (VERIFIES/CALLS/FAILS-IF).
+- SNTM-R2-full (isolate behavior runtime test) DEFERRED to Sprint U-26
+  (kernel native task loader requires booted task for runtime test).
+- `coverage.toml`: 14 feature mapped (sntm artık active, deferred değil),
+  2 requirement ID (SNTM-R1, SNTM-R2-id).
+- Feature matrix: 8 → 10 kombinasyon (sntm + self-test,sntm eklendi).
+- Production binary: unchanged (sntm default-off, kernel sipahi_api-free).
+
+### SNTM Design Doc (referans — gitignored draft)
+- v0.7 → v0.8: §8 stale "yeni syscall gerekmez" iddiası düzeltildi
+  (SYS_EXIT panic_handler için zorunlu, §4.8.3 ile tutarlı).
+
 ## [1.1.1] - 2026-05-15
 
 ### Cleanup (U-22.5 — Pre-SNTM)

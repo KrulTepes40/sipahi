@@ -2,8 +2,14 @@
 target = "riscv64imac-unknown-none-elf"
 
 [target.riscv64imac-unknown-none-elf]
-rustflags = ["-C", "link-arg=-Tsipahi.ld"]
 runner = "qemu-system-riscv64 -machine virt -nographic -bios none -m 512M -smp 1 -kernel"
 
+# U-23: Kernel linker script `-Tsipahi.ld` Makefile RUSTFLAGS'ına taşındı.
+# Eski yer (rustflags = [...]) child dir'lere (tasks/task_hello/) Cargo
+# config "union" merge ile sızıyordu → task build'inde "cannot find
+# sipahi.ld" linker error. Kernel hâlâ Makefile RUSTFLAGS env var ile
+# script alır; task'lar kendi .cargo/config.toml'larında kendi linker
+# script'lerini belirtir.
+#
 # NOT: build-std Makefile'da -Z flag olarak geçiriliyor.
 # config.toml'da olursa Kani ile çakışır (duplicate core).

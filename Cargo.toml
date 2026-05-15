@@ -1,6 +1,6 @@
 [package]
 name = "sipahi"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "Safety-critical hard real-time microkernel for RISC-V"
 license = "Apache-2.0"
@@ -10,7 +10,11 @@ authors = ["gzhno"]
 # Root crate (kernel) hâlâ default; sipahi_api ayrı build edilebilir crate.
 # v1.5 SNTM Phase 1'de doldurulacak.
 [workspace]
-members = [".", "sipahi_api"]
+# U-23 SNTM Phase 1: tasks/task_hello scaffold workspace member.
+# Kernel (.) crate'inin Cargo.toml [dependencies]'ine sipahi_api EKLENMEZ —
+# task_hello kendi Cargo.toml'unda direct path dep ile alır (mimari ayrım,
+# Codex review fix). sntm feature default-off; production unaffected.
+members = [".", "sipahi_api", "tasks/task_hello"]
 resolver = "2"
 
 [features]

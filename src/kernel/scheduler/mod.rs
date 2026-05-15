@@ -821,7 +821,9 @@ pub(crate) fn handle_task_fault() {
 
 /// İzole — task durdur + token revoke
 /// Isolated: Suspended'dan farklı, periyot reset ile READY'ye dönmez.
-fn isolate_task(id: usize) {
+/// U-23: pub(crate) — sys_exit syscall handler bu helper'ı çağırır
+/// (voluntary task termination path).
+pub(crate) fn isolate_task(id: usize) {
     // SAFETY: MIE=0 in trap context, single-hart — no concurrent access.
     unsafe {
         if id < *TASK_COUNT.get() {

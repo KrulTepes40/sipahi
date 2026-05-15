@@ -145,8 +145,14 @@ pub const WCET_YIELD: u64 = 10;
 /// yield'dan biraz daha pahalı ama yine de küçük (≤ scheduler tick).
 pub const WCET_TASK_INFO: u64 = 15;
 
+/// SYS_EXIT WCET — estimated at 15c, FPGA pending.
+/// U-23 SNTM Phase 1: voluntary task termination syscall.
+/// Components: current_task_id (3c) + isolate_task state write + cap invalidate (~5c)
+/// + schedule_yield Phase 3/4 only (~5c). Conservative bound 15c.
+pub const WCET_EXIT: u64 = 15;
+
 // ═══════════════════════════════════════════════════════
-// Syscall ID'leri (Sprint 7'de kullanılacak)
+// Syscall ID'leri (Sprint 7 + U-23 SNTM Phase 1)
 // ═══════════════════════════════════════════════════════
 
 pub const SYS_CAP_INVOKE: usize = 0;
@@ -154,7 +160,8 @@ pub const SYS_IPC_SEND: usize = 1;
 pub const SYS_IPC_RECV: usize = 2;
 pub const SYS_YIELD: usize = 3;
 pub const SYS_TASK_INFO: usize = 4;
-pub const SYSCALL_COUNT: usize = 5;
+pub const SYS_EXIT: usize = 5;       // U-23: SNTM task termination
+pub const SYSCALL_COUNT: usize = 6;  // 5 → 6 (U-23 SYS_EXIT)
 
 // U-22.5 G2: COMPUTE_* ID sabitleri silindi (4 sabit).
 // dispatch_compute fonksiyonu WASM-tied orphan code'du; SNTM v1.5'te

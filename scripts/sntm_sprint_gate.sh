@@ -74,17 +74,15 @@ run_check() {
     echo ""
 }
 
-# ─── E1: sipahi-api crate build (SNTM v1.5+) ────────────────────────
-if [ -d "sipahi-api" ] || [ -d "tasks/sipahi-api" ]; then
-    run_check "E1" "cargo build -p sipahi-api" \
-        "cargo build -p sipahi-api --release \
-         -Z build-std=core,alloc \
-         -Z build-std-features=compiler-builtins-mem \
-         --target riscv64imac-unknown-none-elf 2>&1 | tail -3" \
+# ─── E1: sipahi_api crate build (SNTM v1.5+) ────────────────────────
+# U-22.5 cleanup fix: klasör adı sipahi_api (underscore), dash değil
+if [ -d "sipahi_api" ] || [ -d "tasks/sipahi_api" ]; then
+    run_check "E1" "cargo build -p sipahi_api" \
+        "cargo build -p sipahi_api --release 2>&1 | tail -3" \
         "base"
 else
-    echo "[E1] SKIP — sipahi-api crate henüz yok"
-    SKIPPED+=("E1: sipahi-api build")
+    echo "[E1] SKIP — sipahi_api crate henüz yok"
+    SKIPPED+=("E1: sipahi_api build")
     echo ""
 fi
 
@@ -181,9 +179,12 @@ fi
 
 # ─── E9: Negative test marker grep (zorunlu) ────────────────────────
 # Self-test çıktısında negative test PASS pattern'lerini doğrula
+# U-22.5 cleanup fix: grep -c match yoksa exit 1 + "0" output dönüyor;
+# `|| echo 0` yedek "0" ekliyor → NEG_COUNT="0\n0" → integer compare fail.
+# Doğru pattern: grep'in çıktısını al, fallback ayrı assignment ile.
 NEGATIVE_TEST_LOG="/tmp/sipahi_gate_test.log"
 if [ -f "$NEGATIVE_TEST_LOG" ]; then
-    NEG_COUNT=$(grep -c "Negative:" "$NEGATIVE_TEST_LOG" 2>/dev/null || echo 0)
+    NEG_COUNT=$(grep -c "Negative:" "$NEGATIVE_TEST_LOG" 2>/dev/null) || NEG_COUNT=0
     if [ "$NEG_COUNT" -gt 0 ]; then
         echo "[E9] Negative test'ler: $NEG_COUNT görüldü"
         PASSED+=("E9: $NEG_COUNT negative test")

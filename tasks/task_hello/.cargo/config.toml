@@ -1,0 +1,26 @@
+# U-23 SNTM Phase 1: task_hello build flags — TASK-SCOPED config.
+# Sadece tasks/task_hello/ dizininde aktif (cargo per-dir config priority).
+# Root .cargo/config.toml DEĞİL — kernel build (-Z build-std=core,alloc) etkilenmez.
+# Codex review fix: build-std="core" task için, kernel'in core,alloc'una karışmaz.
+
+[target.riscv64imac-unknown-none-elf]
+rustflags = [
+    # Linker script — build.rs ile absolute path olarak verilir
+    # (CARGO_MANIFEST_DIR resolve, rustflags variable expansion yapmadığı için).
+
+    # SNTM design v0.5 §4.8.2 belt+suspenders linker relaxation kapalı.
+    # PMP region boundary'leri shift olmasın diye iki katman:
+    "-C", "target-feature=-relax",  # codegen-side: relax marker emit etme
+    "-C", "link-arg=--no-relax",    # linker-side: marker olsa bile relax yapma
+
+    "-C", "link-arg=-G0",            # small-data section kapalı (gp setup gerekmez)
+    "-C", "link-arg=--gc-sections",
+    "-C", "codegen-units=1",         # reproducible
+]
+
+[unstable]
+build-std = ["core"]                 # Task no_alloc; core yeterli
+build-std-features = ["compiler-builtins-mem"]
+
+[build]
+target = "riscv64imac-unknown-none-elf"

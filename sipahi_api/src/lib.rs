@@ -1,11 +1,11 @@
 //! Sipahi SNTM task-side API library.
 //!
-//! v0.1: SNTM Phase 1 (Sprint U-23) iskelet. Syscall wrapper'lar v1.5'te
-//! implement edilecek. Şu an sadece module structure hazır.
+//! Sprint U-23 (SNTM Phase 1): sipahi_api body — Error + Message + 5 syscall
+//! wrapper. SYS_EXIT wrapper G5'te eklenir.
 //!
-//! Referans: `SIPAHI_SNTM_DESIGN.md` v0.7 §8 Sipahi API.
+//! Referans: `SIPAHI_SNTM_DESIGN.md` v0.8 §8 Sipahi API.
 //!
-//! Kullanım (v1.5+):
+//! Kullanım:
 //! ```ignore
 //! use sipahi_api::syscall;
 //!
@@ -17,39 +17,203 @@
 
 #![no_std]
 
-/// Syscall wrapper'ları — v1.5'te implement edilecek.
-///
-/// v1.5 hedef API:
-/// - `cap_invoke(cap: u8, resource: u16, action: u8) -> Result<(), Error>`
-/// - `ipc_send(channel: u8, msg: &Message) -> Result<(), Error>`
-/// - `ipc_recv(channel: u8) -> Result<Message, Error>`
-/// - `yield_cpu()`
-/// - `task_info(task_id: u8) -> TaskInfo`
-/// - `exit(code: u8) -> !`  (SNTM design v0.5'te eksik gap olarak işaretlendi)
-pub mod syscall {
-    // v1.5 sprint U-23'te doldurulacak.
-}
-
-/// Kernel'den re-export edilen primitive'ler (CRC32 vb).
-///
-/// v1.5'te `pub use sipahi_kernel::ipc::crc32;` benzeri re-export.
-pub mod crc {
-    // v1.5'te eklenecek.
-}
-
-/// IPC mesaj tipleri — `Message`, `MessageHeader`.
-///
-/// SNTM SAFE-2 (v1.7) typed IPC ile manifest'ten generate edilecek.
-pub mod ipc {
-    // v1.5+'da eklenecek (typed IPC generator).
-}
-
-/// Task-side hata tipleri.
+/// Task-side hata tipleri — kernel return value (usize::MAX-N şema) parse.
+/// U-21 GÖREV 4 [MP2] sentinel kodlarına eşler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Error {
-    InvalidArg,
-    NoCapability,
-    IpcFull,
-    IpcEmpty,
-    RateLimited,
+    InvalidArg       = 0,
+    NoCapability     = 1,
+    IpcFull          = 2,
+    IpcEmpty         = 3,
+    Permission       = 4,
+    InvalidSyscall   = 5,
+    RateLimited      = 6,
+    Internal         = 7,
+}
+
+impl Error {
+    /// 0 (E_OK) Error değil → None. Aksi: usize::MAX-N → Error variant.
+    #[inline]
+    pub fn from_kernel(ret: usize) -> Option<Self> {
+        match ret {
+            0 => None,
+            v if v == usize::MAX     => Some(Error::InvalidArg),
+            v if v == usize::MAX - 1 => Some(Error::NoCapability),
+            v if v == usize::MAX - 2 => Some(Error::IpcFull),
+            v if v == usize::MAX - 3 => Some(Error::IpcEmpty),
+            v if v == usize::MAX - 4 => Some(Error::Permission),
+            v if v == usize::MAX - 5 => Some(Error::InvalidSyscall),
+            v if v == usize::MAX - 6 => Some(Error::RateLimited),
+            v if v == usize::MAX - 7 => Some(Error::Internal),
+            _ => Some(Error::Internal),
+        }
+    }
+}
+
+/// IPC mesaj tipleri.
+pub mod ipc {
+    /// IPC mesaj — kernel `crate::ipc::IpcMessage` ile binary uyumlu.
+    /// 64 byte (config.rs::IPC_MSG_SIZE). repr(C) ABI stability.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Message {
+        pub data: [u8; 64],
+    }
+
+    impl Message {
+        pub const SIZE: usize = 64;
+
+        #[inline]
+        pub const fn empty() -> Self {
+            Self { data: [0u8; 64] }
+        }
+    }
+}
+
+/// CRC primitives (v1.7 typed IPC ile genişletilecek).
+pub mod crc {
+    // v1.7'de typed IPC ile birlikte kernel'den re-export gelecek.
+}
+
+/// Syscall wrappers — ABI: a7 = id, a0-a3 = args, return = a0.
+pub mod syscall {
+    use crate::{Error, ipc::Message};
+
+    const SYS_CAP_INVOKE: usize = 0;
+    const SYS_IPC_SEND:   usize = 1;
+    const SYS_IPC_RECV:   usize = 2;
+    const SYS_YIELD:      usize = 3;
+    const SYS_TASK_INFO:  usize = 4;
+    const SYS_EXIT:       usize = 5;  // U-23 SNTM Phase 1
+
+    /// Capability invoke — token + resource + action kontrol.
+    #[inline]
+    pub fn cap_invoke(token: u8, resource: u16, action: u8) -> Result<(), Error> {
+        // SAFETY: ecall trap to M-mode, kernel dispatch handles registers.
+        let ret = unsafe {
+            ecall3(SYS_CAP_INVOKE, token as usize, resource as usize, action as usize)
+        };
+        match Error::from_kernel(ret) {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    /// IPC send — channel'a mesaj gönder.
+    #[inline]
+    pub fn ipc_send(channel: u8, msg: &Message) -> Result<(), Error> {
+        // SAFETY: ecall trap; msg pointer is_valid_user_ptr ile kernel-side validate edilir.
+        let ret = unsafe {
+            ecall2(SYS_IPC_SEND, channel as usize, msg as *const _ as usize)
+        };
+        match Error::from_kernel(ret) {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    /// IPC recv — channel'dan mesaj al. Ok(false) = boş kanal (non-blocking).
+    #[inline]
+    pub fn ipc_recv(channel: u8, msg_out: &mut Message) -> Result<bool, Error> {
+        // SAFETY: ecall trap; msg_out pointer kernel-side validate edilir.
+        let ret = unsafe {
+            ecall2(SYS_IPC_RECV, channel as usize, msg_out as *mut _ as usize)
+        };
+        match Error::from_kernel(ret) {
+            None => Ok(true),
+            Some(Error::IpcEmpty) => Ok(false),
+            Some(e) => Err(e),
+        }
+    }
+
+    /// Yield CPU — scheduler'a kontrolü ver. Hata dönmez (sıfır args/return).
+    #[inline]
+    pub fn yield_cpu() {
+        // SAFETY: ecall trap; SYS_YIELD handler tablo dispatch, no args needed.
+        unsafe { ecall0(SYS_YIELD) };
+    }
+
+    /// Task bilgisi (task_id, state, priority bitfield packed).
+    #[inline]
+    pub fn task_info(task_id: u8) -> Result<u32, Error> {
+        // SAFETY: ecall trap; arg0 = task_id, return = packed u32 info.
+        let ret = unsafe { ecall1(SYS_TASK_INFO, task_id as usize) };
+        match Error::from_kernel(ret) {
+            None => Ok(ret as u32),
+            Some(e) => Err(e),
+        }
+    }
+
+    /// Task voluntary termination — divergent (-> !), task'a geri dönüş YOK.
+    /// Kernel sys_exit handler: isolate_task + schedule_yield. Task'ı bir
+    /// daha scheduler dispatch etmez (TaskState::Isolated).
+    #[inline]
+    pub fn exit(code: u8) -> ! {
+        // SAFETY: ecall trap; kernel handler isolate eder, dönmez.
+        unsafe {
+            core::arch::asm!(
+                "ecall",
+                in("a7") SYS_EXIT,
+                in("a0") code as usize,
+                options(nostack, noreturn),
+            );
+        }
+    }
+
+    // ─── ecall trampolines ──────────────────────────────────────────
+    // SAFETY contract: caller her zaman kernel'ın beklediği ABI'ye uygun
+    // argümanlar geçirir (kernel-side is_valid_user_ptr ek validation yapar).
+    // a7 = syscall id, a0-a3 = args, return value = a0. Trap to M-mode.
+
+    #[inline(always)]
+    unsafe fn ecall0(id: usize) -> usize {
+        let ret: usize;
+        core::arch::asm!(
+            "ecall",
+            in("a7") id,
+            lateout("a0") ret,
+            options(nostack, preserves_flags),
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn ecall1(id: usize, a0: usize) -> usize {
+        let ret: usize;
+        core::arch::asm!(
+            "ecall",
+            in("a7") id,
+            inlateout("a0") a0 => ret,
+            options(nostack, preserves_flags),
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn ecall2(id: usize, a0: usize, a1: usize) -> usize {
+        let ret: usize;
+        core::arch::asm!(
+            "ecall",
+            in("a7") id,
+            inlateout("a0") a0 => ret,
+            in("a1") a1,
+            options(nostack, preserves_flags),
+        );
+        ret
+    }
+
+    #[inline(always)]
+    unsafe fn ecall3(id: usize, a0: usize, a1: usize, a2: usize) -> usize {
+        let ret: usize;
+        core::arch::asm!(
+            "ecall",
+            in("a7") id,
+            inlateout("a0") a0 => ret,
+            in("a1") a1,
+            in("a2") a2,
+            options(nostack, preserves_flags),
+        );
+        ret
+    }
 }

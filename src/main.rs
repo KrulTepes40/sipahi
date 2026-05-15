@@ -95,7 +95,7 @@ pub extern "C" fn rust_main() -> ! {
     #[cfg(feature = "debug-boot")]
     {
         arch::uart::println("=============================");
-        arch::uart::println("  Sipahi Microkernel v1.1.0");
+        arch::uart::println("  Sipahi Microkernel v1.1.1");
         arch::uart::println("  RISC-V 64 · RV64IMAC");
         arch::uart::println("  Safety-Critical RTOS");
         arch::uart::println("=============================");

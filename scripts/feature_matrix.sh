@@ -23,6 +23,8 @@ COMBOS=(
     "fast-crypto,fast-sign,test-keys,wasm-sandbox"
     "fast-crypto,fast-sign,test-keys,v2-hal"
     "fast-crypto,fast-sign,test-keys,wasm-sandbox,v2-hal"
+    "fast-crypto,fast-sign,test-keys,sntm"           # U-23 SNTM Phase 1
+    "fast-crypto,fast-sign,self-test,sntm"           # U-23 SNTM Phase 1
 )
 
 PASS=0
@@ -32,7 +34,10 @@ FAIL_LIST=()
 for features in "${COMBOS[@]}"; do
     echo "Building: $features"
     LOG=$(mktemp)
-    if cargo build --release --no-default-features --features "$features" \
+    # U-23: KERNEL_RUSTFLAGS Makefile'dan taşındı (sipahi.ld linker script).
+    # feature_matrix kernel build de aynı linker arg'ini geçirmeli.
+    if RUSTFLAGS="-C link-arg=-Tsipahi.ld" cargo build --release \
+        --no-default-features --features "$features" \
         -Z build-std=core,alloc \
         -Z build-std-features=compiler-builtins-mem \
         --target riscv64imac-unknown-none-elf > "$LOG" 2>&1; then

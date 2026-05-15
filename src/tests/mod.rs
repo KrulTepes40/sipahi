@@ -926,6 +926,26 @@ fn test_watchdog_saturating() {
         "[FAIL] watchdog_saturating [FAIL]");
 }
 
+/// U-23 SNTM-R2-id — SYS_EXIT syscall ID + count registration check.
+///
+// VERIFIES: SNTM-R2-id (SYS_EXIT ID + SYSCALL_COUNT registration only)
+// CALLS:    config::SYS_EXIT, config::SYSCALL_COUNT (compile-time consts)
+// FAILS-IF: SYS_EXIT not assigned ID 5, OR SYSCALL_COUNT not updated to 6
+// SCOPE NOTE: Bu test SADECE syscall ID registration kontrolü. Tam
+// isolate behavior runtime test'i Sprint U-26 hedefi (kernel loader
+// + booted task lazım). §18.7 scope honesty.
+fn test_sys_exit_id_registered() {
+    arch::uart::println("[TEST] SYS_EXIT id registration");
+
+    let pass =
+        crate::common::config::SYS_EXIT == 5 &&
+        crate::common::config::SYSCALL_COUNT == 6;
+
+    test_result(pass,
+        "[PASS] SYS_EXIT=5 + SYSCALL_COUNT=6 [OK]",
+        "[FAIL] SYS_EXIT or SYSCALL_COUNT mismatch [FAIL]");
+}
+
 /// INFO: Ready task watchdog counter — U-16 Bug 9 doğrulaması
 /// Watchdog SADECE Running task için artar. Task 1 (Ready/Suspended çoğunlukta)
 /// counter düşük olmalı (boot sonrası 0-10 arası).
@@ -970,6 +990,11 @@ pub fn run_all() {
     test_start_first_task_scrub();
     test_schedule_yield_minimal();
     test_watchdog_saturating();
+
+    // U-23 SNTM Phase 1 tests:
+    arch::uart::println("");
+    arch::uart::println("[TEST] U-23 SNTM Phase 1 tests:");
+    test_sys_exit_id_registered();
 
     info_ready_task_watchdog(); // INFO — test count'a dahil değil
 

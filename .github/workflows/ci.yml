@@ -63,7 +63,8 @@ jobs:
       # U-17 GÖREV 6: Cargo.lock integrity (informational)
       # build-std + --locked uyumsuzluk olabilir; sadece check ile bilgilendirme
       - name: Verify Cargo.lock integrity (informational)
-        run: cargo check --locked 2>&1 || echo "WARN: --locked failed (build-std compat)"
+        run: |
+          cargo check --locked 2>&1 || echo "WARN: --locked failed (build-std compat)"
         continue-on-error: true
 
       # U-17 GÖREV 4: Constant-time verification (informational)

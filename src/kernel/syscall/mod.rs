@@ -18,7 +18,7 @@ pub use dispatch::dispatch;
 pub use dispatch::{
     E_IPC_EMPTY, E_IPC_FULL, E_INVALID_ARG, E_INVALID_SYSCALL,
     E_NO_CAPABILITY, E_OK, SYSCALL_COUNT, SYS_CAP_INVOKE,
-    SYS_IPC_RECV, SYS_IPC_SEND, SYS_TASK_INFO, SYS_YIELD,
+    SYS_EXIT, SYS_IPC_RECV, SYS_IPC_SEND, SYS_TASK_INFO, SYS_YIELD,
 };
 
 // ═══════════════════════════════════════════════════════
@@ -120,6 +120,23 @@ pub fn task_info(info_type: usize) -> usize {
         );
     }
     result
+}
+
+/// exit — task voluntary termination (U-23 SNTM Phase 1, U-mode wrapper)
+/// Divergent (-> !): task'a kontrol geri dönmez (isolate + schedule_yield).
+#[cfg(not(kani))]
+#[inline(always)]
+#[allow(dead_code)]
+pub fn exit(code: usize) -> ! {
+    // SAFETY: ECALL triggers trap — kernel sys_exit handler isolate eder, dönmez.
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") SYS_EXIT,
+            in("a0") code,
+            options(nostack, noreturn),
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════

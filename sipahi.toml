@@ -1,0 +1,68 @@
+# Sipahi SNTM manifest — v1.5-rc1 minimal scaffold.
+#
+# Bu dosya şu an sntm-validate tool tarafından OKUNMUYOR — sadece scaffold.
+# Sprint U-24 (SNTM Phase 2) sntm-validate ile aktif validation'a girecek.
+# Sprint U-26 (SNTM Phase 4) kernel loader manifest'ten task region adreslerini
+# çekecek.
+
+[kernel]
+name        = "sipahi"
+version     = "1.1.1"      # mevcut kernel sürümü (post-U-22.5)
+binary      = "target/riscv64imac-unknown-none-elf/release/sipahi"
+stack_size  = 16384        # 16KB kernel stack (config.rs::KERNEL_STACK_SIZE)
+
+[platform]
+target       = "riscv64imac-unknown-none-elf"
+machine      = "qemu-virt"
+pmp_entries  = 16          # CVA6 default
+ram_base     = 0x80000000
+ram_size     = 0x20000000  # 512 MB
+
+# ─── Tasks ──────────────────────────────────────────────────────
+
+[[task]]
+name          = "task_hello"
+binary        = "target/riscv64imac-unknown-none-elf/release/task_hello"
+task_id       = 0
+priority      = 1          # DAL-D minimal
+period_ticks  = 10         # 100ms @ 10ms/tick
+budget_cycles = 100_000    # DAL-D minimal
+dal_level     = "D"
+
+# PMP region layout (v1.5 NAPOT, alignment placeholder).
+# Sprint U-24 sntm-validate region overlap + alignment kontrolü ekleyecek.
+[[task.region]]
+name = "text"
+base = 0x80100000
+size = 0x4000              # 16K — power-of-2 NAPOT compatible
+perm = "RX"
+
+[[task.region]]
+name = "rodata"
+base = 0x80104000
+size = 0x1000              # 4K
+perm = "R"
+
+[[task.region]]
+name = "data"
+base = 0x80105000
+size = 0x1000              # 4K data + bss
+perm = "RW"
+
+[[task.region]]
+name = "stack"
+base = 0x80110000
+size = 0x2000              # 8K NAPOT
+perm = "RW"
+
+# guard region: implicit (NAPOT layout — SNTM design v0.5 §4.3 default-on).
+# TOR layout için explicit guard region zorunlu olur, ama task_hello NAPOT.
+
+# ─── Channels ───────────────────────────────────────────────────
+# Phase 5 (Sprint U-27) iki-task IPC demo'sunda eklenir.
+# [[channel]]
+# id        = 0
+# producer  = "task_hello"
+# consumer  = "task_world"
+# message   = "GreetingMessage"
+# size      = 16

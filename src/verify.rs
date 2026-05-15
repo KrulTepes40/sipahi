@@ -115,6 +115,37 @@ mod verification {
     // ═══════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════
+    // PROOF 6b (U-23 SNTM-R1): Syscall ID set complete + ordered
+    //
+    // VERIFIES: SNTM-R1 (syscall ID tablosu eksiksiz + 0..N sıralı + benzersiz)
+    // CALLS:    config::SYS_CAP_INVOKE, SYS_IPC_SEND, SYS_IPC_RECV,
+    //           SYS_YIELD, SYS_TASK_INFO, SYS_EXIT, SYSCALL_COUNT
+    // FAILS-IF: Yeni syscall eklenip SYSCALL_COUNT güncellenmediyse,
+    //           veya ID sırası bozulduğunda (sipahi_api ABI break).
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn syscall_id_set_complete() {
+        let ids = [
+            SYS_CAP_INVOKE,
+            SYS_IPC_SEND,
+            SYS_IPC_RECV,
+            SYS_YIELD,
+            SYS_TASK_INFO,
+            SYS_EXIT,
+        ];
+
+        // Count tutarlılığı — SYSCALL_COUNT = handler sayısı
+        assert!(ids.len() == SYSCALL_COUNT);
+
+        // 0..N sıralı sequence + benzersizlik
+        let mut i = 0;
+        while i < ids.len() {
+            assert!(ids[i] == i);
+            i += 1;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════
     // PROOF 7: IPC kanal bellek hesabı
     // Slot verisi ayrı, gerçek struct boyutu ayrı kontrol ediliyor.
     // SORUN 1: SpscChannel = 1028B (4B AtomicU16 overhead + 1024B slot)
