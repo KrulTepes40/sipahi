@@ -1,5 +1,9 @@
 # Build artifacts
-/target/
+# U-24 G14 fix: leading slash KALDIRILDI — `/target/` sadece root'taki target/'i
+# yakalıyordu; tools/sntm-validate/target/ (sub-workspace) untracked değildi
+# ve 271 build artifact (lib*.rlib, *.pdb, *.exe, fingerprint metadata) v1.3.0
+# commit'ine sızdı. `target/` (slash'sız) tüm derinliklerde match eder.
+target/
 **/*.o
 **/*.elf
 **/*.bin

@@ -1,6 +1,0 @@
-\\wsl.localhost\Ubuntu\home\gzhno\sipahi\tools\sntm-validate\target\release\build\compiler_builtins-02e75a1dab8f0809\build_script_build-02e75a1dab8f0809.d: C:\Users\gzhno\.rustup\toolchains\nightly-2026-03-01-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\compiler-builtins\compiler-builtins\build.rs C:\Users\gzhno\.rustup\toolchains\nightly-2026-03-01-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\compiler-builtins\compiler-builtins\configure.rs
-
-\\wsl.localhost\Ubuntu\home\gzhno\sipahi\tools\sntm-validate\target\release\build\compiler_builtins-02e75a1dab8f0809\build_script_build-02e75a1dab8f0809.exe: C:\Users\gzhno\.rustup\toolchains\nightly-2026-03-01-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\compiler-builtins\compiler-builtins\build.rs C:\Users\gzhno\.rustup\toolchains\nightly-2026-03-01-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\compiler-builtins\compiler-builtins\configure.rs
-
-C:\Users\gzhno\.rustup\toolchains\nightly-2026-03-01-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\compiler-builtins\compiler-builtins\build.rs:
-C:\Users\gzhno\.rustup\toolchains\nightly-2026-03-01-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\compiler-builtins\compiler-builtins\configure.rs:
