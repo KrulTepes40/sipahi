@@ -87,3 +87,19 @@ pub struct TaskConfig {
     /// ve is_valid_user_ptr multi-region + Access kontrolü aktif olur.
     pub is_sntm_native: bool,
 }
+
+/// U-26 SNTM Phase 4: Native task creation config.
+/// is_sntm_native=true zorunlu (TaskConfig farkı), entry manifest'ten
+/// gelir (region 0 = text.base, _start linker'ın buraya yerleştiriyor).
+/// PMP_PROFILES[task_id] region adreslerini sağlar (sntm-validate output).
+///
+/// U-26: task_hello self-test build'de boot edilir, production'da DEFER
+/// U-27 (typed IPC demo'da budget/period tuning birlikte).
+#[allow(dead_code)] // production build'de cfg(feature="self-test") altında kullanılır
+pub struct NativeTaskConfig {
+    pub task_id:       u8,
+    pub priority:      u8,
+    pub dal:           u8,
+    pub budget_cycles: u32,
+    pub period_ticks:  u32,
+}

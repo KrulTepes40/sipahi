@@ -40,6 +40,11 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      # U-26 FIX-B: native task .bin'leri kernel build ÖNCESİ üretilir
+      # (include_bytes!("../../../target/native/...") clean clone'da yok).
+      - name: Build native task binaries (FIX-B)
+        run: bash scripts/build_native_tasks.sh
+
       - name: Clippy (warnings as errors)
         run: cargo clippy
           -Z build-std=core,alloc
@@ -112,6 +117,10 @@ jobs:
 
       - name: Install QEMU
         run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
+
+      # U-26 FIX-B: native task .bin'leri qemu build ÖNCESİ
+      - name: Build native task binaries (FIX-B)
+        run: bash scripts/build_native_tasks.sh
 
       # U-17: QEMU self-test build (test suite + trace + debug-boot enabled)
       # Production binary'de test yok — self-test feature explicitly ister
@@ -576,3 +585,44 @@ jobs:
             exit 1
           fi
           echo "PASS: generated.rs is up-to-date with sipahi.toml"
+
+  # U-26 SNTM Phase 4: sntm-pack host tool (ELF → per-section .bin).
+  # task_hello ELF → 3 .bin (text/rodata/data) — FIX-C no SKIP (self-build).
+  sntm-pack:
+    name: SNTM Pack Host Tool
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust + RISC-V target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          targets: riscv64imac-unknown-none-elf
+          components: rust-src
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Build task_hello (RISC-V — sntm-pack prereq)
+        run: (cd tasks/task_hello && cargo build --release)
+      - name: Build sntm-pack (host target, sub-workspace)
+        working-directory: tools/sntm-pack
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          cargo build --target "$HOST" --release
+      - name: Run integration tests (FIX-C no-SKIP, FIX-E arg bounds)
+        working-directory: tools/sntm-pack
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          cargo test --target "$HOST" --release
+      - name: Generate per-section .bin (FIX-B pipeline check)
+        run: bash scripts/build_native_tasks.sh
+      - name: Verify .bin output present (non-empty text)
+        run: |
+          test -s target/native/task_hello.text.bin || (echo "FAIL: text.bin boş"; exit 1)
+          echo "PASS: native task .bin'ler hazır"

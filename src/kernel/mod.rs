@@ -13,3 +13,6 @@ pub mod syscall;    // Sprint 7
 pub mod capability; // Sprint 9
 pub mod policy;     // Sprint 10
 pub mod pmp;        // U-24 SNTM Phase 2 — PMP profile types + pure helpers
+
+#[cfg(not(kani))]
+pub mod loader;     // U-26 SNTM Phase 4 — native task loader (boot-time)

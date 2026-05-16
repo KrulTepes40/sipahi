@@ -249,6 +249,88 @@ pub(crate) fn is_task_sntm_native(task_id: u8) -> bool {
     t.is_sntm_native
 }
 
+/// U-26 SNTM-R10: Native task creation.
+/// PMP_PROFILES[task_id] region 0 = text (entry point = base).
+/// Stack region (last) sp setup için kullanılır.
+///
+/// SAFETY: Boot context, MIE=0, single hart. Manifest task_id PMP profile
+/// için validated (build-time const).
+/// U-26: production'da self-test feature altında çağrılır (task_hello defer U-27).
+#[allow(dead_code)]
+pub(crate) fn native_create_task(cfg: &crate::common::types::NativeTaskConfig)
+    -> Option<u8>
+{
+    let task_id = cfg.task_id;
+    if (task_id as usize) >= MAX_TASKS { return None; }
+    if cfg.budget_cycles == 0 { return None; }
+
+    let profile = crate::kernel::pmp::profile::get_pmp_profile(task_id)?;
+    if profile.region_count < 1 { return None; }
+    let regions = profile.active_regions();
+    let text_region  = &regions[0];
+    // Stack region: last region (manifest convention: text, rodata, data, stack).
+    let stack_region = &regions[regions.len() - 1];
+
+    let entry     = text_region.base;
+    let stack_top = stack_region.base + stack_region.size;
+    let stack_top_aligned = stack_top & !0xF;
+
+    // SAFETY: Single-hart, boot sequence, no concurrent access.
+    unsafe {
+        let idx = task_id as usize;
+        let t = &mut TASKS.get_mut()[idx];
+        t.id               = task_id;
+        t.state            = TaskState::Ready;
+        t.context          = TaskContext::zero();
+        #[cfg(not(kani))]
+        { t.context.ra     = task_trampoline as *const () as usize; }
+        t.context.sp       = stack_top_aligned;
+        t.entry            = entry;
+        t.stack_top        = stack_top_aligned;
+        t.context.mepc     = entry;
+        t.context.mstatus  = crate::arch::csr::MSTATUS_MPP_U
+                           | crate::arch::csr::MSTATUS_MPIE;
+        t.priority         = cfg.priority;
+        t.dal              = cfg.dal;
+        t.budget_cycles    = cfg.budget_cycles;
+        t.remaining_cycles = cfg.budget_cycles;
+        t.period_ticks     = cfg.period_ticks;
+        t.period_counter   = 0;
+        t.watchdog_counter     = 0;
+        t.watchdog_limit       = WATCHDOG_LIMIT;
+        t.watchdog_window_min  = WATCHDOG_WINDOW_MIN;
+        t.original_budget      = cfg.budget_cycles;
+        // pmp_addr_napot: legacy unused (native task reload_pmp_profile kullanır).
+        t.pmp_addr_napot   = 0;
+        // U-26 FIX-3 marker: SNTM native task → scheduler reload_pmp_profile + is_valid_user_ptr multi-region.
+        t.is_sntm_native   = true;
+
+        // TASK_COUNT'ı task_id+1'e kadar genişlet (slot dolduruldu).
+        if (task_id as usize) >= *TASK_COUNT.get() {
+            *TASK_COUNT.get_mut() = (task_id as usize) + 1;
+        }
+    }
+    Some(task_id)
+}
+
+/// U-26 G9/G10: Self-test helper — task state read (private state için pencere).
+#[cfg(feature = "self-test")]
+#[allow(dead_code)]
+pub(crate) fn task_state_for_test(task_id: u8) -> crate::common::types::TaskState {
+    let idx = task_id as usize;
+    if idx >= MAX_TASKS { return crate::common::types::TaskState::Dead; }
+    // SAFETY: Single-hart boot/self-test, read-only access.
+    unsafe { TASKS.get()[idx].state }
+}
+
+/// U-26 G9/G10: Self-test helper — CURRENT_TASK mock (sys_exit caller_id için).
+#[cfg(feature = "self-test")]
+#[allow(dead_code)]
+pub(crate) fn set_current_for_test(task_id: u8) {
+    // SAFETY: Single-hart self-test context, no concurrent access.
+    unsafe { *CURRENT_TASK.get_mut() = task_id as usize; }
+}
+
 /// Scheduler tick — TIMER INTERRUPT'tan çağrılır.
 /// U-21 GÖREV 11 [H5]: schedule_yield()'den AYRI; bu fonksiyon tüm
 /// per-tick state advance'ları içerir (blackbox tick, IPC rate reset,

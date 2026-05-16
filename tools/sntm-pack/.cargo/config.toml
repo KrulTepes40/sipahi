@@ -1,0 +1,5 @@
+# U-26 SNTM Phase 4: sntm-pack HOST tool — kendi workspace, kendi target.
+# Root .cargo/config.toml RISC-V target zorlar; local config override eder.
+# CI'da `--target $HOST` flag explicit kullanılır.
+
+[build]

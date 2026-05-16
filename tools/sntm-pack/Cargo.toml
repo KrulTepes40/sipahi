@@ -1,0 +1,21 @@
+[package]
+name = "sntm-pack"
+version = "0.1.0"
+edition = "2021"
+description = "Sipahi SNTM task ELF → per-section .bin packer (host tool)"
+license = "Apache-2.0"
+
+# U-26 FIX-5 doktrini: kendi sub-workspace (root build-std cross-contamination
+# olmasın, no_std/no_alloc kernel ile aynı dep tree'de paylaşılmasın).
+[workspace]
+
+[[bin]]
+name = "sntm-pack"
+path = "src/main.rs"
+
+[dependencies]
+# `object` crate: ELF parser. Pin: exact version.
+object = { version = "=0.36.5", default-features = false, features = ["read", "elf", "std"] }
+
+[dev-dependencies]
+tempfile = "=3.12.0"

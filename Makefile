@@ -12,10 +12,16 @@ BUILD_STD = -Z build-std=core,alloc -Z build-std-features=compiler-builtins-mem
 # build'inde sipahi.ld bulunamıyordu). Sadece kernel build'lerinde aktif.
 KERNEL_RUSTFLAGS = -C link-arg=-Tsipahi.ld
 
-.PHONY: build run clean check kani debug run-self-test regen-pmp
+.PHONY: build run clean check kani debug run-self-test regen-pmp build-native
+
+# U-26 SNTM Phase 4 FIX-B: task_hello ELF → embed binaries.
+# build/check/run-self-test/debug HEPSI build-native'a depend.
+# Aksi halde clean clone'da include_bytes! target/native/*.bin yok → fail.
+build-native:
+	bash scripts/build_native_tasks.sh
 
 # Production binary — test/POST kodu YOK, minimal attack surface
-build:
+build: build-native
 	RUSTFLAGS="$(KERNEL_RUSTFLAGS)" cargo build --release $(BUILD_STD)
 
 # Production binary'i QEMU'da çalıştır (boot → scheduler, test yok)
@@ -30,7 +36,7 @@ run: build
 
 # Sprint U-16: Self-test build — POST + integration + FI suite aktif.
 # CI ve geliştirme için. Production'da KAPALI.
-run-self-test:
+run-self-test: build-native
 	RUSTFLAGS="$(KERNEL_RUSTFLAGS)" cargo build --release --features self-test $(BUILD_STD)
 	$(QEMU) \
 		-machine virt \
@@ -41,7 +47,7 @@ run-self-test:
 		-kernel $(KERNEL)
 
 # Debug modda çalıştır (GDB bağlantısı için bekler)
-debug:
+debug: build-native
 	RUSTFLAGS="$(KERNEL_RUSTFLAGS)" cargo build $(BUILD_STD)
 	qemu-system-riscv64 \
 		-machine virt \
@@ -53,7 +59,7 @@ debug:
 		-s -S
 
 # Lint + clippy
-check:
+check: build-native
 	RUSTFLAGS="$(KERNEL_RUSTFLAGS)" cargo clippy $(BUILD_STD) -- -D warnings
 
 # Kani formal verification (build-std OLMADAN — Kani kendi core'unu kullanır)

@@ -10,20 +10,20 @@ use crate::arch::pmp::PmpEncoding;
 use crate::kernel::pmp::profile::{Permission, PmpProfile, Region};
 
 pub static PMP_PROFILES: [PmpProfile; 8] = [
-    // Task 0 (task_hello)
+    PmpProfile::EMPTY,
+    PmpProfile::EMPTY,
+    // Task 2 (task_hello)
     PmpProfile {
         region_count: 4,
         regions: [
-            Region { base: 0x80100000, size: 0x4000, encoding: PmpEncoding::Napot { addr: 0x200407ff, size_log2: 14 }, perm: Permission::RX },
-            Region { base: 0x80104000, size: 0x1000, encoding: PmpEncoding::Napot { addr: 0x200411ff, size_log2: 12 }, perm: Permission::R },
-            Region { base: 0x80105000, size: 0x1000, encoding: PmpEncoding::Napot { addr: 0x200415ff, size_log2: 12 }, perm: Permission::RW },
-            Region { base: 0x80110000, size: 0x2000, encoding: PmpEncoding::Napot { addr: 0x200443ff, size_log2: 13 }, perm: Permission::RW },
+            Region { base: 0x80600000, size: 0x4000, encoding: PmpEncoding::Napot { addr: 0x201807ff, size_log2: 14 }, perm: Permission::RX },
+            Region { base: 0x80604000, size: 0x1000, encoding: PmpEncoding::Napot { addr: 0x201811ff, size_log2: 12 }, perm: Permission::R },
+            Region { base: 0x80605000, size: 0x1000, encoding: PmpEncoding::Napot { addr: 0x201815ff, size_log2: 12 }, perm: Permission::RW },
+            Region { base: 0x80610000, size: 0x2000, encoding: PmpEncoding::Napot { addr: 0x201843ff, size_log2: 13 }, perm: Permission::RW },
             Region { base: 0, size: 0, encoding: PmpEncoding::Napot { addr: 0, size_log2: 0 }, perm: Permission::NONE },
             Region { base: 0, size: 0, encoding: PmpEncoding::Napot { addr: 0, size_log2: 0 }, perm: Permission::NONE },
         ],
     },
-    PmpProfile::EMPTY,
-    PmpProfile::EMPTY,
     PmpProfile::EMPTY,
     PmpProfile::EMPTY,
     PmpProfile::EMPTY,

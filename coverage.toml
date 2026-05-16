@@ -123,7 +123,7 @@ non_safety              = true  # meta feature only
 # ═══════════════════════════════════════════════════════════════════════
 
 [feature.sntm]
-description             = "SNTM base — full Phase 1+2+3 runtime (v1.5+, U-25 multi-region PMP)"
+description             = "SNTM full Phase 1+2+3+4 (v1.5+, U-26 native task loader)"
 required_negative_tests = [
     "test_syscall_id_table",
     "test_regions_overlap_table",
@@ -133,6 +133,11 @@ required_negative_tests = [
     "test_is_valid_user_ptr_multi_region_table",
     "test_is_valid_user_ptr_access_perm_table",
     "test_reload_pmp_profile_kernel_invariant",
+    "test_native_task_image_embedded",
+    "test_native_task_loaded_to_region",
+    "test_native_task_bss_zero",
+    "test_native_task_stack_zero",
+    "test_sys_exit_runtime_isolates_task",
 ]
 required_kani_proofs = [
     "syscall_id_set_complete",
@@ -143,6 +148,10 @@ required_kani_proofs = [
     "multi_region_dead_task_deny",
     "napot_encoding_size_consistent",
     "reload_pmp_kernel_indices_untouched",
+    "loader_bounded_copy_atomic",
+    "loader_zero_fill_complete",
+    "loader_no_kernel_overwrite",
+    "loader_data_bss_composition_zero",
 ]
 # U-23: deferred kaldırıldı; sipahi_api + 6th syscall (SYS_EXIT).
 # U-24: sntm-validate host tool + PmpProfile/Region tip definitions
@@ -282,3 +291,23 @@ description     = "PMP_PROFILES generated.rs content matches sipahi.toml + NAPOT
 required_tests  = ["test_pmp_profile_loaded_from_manifest"]
 required_proofs = ["napot_encoding_size_consistent"]
 fault_model     = "generated.rs stale (manifest değişti, codegen çalıştırılmadı), NAPOT encoding bit mismatch (size_log2 ≠ log2(size) ya da mask bit count off-by-one), region.base/size sipahi.toml'dan sapma"
+
+# ─── U-26 SNTM Phase 4 Requirements ──────────────────────────────────────
+
+[requirement.SNTM-R9]
+description     = "Loader bounded_copy + zero_fill atomicity + kernel range overwrite guard + data/bss composition + region tail/stack zero (FIX-D info-leak guard)"
+required_tests  = ["test_native_task_loaded_to_region", "test_native_task_bss_zero", "test_native_task_stack_zero"]
+required_proofs = ["loader_bounded_copy_atomic", "loader_zero_fill_complete", "loader_no_kernel_overwrite", "loader_data_bss_composition_zero"]
+fault_model     = "src_len > dst_size partial copy yazıldı, bss byte non-zero, kernel+wasm range (0x80000000..0x80600000) loader dst kabul edildi (FIX-A), dst+size overflow, data+bss composition undefined region tail byte, ya da stack region non-zero (FIX-D info-leak)"
+
+[requirement.SNTM-R10]
+description     = "Native task lifecycle (Loading → Ready → Running) + image embedded + PMP profile match (FIX-A NATIVE_TASK_BASE=0x80600000)"
+required_tests  = ["test_native_task_image_embedded", "test_pmp_profile_loaded_from_manifest"]
+required_proofs = []
+fault_model     = "include_bytes! 0-byte (build pipeline broken — FIX-B Makefile build-native depend eksik), text > NAPOT region size, ELF magic kaldı (objcopy raw değil), ya da PMP_PROFILES[2] task_hello content drift (FIX-A relocate)"
+
+[requirement.SNTM-R11]
+description     = "isolate_task runtime: Running/Ready → Isolated state transition + idempotent (sys_exit handler core)"
+required_tests  = ["test_sys_exit_runtime_isolates_task"]
+required_proofs = []
+fault_model     = "isolate_task sonrası state Isolated değil, ikinci çağrı state değişti, panic, ya da invalidate_task_capabilities çağrılmadı (sys_exit handler full integration U-27 demo'da)"

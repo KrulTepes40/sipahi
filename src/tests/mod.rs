@@ -1136,30 +1136,31 @@ fn test_pmp_profile_struct_smoke() {
 // dolar) → bu test G3'te RED, G9'da GREEN olur.
 // U-25 G9 sonu aktif (codegen PMP_PROFILES doldu)
 fn test_pmp_profile_loaded_from_manifest() {
-    arch::uart::println("[TEST] PMP_PROFILES task 0 content vs sipahi.toml");
+    arch::uart::println("[TEST] PMP_PROFILES task 2 content vs sipahi.toml");
 
     use crate::kernel::pmp::profile::get_pmp_profile;
 
-    let prof = match get_pmp_profile(0) {
+    // U-26 FIX-A: task_hello task_id 0→2; PMP_PROFILES[2] manifest content.
+    let prof = match get_pmp_profile(2) {
         Some(p) => p,
         None => {
             test_result(false,
-                "[PASS] PMP_PROFILES[0] manifest content [OK]",
-                "[FAIL] PMP_PROFILES[0] None (codegen never ran) [FAIL]");
+                "[PASS] PMP_PROFILES[2] manifest content [OK]",
+                "[FAIL] PMP_PROFILES[2] None (codegen never ran) [FAIL]");
             return;
         }
     };
 
-    // sipahi.toml task 0 (task_hello) 4 region:
-    //   text:    base 0x80100000 size 0x4000  RX
-    //   rodata:  base 0x80104000 size 0x1000  R
-    //   data:    base 0x80105000 size 0x1000  RW
-    //   stack:   base 0x80110000 size 0x2000  RW
+    // sipahi.toml task 2 (task_hello) 4 region — FIX-A NATIVE_TASK_BASE:
+    //   text:    base 0x80600000 size 0x4000  RX
+    //   rodata:  base 0x80604000 size 0x1000  R
+    //   data:    base 0x80605000 size 0x1000  RW
+    //   stack:   base 0x80610000 size 0x2000  RW
     let expected: &[(usize, usize, bool, bool, bool)] = &[
-        (0x80100000, 0x4000,  true,  false, true),   // text RX
-        (0x80104000, 0x1000,  true,  false, false),  // rodata R
-        (0x80105000, 0x1000,  true,  true,  false),  // data RW
-        (0x80110000, 0x2000,  true,  true,  false),  // stack RW
+        (0x80600000, 0x4000,  true,  false, true),   // text RX
+        (0x80604000, 0x1000,  true,  false, false),  // rodata R
+        (0x80605000, 0x1000,  true,  true,  false),  // data RW
+        (0x80610000, 0x2000,  true,  true,  false),  // stack RW
     ];
 
     let count_ok = (prof.region_count as usize) == expected.len();
@@ -1179,8 +1180,8 @@ fn test_pmp_profile_loaded_from_manifest() {
     }
 
     test_result(content_ok,
-        "[PASS] PMP_PROFILES[0] = task_hello 4 region [OK]",
-        "[FAIL] PMP_PROFILES[0] content drift vs sipahi.toml [FAIL]");
+        "[PASS] PMP_PROFILES[2] = task_hello 4 region [OK]",
+        "[FAIL] PMP_PROFILES[2] content drift vs sipahi.toml [FAIL]");
 }
 
 /// U-25 SNTM-R7 — is_valid_user_ptr multi-region table.
@@ -1197,30 +1198,31 @@ fn test_is_valid_user_ptr_multi_region_table() {
     use crate::kernel::syscall::dispatch::test_check_ptr_in_profile_for_task;
     use crate::kernel::pmp::profile::Access;
 
+    // U-26 FIX-A: task_hello task_id 0→2, region adresleri 0x80600000+.
     // (task_id, ptr, size, access, expected)
     let cases: &[(u8, usize, usize, Access, bool)] = &[
-        // Region içi (valid) — task_hello manifest regions
-        (0, 0x80100000, 1,        Access::Execute, true),   // text start, X
-        (0, 0x80103FFF, 1,        Access::Read,    true),   // text last byte, R
-        (0, 0x80104000, 1,        Access::Read,    true),   // rodata start, R
-        (0, 0x80110000, 0x2000,   Access::Write,   true),   // stack full span, W
-        (0, 0x80105000, 0x1000,   Access::Read,    true),   // data full span, R
-        // Gap'te (region'lar arasında, manifest layout 0x80106000-0x80110000 boş)
-        (0, 0x80106000, 1,        Access::Read,    false),
-        (0, 0x8010_FFFF, 1,       Access::Read,    false),
+        // Region içi (valid) — task 2 task_hello manifest regions
+        (2, 0x80600000, 1,        Access::Execute, true),   // text start, X
+        (2, 0x80603FFF, 1,        Access::Read,    true),   // text last byte, R
+        (2, 0x80604000, 1,        Access::Read,    true),   // rodata start, R
+        (2, 0x80610000, 0x2000,   Access::Write,   true),   // stack full span, W
+        (2, 0x80605000, 0x1000,   Access::Read,    true),   // data full span, R
+        // Gap'te (region'lar arasında, manifest layout 0x80606000-0x80610000 boş)
+        (2, 0x80606000, 1,        Access::Read,    false),
+        (2, 0x8060_FFFF, 1,       Access::Read,    false),
         // Cross-region span (single region tüm aralığı kapsamalı)
-        (0, 0x80103FFF, 2,        Access::Read,    false),  // text/rodata sınırı
-        (0, 0x80105FFF, 2,        Access::Read,    false),  // data/gap sınırı
+        (2, 0x80603FFF, 2,        Access::Read,    false),  // text/rodata sınırı
+        (2, 0x80605FFF, 2,        Access::Read,    false),  // data/gap sınırı
         // Region öncesi/sonrası
-        (0, 0x800F_FFFF, 1,       Access::Read,    false),  // kernel sınırı altı
-        (0, 0x80112000, 1,        Access::Read,    false),  // stack üstü
+        (2, 0x805F_FFFF, 1,       Access::Read,    false),  // kernel sınırı altı (NATIVE_TASK_BASE-1)
+        (2, 0x80612000, 1,        Access::Read,    false),  // stack üstü
         // Overflow
-        (0, usize::MAX - 5, 100,  Access::Read,    false),
-        (0, 0xFFFF_FFFF_FFFF_FFF0, 0x20, Access::Read, false),
+        (2, usize::MAX - 5, 100,  Access::Read,    false),
+        (2, 0xFFFF_FFFF_FFFF_FFF0, 0x20, Access::Read, false),
         // Task 1 (EMPTY profile) — her zaman red
-        (1, 0x80100000, 1,        Access::Read,    false),
+        (1, 0x80600000, 1,        Access::Read,    false),
         // Out-of-bounds task_id (MAX_TASKS=8)
-        (8, 0x80100000, 1,        Access::Read,    false),
+        (8, 0x80600000, 1,        Access::Read,    false),
     ];
 
     let mut all_pass = true;
@@ -1240,7 +1242,7 @@ fn test_is_valid_user_ptr_multi_region_table() {
 }
 
 /// U-25 SNTM-R7 — Access perm filtering (RX/R/RW × R/W/X).
-/// SCOPE: 9 concrete case (3 region × 3 access). Manifest task 0 perms.
+/// SCOPE: 9 concrete case (3 region × 3 access). Manifest task 2 perms (FIX-A).
 // VERIFIES: SNTM-R7 (Access perm filtering — perm bit'lerine uyar)
 // CALLS:    crate::kernel::syscall::dispatch::test_check_ptr_in_profile_for_task
 //           + crate::kernel::pmp::profile::Access
@@ -1252,30 +1254,30 @@ fn test_is_valid_user_ptr_access_perm_table() {
     use crate::kernel::syscall::dispatch::test_check_ptr_in_profile_for_task;
     use crate::kernel::pmp::profile::Access;
 
-    // task 0 region perms (manifest task_hello):
-    //   text   RX → R=ok, X=ok, W=red
-    //   rodata R  → R=ok, X=red, W=red
-    //   data   RW → R=ok, W=ok, X=red
+    // task 2 region perms (manifest task_hello, FIX-A NATIVE_TASK_BASE):
+    //   text   0x80600000 RX → R=ok, X=ok, W=red
+    //   rodata 0x80604000 R  → R=ok, X=red, W=red
+    //   data   0x80605000 RW → R=ok, W=ok, X=red
     let cases: &[(usize, Access, bool)] = &[
         // text (RX)
-        (0x80100000, Access::Read,    true),
-        (0x80100000, Access::Execute, true),
-        (0x80100000, Access::Write,   false),
+        (0x80600000, Access::Read,    true),
+        (0x80600000, Access::Execute, true),
+        (0x80600000, Access::Write,   false),
         // rodata (R)
-        (0x80104000, Access::Read,    true),
-        (0x80104000, Access::Write,   false),
-        (0x80104000, Access::Execute, false),
+        (0x80604000, Access::Read,    true),
+        (0x80604000, Access::Write,   false),
+        (0x80604000, Access::Execute, false),
         // data (RW)
-        (0x80105000, Access::Read,    true),
-        (0x80105000, Access::Write,   true),
-        (0x80105000, Access::Execute, false),
+        (0x80605000, Access::Read,    true),
+        (0x80605000, Access::Write,   true),
+        (0x80605000, Access::Execute, false),
     ];
 
     let mut all_pass = true;
     let mut i = 0;
     while i < cases.len() {
         let (ptr, acc, expected) = cases[i];
-        let actual = test_check_ptr_in_profile_for_task(0, ptr, 1, acc);
+        let actual = test_check_ptr_in_profile_for_task(2, ptr, 1, acc);
         if actual != expected {
             all_pass = false;
         }
@@ -1357,6 +1359,181 @@ fn info_ready_task_watchdog() {
     arch::uart::println("");
 }
 
+// ═══════════════════════════════════════════════════════════════
+// U-26 SNTM Phase 4 — Native task loader tests
+// ═══════════════════════════════════════════════════════════════
+//
+// G5 self-test'leri TEST-FIRST disiplinde yazıldı. cfg(any()) flag'i G8
+// (loader + boot integration) sonu açılır (test_native_task_*).
+// test_sys_exit_runtime_isolates_task G10 sonu açılır (sys_exit helpers).
+
+/// U-26 SNTM-R10 — task_hello image embedded check.
+// VERIFIES: SNTM-R10 (include_bytes! non-empty + size limits + no ELF magic)
+// CALLS:    crate::kernel::loader::embed::{TASK_HELLO_TEXT, TASK_HELLO_RODATA,
+//           TASK_HELLO_DATA}
+// FAILS-IF: include_bytes! 0-byte (build pipeline broken), text > 16K NAPOT,
+//           rodata/data > 4K, ya da text ELF magic [0x7F,'E','L','F'] içeriyor.
+// U-26 G8 sonu aktif (load_task_hello + boot integration hazır)
+fn test_native_task_image_embedded() {
+    arch::uart::println("[TEST] task_hello image embedded");
+    use crate::kernel::loader::embed::{TASK_HELLO_TEXT, TASK_HELLO_RODATA, TASK_HELLO_DATA};
+
+    let text_nonempty = !TASK_HELLO_TEXT.is_empty();
+    let text_fits     = TASK_HELLO_TEXT.len() <= 0x4000;
+    let rodata_fits   = TASK_HELLO_RODATA.len() <= 0x1000;
+    let data_fits     = TASK_HELLO_DATA.len()   <= 0x1000;
+    let no_elf_magic  = !(TASK_HELLO_TEXT.len() >= 4
+        && TASK_HELLO_TEXT[0] == 0x7F
+        && TASK_HELLO_TEXT[1] == b'E'
+        && TASK_HELLO_TEXT[2] == b'L'
+        && TASK_HELLO_TEXT[3] == b'F');
+
+    let pass = text_nonempty && text_fits && rodata_fits && data_fits && no_elf_magic;
+    test_result(pass,
+        "[PASS] task_hello image embedded (non-empty + fits + raw) [OK]",
+        "[FAIL] task_hello image embed broken [FAIL]");
+}
+
+/// U-26 SNTM-R10 — Native task loaded to PMP region (bit-equal + tail zero FIX-D).
+// VERIFIES: SNTM-R10 (loader bin → region bit-equal copy + FIX-D tail zero)
+// CALLS:    crate::kernel::loader::load_task_hello, embed::TASK_HELLO_TEXT
+// FAILS-IF: Region content embed bytes ile uyuşmuyor (partial copy bug),
+//           ya da tail (bin_len..region_size) byte non-zero (info-leak FIX-D).
+// U-26 G8 sonu aktif (load_task_hello + boot integration hazır)
+fn test_native_task_loaded_to_region() {
+    arch::uart::println("[TEST] task_hello loaded to PMP region (bit-equal + tail zero)");
+    use crate::kernel::loader::embed::TASK_HELLO_TEXT;
+
+    // task 2 text region base 0x80600000 (FIX-A NATIVE_TASK_BASE).
+    let text_base = 0x8060_0000usize as *const u8;
+    let bin_len = TASK_HELLO_TEXT.len();
+    let region_size = 0x4000usize;
+
+    let mut bit_equal = true;
+    let mut i = 0;
+    while i < bin_len {
+        // SAFETY: M-mode kernel read, region 0x80600000+ task_hello text,
+        // PMP kernel'da unmatched access → M-mode tam erişim (RISC-V spec).
+        let region_byte = unsafe { core::ptr::read_volatile(text_base.add(i)) };
+        if region_byte != TASK_HELLO_TEXT[i] {
+            bit_equal = false;
+            break;
+        }
+        i += 1;
+    }
+    // FIX-D: text region tail (bin_len..region_size) zero olmalı (info-leak).
+    let mut tail_zero = true;
+    let mut j = bin_len;
+    while j < region_size {
+        let b = unsafe { core::ptr::read_volatile(text_base.add(j)) };
+        if b != 0 {
+            tail_zero = false;
+            break;
+        }
+        j += 1;
+    }
+
+    let pass = bit_equal && tail_zero;
+    test_result(pass,
+        "[PASS] task_hello text region bit-equal + tail zero [OK]",
+        "[FAIL] task_hello loader copy mismatch or tail garbage [FAIL]");
+}
+
+/// U-26 SNTM-R10 — Loader bss zero (data region tail zero-fill).
+// VERIFIES: SNTM-R10 (loader bss region zero-fill — FIX-D)
+// CALLS:    crate::kernel::loader::load_task_hello (zero_fill internal)
+// FAILS-IF: bss region herhangi bir byte non-zero (zero_fill loop hatası).
+// U-26 G8 sonu aktif (load_task_hello + boot integration hazır)
+fn test_native_task_bss_zero() {
+    arch::uart::println("[TEST] task_hello bss region zero");
+    use crate::kernel::loader::embed::TASK_HELLO_DATA;
+
+    let data_base = 0x8060_5000usize as *const u8;
+    let region_size = 0x1000usize;
+    let data_len = TASK_HELLO_DATA.len();
+
+    let mut bss_zero = true;
+    let mut i = data_len;
+    while i < region_size {
+        // SAFETY: M-mode kernel read, region 0x80605000+ task_hello data.
+        let b = unsafe { core::ptr::read_volatile(data_base.add(i)) };
+        if b != 0 {
+            bss_zero = false;
+            break;
+        }
+        i += 1;
+    }
+
+    test_result(bss_zero,
+        "[PASS] task_hello bss region zero-filled [OK]",
+        "[FAIL] task_hello bss non-zero [FAIL]");
+}
+
+/// U-26 SNTM-R9 — Stack region zero (FIX-D info-leak guard).
+// VERIFIES: SNTM-R9 (load_task_hello stack region zero-fill — FIX-D)
+// CALLS:    crate::kernel::loader::load_task_hello
+// FAILS-IF: Stack region herhangi bir byte non-zero (FIX-D guard eksik,
+//           eski RAM içeriği info-leak via uninit stack read).
+// U-26 G8 sonu aktif (load_task_hello + boot integration hazır)
+fn test_native_task_stack_zero() {
+    arch::uart::println("[TEST] task_hello stack region zero (FIX-D)");
+    let stack_base = 0x8061_0000usize as *const u8;
+    let stack_size = 0x2000usize;
+
+    let mut stack_zero = true;
+    let mut i = 0;
+    while i < stack_size {
+        // SAFETY: M-mode kernel read.
+        let b = unsafe { core::ptr::read_volatile(stack_base.add(i)) };
+        if b != 0 {
+            stack_zero = false;
+            break;
+        }
+        i += 1;
+    }
+
+    test_result(stack_zero,
+        "[PASS] task_hello stack region zero-filled (FIX-D) [OK]",
+        "[FAIL] task_hello stack non-zero (info-leak risk) [FAIL]");
+}
+
+/// U-26 SNTM-R11 — isolate_task idempotent + state transition.
+// VERIFIES: SNTM-R11 (sys_exit handler'ın çağırdığı isolate_task: Ready/Running
+//           → Isolated, idempotent: f(f(x)) == f(x))
+// CALLS:    crate::kernel::scheduler::{isolate_task, task_state_for_test}
+// FAILS-IF: isolate_task sonrası state != Isolated, idempotent değil (ikinci
+//           çağrı state değişti veya panic).
+// SCOPE NOTE: sys_exit handler full integration (handler → schedule_yield →
+//             context switch) BOOT-TIME self-test'ten ayrı (handler scheduler
+//             tetikler, boot init flow'u kırar). U-27 demo'da real native task
+//             SYS_EXIT yolu full integration test'i yapılır.
+fn test_sys_exit_runtime_isolates_task() {
+    arch::uart::println("[TEST] isolate_task (sys_exit core): Running → Isolated + idempotent");
+    use crate::common::types::TaskState;
+    use crate::kernel::scheduler;
+
+    // PRE: task 2 (task_hello native) Ready state (native_create_task sonu).
+    let pre_state = scheduler::task_state_for_test(2);
+    let pre_ok = matches!(pre_state, TaskState::Ready | TaskState::Running);
+
+    // isolate_task doğrudan (sys_exit handler içindeki SAME helper).
+    // Schedule_yield SIDE-EFFECT'i bypass.
+    scheduler::isolate_task(2);
+
+    let post_state = scheduler::task_state_for_test(2);
+    let post_ok = matches!(post_state, TaskState::Isolated);
+
+    // Idempotent: ikinci çağrı state'i değiştirmemeli.
+    scheduler::isolate_task(2);
+    let post2_state = scheduler::task_state_for_test(2);
+    let idempotent = matches!(post2_state, TaskState::Isolated);
+
+    let pass = pre_ok && post_ok && idempotent;
+    test_result(pass,
+        "[PASS] isolate_task Running → Isolated + idempotent [OK]",
+        "[FAIL] isolate_task runtime broken [FAIL]");
+}
+
 /// Tüm entegrasyon testlerini çalıştır
 /// Fail varsa kernel HALT — production'da test başarısız = boot durmalı (DO-178C)
 /// NOT: test_wcet_limits() QEMU TCG'de her zaman EXCEED — bu FAIL sayılmaz
@@ -1404,6 +1581,17 @@ pub fn run_all() {
     test_is_valid_user_ptr_multi_region_table();
     test_is_valid_user_ptr_access_perm_table();
     test_reload_pmp_profile_kernel_invariant();
+
+    // U-26 SNTM Phase 4 — native task loader tests (cfg(any()) gated G10 sonu).
+    arch::uart::println("");
+    arch::uart::println("[TEST] U-26 SNTM Phase 4 — native task loader:");
+    test_native_task_image_embedded();
+    test_native_task_loaded_to_region();
+    test_native_task_bss_zero();
+    test_native_task_stack_zero();
+    // FIX-F: sys_exit test EN SON (task 2 Isolated yapar — diğer test'lere
+    // etki etmesin).
+    test_sys_exit_runtime_isolates_task();
 
     // U-24 SNTM Phase 2 tests — table-driven helper semantics:
     arch::uart::println("");

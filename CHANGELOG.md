@@ -5,6 +5,84 @@ All notable changes to Sipahi microkernel.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - U-26 SNTM Phase 4
+
+### Added (SNTM Phase 4 — native task loader + sntm-pack tool)
+- **`tools/sntm-pack`** (host tool sub-workspace, FIX-5 pattern): task ELF →
+  per-section .bin packer via `object` crate. CLI: `--elf` + `--out-text` +
+  `--out-rodata` + `--out-data`. 3 integration test (real task_hello ELF
+  pipeline, FIX-E arg bounds-check ×2). FIX-C: SKIP YASAK — self-build veya
+  hard FAIL.
+- **`src/kernel/loader/`** module (yeni dizin): bounded_copy + zero_fill +
+  is_safe_load_dst pure helpers (Kani-proven SNTM-R9) + `load_task_hello()`
+  boot-time entry (U-26 scope: tek native task).
+- **`src/kernel/loader/embed.rs`** include_bytes!() task_hello 3 segment
+  (text/rodata/data) — kernel image embed. Path: `target/native/`.
+- **FIX-A NATIVE_TASK_BASE = 0x80600000** (eski 0x80100000 wasm_arena 4MB
+  içinde silent overwrite riski):
+  - `sipahi.toml`: task_hello task_id 0→2 + 4 region 0x80600000+
+  - `sipahi.ld`: `__native_task_base = 0x80600000` + `ASSERT(_end <= __native_task_base)`
+  - `tasks/task_hello/task_hello.ld`: TEXT/RODATA/DATA origin 0x80600000+
+  - `src/common/config.rs`: `KERNEL_BASE/KERNEL_SIZE=0x600000/NATIVE_TASK_BASE`
+  - `src/kernel/pmp/generated.rs`: PMP_PROFILES[2] task_hello (regen)
+- **FIX-B build pipeline integration**: Makefile build/check/run-self-test/
+  debug → `build-native` depend; CI build + qemu-test job'larında native bin
+  cargo step ÖNCESİ; `scripts/build_native_tasks.sh` (cargo build task_hello
+  + sntm-pack ELF→.bin).
+- **FIX-D info-leak guard**: `load_region` zero_fill ÖNCE, sonra bounded_copy;
+  stack region da explicit zero_fill (CWE-457 uninitialized read defense).
+- **FIX-F production smoke kanıtı**: sys_exit handler UART marker
+  `#[cfg(any(feature = "trace", feature = "self-test"))]` — gerçek native
+  task SYS_EXIT yolu trace+self-test build'lerde `[SYS] exit(task=X, code=Y)`.
+- **`native_create_task(&NativeTaskConfig)`** API (scheduler/mod.rs):
+  is_sntm_native=true, manifest-driven (PMP_PROFILES[task_id] sağlar), entry
+  = text.base.
+- **task_hello boot integration** (`#[cfg(feature = "self-test")]` gated):
+  task_id=2, priority=6, dal=3, budget_cycles=100_000. **U-26 SCOPE LIMITATION**:
+  production'da watchdog/budget tuning gerekli, full live boot U-27 demo
+  hedef (typed IPC ile birlikte).
+- **`task_state_for_test` + `set_current_for_test`** scheduler self-test
+  helpers (#[cfg(feature = "self-test")]).
+- **TLA+ SipahiSNTM extension**: `LoadNative(t)` transition + `LoaderInvariant`
+  (kernel range overwrite YOK). 8/8 specs TLC PASS.
+
+### Verification (§18.7 + §18.4)
+- Kani proof count: 205 → **209** (+4: `loader_bounded_copy_atomic`,
+  `loader_zero_fill_complete`, `loader_no_kernel_overwrite`,
+  `loader_data_bss_composition_zero` — hepsi SNTM-R9)
+- Kernel self-test: **5 yeni** [OK] marker:
+  - `test_native_task_image_embedded` (R10: include_bytes! size + no ELF magic)
+  - `test_native_task_loaded_to_region` (R10: byte-by-byte volatile + tail-zero FIX-D)
+  - `test_native_task_bss_zero` (R10: data region tail zero)
+  - `test_native_task_stack_zero` (R9 FIX-D: 8K stack volatile zero)
+  - `test_sys_exit_runtime_isolates_task` (R11: isolate_task state + idempotent)
+- sntm-pack integration: **3 test** (real ELF pipeline + 2 arg bounds-check)
+- TLA+ SipahiSNTM: 23 distinct states, 0 invariant violation
+- TLA+ tüm suite: **8/8 specs PASS**
+- coverage.toml: **14 feature, 11 requirement** (R1..R11)
+- Proof quality: 0 tautoloji
+- Clippy: -D warnings PASS
+
+### 6 FIX runtime-validated (Codex audit v2)
+- **FIX-A** memory map relocate: sipahi.ld ASSERT geçti, generated.rs regen ✓
+- **FIX-B** build pipeline: Makefile + CI integrate, clean clone'da otomatik ✓
+- **FIX-C** sntm-pack no-SKIP: 3 integration test, ELF self-build veya FAIL ✓
+- **FIX-D** zero-fill first: load_region 2-stage + stack zero, tests GREEN ✓
+- **FIX-E** arg parsing bounds: 2 negative test (missing-value, no-args) ✓
+- **FIX-F** sys_exit UART marker: trace+self-test build'de `[SYS] exit(task=2)` ✓
+
+### 7 SNTM Invariant Audit (U-25'ten devam)
+1-7. Hepsi korundu (PMP dynamic 8..15, kernel 0..7 unchanged, legacy task'lar
+   fallback, is_valid_user_ptr dual-path, native task self-test scope, shadow
+   senkron, native boot U-26'da self-test feature ile).
+
+### Carry-forward (U-27 SNTM Phase 5 — two-task IPC demo)
+- task_hello production boot (budget/period tuning + watchdog tune)
+- task_world ikinci native task (task_id=3) — ilk IPC consumer
+- Typed IPC channel sealing (`[[channel]]` manifest block)
+- TLA+ SipahiSNTM channel sealing + IPC atomicity extension
+- SNTM-R12 (typed IPC msg integrity), SNTM-R13 (channel seal atomicity)
+
 ## [Unreleased] - U-25 SNTM Phase 3
 
 ### Added (SNTM Phase 3 — multi-region PMP runtime + manifest-driven codegen)

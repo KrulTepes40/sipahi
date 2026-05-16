@@ -69,6 +69,19 @@ Boot(t) ==
     /\ state' = [state EXCEPT ![t] = "Ready"]
     /\ UNCHANGED <<pmp, kernelPmpInit, miMode, mie, currentTask>>
 
+(* U-26 SNTM Phase 4 — Native task load transition.
+   Boot context (M-mode, MIE=0). Loader bounded_copy + zero_fill yapar AMA
+   pmp entry class flag'i (Locked/Dynamic/Off) bu adımda değişmez — kernel
+   entries "Locked" kalır, dynamic entries hâlâ "Off" (Dispatch action
+   onları "Dynamic" yapar). LoaderInvariant kernel range overwrite YOK
+   garantisi. SNTM-R9 + SNTM-R10. *)
+LoadNative(t) ==
+    /\ state[t] = "Loaded"
+    /\ miMode = TRUE
+    /\ mie = FALSE
+    /\ state' = [state EXCEPT ![t] = "Ready"]
+    /\ UNCHANGED <<pmp, kernelPmpInit, miMode, mie, currentTask>>
+
 Dispatch(t) ==
     /\ state[t] = "Ready"
     /\ currentTask = "NONE"
@@ -109,6 +122,7 @@ Isolate(t) ==
 
 Next ==
     \/ \E t \in Tasks : Boot(t)
+    \/ \E t \in Tasks : LoadNative(t)        \* U-26 SNTM Phase 4
     \/ \E t \in Tasks : Dispatch(t)
     \/ \E t \in Tasks : Preempt(t)
     \/ \E t \in Tasks : ExitVoluntary(t)
@@ -151,8 +165,17 @@ RunningIsCurrent ==
     \A t \in Tasks :
         state[t] = "Running" => currentTask = t
 
+(* INV 6 (U-26 SNTM-R9): LoadNative kernel range overwrite YOK.
+   Loader transition sırasında kernel entries (0..ReservedLowEntries-1)
+   "Locked" class flag'i değişmez — KernelPmpInvariant'ın TLA+ refinement
+   katmanında loader-spesifik tekrarı (SNTM-R9 traceability). *)
+LoaderInvariant ==
+    \A i \in 0..(ReservedLowEntries - 1) :
+        pmp[i] = kernelPmpInit[i]
+
 THEOREM Spec => []TypeOK
 THEOREM Spec => []KernelPmpInvariant
+THEOREM Spec => []LoaderInvariant
 THEOREM Spec => []UModeRequiresDispatch
 THEOREM Spec => []NoIsolatedRunning
 THEOREM Spec => []AtMostOneRunning

@@ -23,7 +23,7 @@ authors = ["gzhno"]
 # tools/sntm-validate/ cwd'sinde yapılır (kendi .cargo/config.toml'u host
 # target'ı zorlar).
 members = [".", "sipahi_api", "tasks/task_hello"]
-exclude = ["tools/sntm-validate"]
+exclude = ["tools/sntm-validate", "tools/sntm-pack"]
 resolver = "2"
 
 [features]

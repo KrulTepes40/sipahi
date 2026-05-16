@@ -197,6 +197,43 @@ pub fn init() {
         arch::uart::println("");
     }
 
+    // ─── U-26 SNTM Phase 4: task_hello native task (task_id=2) ───────────
+    // FIX-A: NATIVE_TASK_BASE = 0x80600000 (manifest-driven, sntm-validate
+    // PMP_PROFILES[2] sağladı).
+    //
+    // U-26 SCOPE LIMITATION: task_hello sadece self-test build'de boot edilir.
+    // Production'da watchdog window violation + budget cycle interaction
+    // tuning gerekli (task_hello yield-loop hızlı, kick-too-early policy
+    // tetikliyor). Full production live boot Sprint U-27 (typed IPC demo
+    // ile birlikte budget/period kalibrasyonu) hedefi.
+    //
+    // self-test build'inde: 4 native loader test (image_embedded, loaded_to_region,
+    // bss_zero, stack_zero) PMP_PROFILES[2] content + memory layout doğrular.
+    // SAFETY: Boot context, MIE=0, scheduler henüz başlamadı, single-hart.
+    #[cfg(feature = "self-test")]
+    {
+        unsafe {
+            use crate::kernel::loader::load_task_hello;
+            if let Err(_e) = load_task_hello() {
+                crate::common::halt_system("[BOOT] FATAL: task_hello loader FAIL");
+            }
+        }
+        let id_hello = kernel::scheduler::native_create_task(
+            &crate::common::types::NativeTaskConfig {
+                task_id: 2, priority: 6, dal: 3,
+                budget_cycles: 100_000, period_ticks: 10,
+            },
+        );
+        #[cfg(feature = "debug-boot")]
+        {
+            arch::uart::puts("[BOOT] Task Hello (native, self-test only): id=");
+            print_u32(id_hello.unwrap_or(255) as u32);
+            arch::uart::puts(" prio=6 dal=D budget=100K/period (SNTM Phase 4)");
+            arch::uart::println("");
+        }
+        let _ = id_hello;
+    }
+
     // ─── Sprint U-16: IPC Channel ownership assignment ───
     // Channel 0: A -> B (producer=A, consumer=B)
     // Channel 1: B -> A (producer=B, consumer=A)

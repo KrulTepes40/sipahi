@@ -117,3 +117,30 @@ SECTIONS {
         *(.dynstr)
     }
 }
+
+/* ═══ U-26 SNTM Phase 4 — Native Task Region Base (FIX-A) ═══════════════
+ *
+ * Kernel + kernel_stack + task_stacks + wasm_arena (self-test build 4MB)
+ * + güvenlik marjı sonrası NATIVE_TASK_BASE. Native task'lar bu adresten
+ * itibaren yerleştirilir (sntm-pack + load_task_hello bounded_copy hedef).
+ *
+ * Memory layout (8MB RAM içinde):
+ *   0x80000000  .text + .rodata + .data + .bss + kernel_stack (~128KB)
+ *   0x800xxxxx  .task_stacks    (NOLOAD, MAX_TASKS=8 × 8KB = 64KB)
+ *   0x800xxxxx  .wasm_arena     (NOLOAD, self-test 4MB / production 16B)
+ *   _end        ≤ 0x80600000 (ASSERT guard aşağıda)
+ *   0x80600000  __native_task_base — task_hello text region (16K NAPOT)
+ *   0x80604000  task_hello rodata (4K)
+ *   0x80605000  task_hello data   (4K, data + bss)
+ *   0x80610000  task_hello stack  (8K NAPOT)
+ *   ...         (U-27+ ek native task'lar)
+ *   0x80800000  RAM üst sınır (8MB)
+ *
+ * Eski 0x80100000 KULLANILMIYOR — wasm_arena ortasında silent overwrite
+ * riski. SNTM design v0.8 §4.5.2 priority invariant + manifest-driven
+ * region adresleri burayı zorunlu kılar.
+ */
+__native_task_base = 0x80600000;
+
+ASSERT(_end <= __native_task_base,
+    "FIX-A violation: kernel/_end exceeds __native_task_base — native task region overlap")

@@ -21,6 +21,15 @@ pub const PMP_DYNAMIC_START_ENTRY: u8 = 8;
 pub const MAX_PMP_ENTRIES:         u8 = 16;
 pub const MAX_DYNAMIC_PMP_ENTRIES: u8 = MAX_PMP_ENTRIES - PMP_DYNAMIC_START_ENTRY;
 
+/// U-26 FIX-A: Reserved low memory range — loader bounds check için.
+/// Kernel image + kernel_stack + task_stacks + wasm_arena (4MB self-test).
+/// sipahi.ld: 0x80000000..__native_task_base = 0x80000000..0x80600000 (6MB).
+/// Native task region [NATIVE_TASK_BASE, ...) ile DİSJOİNT (sntm-validate
+/// check_kernel_task_overlap + runtime is_safe_load_dst defense-in-depth).
+pub const KERNEL_BASE:      usize = 0x8000_0000;
+pub const KERNEL_SIZE:      usize = 0x60_0000;     // 6MB reserved low
+pub const NATIVE_TASK_BASE: usize = 0x8060_0000;   // ilk native task region
+
 // U-19 GÖREV 1: Magic number'lar config sabiti.
 // MAX_TASKS=8 olduğundan task_id < 8 her zaman geçerli; >= 0xFE kernel sentinel.
 // Aynı 0xFF değeri farklı semantiğe sahip (task_id vs channel) — okuyucu için ayrılır.

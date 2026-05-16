@@ -1,17 +1,20 @@
-/* Sipahi SNTM task linker script — task_hello (v1.5-rc1 minimal scaffold).
+/* Sipahi SNTM task linker script — task_hello (v1.5 U-26 Phase 4).
  *
- * U-23 placeholder addresses — gerçek değerler Sprint U-24 manifest'ten
- * sntm-validate ile generate edilecek. Sprint U-26 kernel loader bu
- * adreslere PMP-protected kopyalayacak.
+ * U-26 FIX-A: NATIVE_TASK_BASE = 0x80600000 (eski 0x80100000 wasm_arena
+ * ortasında çakışıyordu). sipahi.toml task_hello manifest region adresleri
+ * + sipahi.ld __native_task_base sabit + bu linker script ATOMIC senkron.
+ *
+ * Kernel loader (load_task_hello) sntm-pack output bin'lerini bu adreslere
+ * PMP-protected NAPOT region'lara bounded_copy + zero_fill ile yerleştirir.
  */
 
 ENTRY(_start)
 
 MEMORY
 {
-    TEXT   (rx)  : ORIGIN = 0x80100000, LENGTH = 16K
-    RODATA (r)   : ORIGIN = 0x80104000, LENGTH = 4K
-    DATA   (rw)  : ORIGIN = 0x80105000, LENGTH = 4K
+    TEXT   (rx)  : ORIGIN = 0x80600000, LENGTH = 16K
+    RODATA (r)   : ORIGIN = 0x80604000, LENGTH = 4K
+    DATA   (rw)  : ORIGIN = 0x80605000, LENGTH = 4K
 }
 
 SECTIONS

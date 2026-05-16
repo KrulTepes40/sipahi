@@ -599,7 +599,10 @@ fn sys_exit(_exit_code: usize, _: usize, _: usize, _: usize) -> usize {
         let caller = crate::kernel::scheduler::current_task_id();
         let _code = (_exit_code & 0xFF) as u8;
 
-        #[cfg(feature = "trace")]
+        // U-26 FIX-F: trace VEYA self-test → UART marker (smoke kanıtı).
+        // Production (no trace, no self-test): silent (attack surface
+        // minimal), ama self-test/trace build'de task exit visible.
+        #[cfg(any(feature = "trace", feature = "self-test"))]
         {
             uart::puts("[SYS] exit(task=");
             print_u64(caller as u64);

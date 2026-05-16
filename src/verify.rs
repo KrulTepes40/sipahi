@@ -421,6 +421,123 @@ mod verification {
     }
 
     // ═══════════════════════════════════════════════════════
+    // U-26 SNTM Phase 4 — Native task loader proofs (SNTM-R9)
+    // ═══════════════════════════════════════════════════════
+
+    // VERIFIES: SNTM-R9 (bounded_copy atomic on overflow + tam kopya on fit)
+    // CALLS:    crate::kernel::loader::bounded_copy
+    // FAILS-IF: src_len > dst_size partial copy yazıldı, src_len ≤ dst_size
+    //           byte missing (count mismatch), ya da src/dst overlap UB.
+    // PROOF (U-26 SNTM-R9): src/dst separate region, length-bounded atomicity.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn loader_bounded_copy_atomic() {
+        use crate::kernel::loader::bounded_copy;
+
+        let src_len: usize = kani::any();
+        let dst_size: usize = kani::any();
+        kani::assume(src_len <= 16);
+        kani::assume(dst_size <= 16);
+
+        let src: [u8; 16] = kani::any();
+        let mut dst: [u8; 16] = [0u8; 16];
+
+        let result = bounded_copy(&src[..src_len], &mut dst[..dst_size]);
+
+        if src_len > dst_size {
+            // Atomik fail: dst tamamen değişmemiş (no partial).
+            assert!(result.is_err());
+            let mut i = 0;
+            while i < 16 { assert!(dst[i] == 0); i += 1; }
+        } else {
+            assert!(result.is_ok());
+            // Tam kopya: dst[0..src_len] = src[0..src_len].
+            let mut i = 0;
+            while i < src_len { assert!(dst[i] == src[i]); i += 1; }
+            // dst[src_len..dst_size] dokunulmamış (hâlâ 0).
+            let mut j = src_len;
+            while j < dst_size { assert!(dst[j] == 0); j += 1; }
+        }
+    }
+
+    // VERIFIES: SNTM-R9 (zero_fill: tüm region [0, size) byte=0)
+    // CALLS:    crate::kernel::loader::zero_fill
+    // FAILS-IF: Bir byte sıfırlanmadı, ya da out-of-bounds yazıldı.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn loader_zero_fill_complete() {
+        use crate::kernel::loader::zero_fill;
+
+        let size: usize = kani::any();
+        kani::assume(size <= 16);
+
+        let mut buf: [u8; 16] = kani::any();
+        zero_fill(&mut buf[..size]);
+
+        let mut i = 0;
+        while i < size { assert!(buf[i] == 0); i += 1; }
+    }
+
+    // VERIFIES: SNTM-R9 (loader dst region asla kernel address range'i değil)
+    // CALLS:    crate::kernel::loader::is_safe_load_dst
+    // FAILS-IF: Kernel range içinde dst kabul (kernel text/data overwrite!),
+    //           ya da overflow durumunda dst_end wrap.
+    #[kani::proof]
+    fn loader_no_kernel_overwrite() {
+        use crate::kernel::loader::is_safe_load_dst;
+        use crate::common::config::{KERNEL_BASE, KERNEL_SIZE};
+
+        let dst: usize = kani::any();
+        let size: usize = kani::any();
+        kani::assume(size > 0 && size <= 0x10000);
+
+        let result = is_safe_load_dst(dst, size);
+
+        if result {
+            // Kabul edilirse: dst..dst+size kernel range ile DİSJOINT.
+            let dst_end = dst.checked_add(size);
+            assert!(dst_end.is_some());
+            let de = dst_end.unwrap();
+            assert!(de <= KERNEL_BASE || dst >= KERNEL_BASE + KERNEL_SIZE);
+        }
+    }
+
+    // VERIFIES: SNTM-R9 (load_region + zero_fill composition: data tail + bss
+    //           tüm region kapsamı zero-or-data, undefined byte YOK)
+    // CALLS:    crate::kernel::loader::bounded_copy + zero_fill
+    // FAILS-IF: data sonrası bss byte non-zero (zero_fill incomplete), data
+    //           overflow (src > region partial copy), ya da bss size hesap
+    //           overflow (data_len > region_size hata propagation eksik).
+    // PROOF (U-26 SNTM-R9): symbolic data_len + region_size; loader sonrası
+    // region[0..data_len] = data + region[data_len..size] = 0 invariant.
+    #[kani::proof]
+    #[kani::unwind(20)]
+    fn loader_data_bss_composition_zero() {
+        use crate::kernel::loader::{bounded_copy, zero_fill};
+
+        let region_size: usize = kani::any();
+        let data_len: usize = kani::any();
+        kani::assume(region_size <= 16);
+        kani::assume(data_len <= region_size);
+
+        let data_src: [u8; 16] = kani::any();
+        let mut region: [u8; 16] = kani::any();  // pre-state symbolic
+
+        // Stage 1: load_region semantics — FIX-D ÖNCE zero_fill, sonra copy.
+        zero_fill(&mut region[..region_size]);
+        // Stage 2: data copy.
+        bounded_copy(&data_src[..data_len], &mut region[..region_size]).unwrap();
+
+        // Invariant 1: data prefix bit-equal to src.
+        let mut i = 0;
+        while i < data_len { assert!(region[i] == data_src[i]); i += 1; }
+
+        // Invariant 2: bss tail tamamen 0.
+        let mut j = data_len;
+        while j < region_size { assert!(region[j] == 0); j += 1; }
+    }
+
+    // ═══════════════════════════════════════════════════════
     // PROOF 7: IPC kanal bellek hesabı
     // Slot verisi ayrı, gerçek struct boyutu ayrı kontrol ediliyor.
     // SORUN 1: SpscChannel = 1028B (4B AtomicU16 overhead + 1024B slot)
