@@ -92,6 +92,12 @@ pub struct Task {
     pub watchdog_window_min: u32,        // Windowed: kick bu tick'ten önce gelirse hata
     pub original_budget:     u32,        // Degrade öncesi orijinal bütçe (kurtarma için)
     pub pmp_addr_napot:      usize,      // NAPOT-encoded PMP address (entry 8)
+    /// U-25 FIX-3: SNTM native task flag.
+    /// false = legacy single-NAPOT stack path (write_per_task_napot, is_valid_user_ptr
+    ///         task_stack_range). Mevcut task_a/task_b davranışı.
+    /// true  = SNTM multi-region: scheduler reload_pmp_profile, is_valid_user_ptr
+    ///         check_ptr_in_profile. U-26 native_create_task() bunu set eder.
+    pub is_sntm_native:      bool,
 }
 
 impl Task {
@@ -115,6 +121,7 @@ impl Task {
             watchdog_window_min: 0,
             original_budget:     0,
             pmp_addr_napot:      0,
+            is_sntm_native:      false,  // U-25 FIX-3 default legacy
         }
     }
 }
@@ -215,10 +222,31 @@ pub(crate) fn create_task(cfg: &crate::common::types::TaskConfig) -> Option<u8> 
         t.original_budget      = cfg.budget_cycles;
         // NAPOT PMP: 8KB stack bölgesini entry 8'e encode et
         t.pmp_addr_napot       = (stack_base >> 2) | crate::arch::pmp::PMP_NAPOT_MASK_8KB;
+        // U-25 FIX-3: propagate native flag (default false = legacy task).
+        t.is_sntm_native       = cfg.is_sntm_native;
 
         *TASK_COUNT.get_mut() += 1;
     }
     Some(count as u8)
+}
+
+/// U-25 FIX-3 + FIX-4: task SNTM-native mi?
+/// is_valid_user_ptr ve scheduler reload hook'u bu helper'ı çağırır:
+///   - false (default) — legacy single-NAPOT stack path
+///   - true            — SNTM multi-region + Access path
+///
+/// Out-of-bounds task_id, Dead/Isolated/uninitialized → false (defansif legacy).
+#[must_use]
+#[allow(dead_code)] // U-25 G1: G5 (is_valid_user_ptr) ve G11 (scheduler hook) tüketir
+pub(crate) fn is_task_sntm_native(task_id: u8) -> bool {
+    let idx = task_id as usize;
+    if idx >= MAX_TASKS { return false; }
+    // SAFETY: Single-hart, index bounded above.
+    let t = unsafe { &TASKS.get()[idx] };
+    if matches!(t.state, TaskState::Dead | TaskState::Isolated) {
+        return false;
+    }
+    t.is_sntm_native
 }
 
 /// Scheduler tick — TIMER INTERRUPT'tan çağrılır.
@@ -407,16 +435,12 @@ unsafe fn do_priority_select_and_switch(old: usize) {
     TASKS.get_mut()[next].state = TaskState::Running;
     *CURRENT_TASK.get_mut()     = next;
 
-    // PMP entry 8: yeni task'ın stack bölgesini NAPOT ile koru
+    // U-25 FIX-3: SNTM native task → multi-region reload, legacy → single-NAPOT.
+    // task_a/task_b is_sntm_native=false → legacy path, regression yok.
+    // Native task (U-26 native_create_task) → reload_pmp_profile (entry 8..15).
     #[cfg(not(kani))]
     {
-        let napot_addr = TASKS.get()[next].pmp_addr_napot;
-        crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
-
-        // U-22 GÖREV 24 [MP5]: HW PMP write -> shadow update arasında MIE=0
-        // invariant. Eğer bu pencerede interrupt geçerse trap handler tutarsız
-        // PMP state'i görür. Production'da debug_assertions=false -> 0 maliyet.
-        // mstatus.MIE bit 3 (0x8). M-mode interrupts mip & mie & mstatus.MIE.
+        // U-22 GÖREV 24 [MP5]: MIE=0 invariant (HW write + shadow update penceresi).
         #[cfg(debug_assertions)]
         {
             let mstatus = crate::arch::csr::read_mstatus();
@@ -426,10 +450,31 @@ unsafe fn do_priority_select_and_switch(old: usize) {
             );
         }
 
-        // Sprint U-14: shadow wrapper — memory modül sınırları korunur
-        crate::kernel::memory::update_task_pmp_shadow(
-            napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
-        );
+        let next_task = &TASKS.get()[next];
+        if next_task.is_sntm_native {
+            // SNTM native: manifest-driven multi-region PMP profile.
+            match crate::kernel::pmp::profile::get_pmp_profile(next_task.id) {
+                Some(profile) if profile.region_count > 0 => {
+                    // SAFETY: Trap context, MIE=0, single hart (yukarıdaki invariant).
+                    unsafe { crate::arch::pmp::reload_pmp_profile(profile); }
+                }
+                _ => {
+                    // is_sntm_native=true ama profile EMPTY → manifest drift.
+                    // Defansif kernel halt (boot validation eksikliği).
+                    crate::common::halt_system(
+                        "[SCHED] is_sntm_native task with EMPTY PMP_PROFILES — manifest drift"
+                    );
+                }
+            }
+        } else {
+            // FIX-3: Legacy task — single-NAPOT entry 8 (mevcut davranış).
+            let napot_addr = next_task.pmp_addr_napot;
+            crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
+            // Sprint U-14: shadow wrapper — memory modül sınırları korunur
+            crate::kernel::memory::update_task_pmp_shadow(
+                napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
+            );
+        }
     }
 
     let old_ctx = &mut TASKS.get_mut()[old].context as *mut TaskContext;
@@ -522,15 +567,10 @@ pub(crate) fn start_first_task() -> ! {
         TASKS.get_mut()[best].state = TaskState::Running;
         *CURRENT_TASK.get_mut()     = best;
 
-        // PMP entry 8: seçili task'ın stack bölgesi
+        // U-25 FIX-3: SNTM native → multi-region reload; legacy → single-NAPOT.
         #[cfg(not(kani))]
         {
-            let napot_addr = TASKS.get()[best].pmp_addr_napot;
-            crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
-
             // U-22 GÖREV 24 [MP5]: MIE=0 invariant (start_first_task ekstra path).
-            // boot_init() interrupt'leri açmadan önce çağrılır, dolayısıyla
-            // doğal olarak MIE=0; assert savunmacı.
             #[cfg(debug_assertions)]
             {
                 let mstatus = crate::arch::csr::read_mstatus();
@@ -540,10 +580,28 @@ pub(crate) fn start_first_task() -> ! {
                 );
             }
 
-            // Sprint U-14: shadow wrapper
-            crate::kernel::memory::update_task_pmp_shadow(
-                napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
-            );
+            let first_task = &TASKS.get()[best];
+            if first_task.is_sntm_native {
+                match crate::kernel::pmp::profile::get_pmp_profile(first_task.id) {
+                    Some(profile) if profile.region_count > 0 => {
+                        // SAFETY: Boot context, MIE=0 (boot_init henüz interrupt açmadı).
+                        // Outer unsafe block already covers — no nested unsafe needed.
+                        crate::arch::pmp::reload_pmp_profile(profile);
+                    }
+                    _ => {
+                        crate::common::halt_system(
+                            "[BOOT] is_sntm_native task with EMPTY PMP_PROFILES — manifest drift"
+                        );
+                    }
+                }
+            } else {
+                // FIX-3: Legacy task — single-NAPOT entry 8.
+                let napot_addr = first_task.pmp_addr_napot;
+                crate::arch::pmp::write_per_task_napot(napot_addr, crate::arch::pmp::PMP_NAPOT_RW);
+                crate::kernel::memory::update_task_pmp_shadow(
+                    napot_addr, crate::arch::pmp::PMP_NAPOT_RW,
+                );
+            }
         }
 
         let ctx     = &TASKS.get_mut()[best].context;

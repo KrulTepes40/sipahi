@@ -551,3 +551,28 @@ jobs:
           HOST=$(rustc -vV | sed -n 's/^host: //p')
           cargo run --target "$HOST" --release -- \
             --manifest ../../sipahi.toml
+
+  # U-25 SNTM Phase 3: generated.rs drift gate.
+  # Regenerates src/kernel/pmp/generated.rs and fails if git diff is non-empty.
+  # Catches "manifest changed but codegen not re-run" regressions.
+  generated-rs-drift:
+    name: PMP_PROFILES Generated Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          components: rust-src
+      - name: Regenerate src/kernel/pmp/generated.rs
+        run: bash scripts/regen_pmp_profiles.sh
+      - name: Verify no drift vs committed generated.rs
+        run: |
+          if ! git diff --exit-code src/kernel/pmp/generated.rs; then
+            echo "FAIL: src/kernel/pmp/generated.rs is STALE vs sipahi.toml."
+            echo "Run 'make regen-pmp' or 'bash scripts/regen_pmp_profiles.sh'"
+            echo "and commit the regenerated file."
+            exit 1
+          fi
+          echo "PASS: generated.rs is up-to-date with sipahi.toml"

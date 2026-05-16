@@ -123,23 +123,35 @@ non_safety              = true  # meta feature only
 # ═══════════════════════════════════════════════════════════════════════
 
 [feature.sntm]
-description             = "SNTM base — sipahi_api + task_hello + manifest validator (v1.5+, U-24 Phase 2)"
+description             = "SNTM base — full Phase 1+2+3 runtime (v1.5+, U-25 multi-region PMP)"
 required_negative_tests = [
     "test_syscall_id_table",
     "test_regions_overlap_table",
     "test_napot_alignment_table",
     "test_pmp_profile_struct_smoke",
+    "test_pmp_profile_loaded_from_manifest",
+    "test_is_valid_user_ptr_multi_region_table",
+    "test_is_valid_user_ptr_access_perm_table",
+    "test_reload_pmp_profile_kernel_invariant",
 ]
 required_kani_proofs = [
     "syscall_id_set_complete",
     "region_overlap_symmetric",
     "napot_alignment_correct",
+    "multi_region_user_ptr_in_region",
+    "multi_region_user_ptr_overflow_safe",
+    "multi_region_dead_task_deny",
+    "napot_encoding_size_consistent",
+    "reload_pmp_kernel_indices_untouched",
 ]
-# U-23: deferred kaldırıldı; SNTM Phase 1 sipahi_api + 6th syscall (SYS_EXIT)
-# eklendi. U-24 SNTM Phase 2: sntm-validate host tool + PmpProfile/Region
-# tip definition'ları + pure overlap/NAPOT alignment helper'ları (Kani-proven).
-# Kernel-side native task loader Phase 4 (Sprint U-26) hedef — o noktada sntm
-# feature production'da aktif edilir. Şu an default-off.
+# U-23: deferred kaldırıldı; sipahi_api + 6th syscall (SYS_EXIT).
+# U-24: sntm-validate host tool + PmpProfile/Region tip definitions
+# + regions_overlap/NAPOT alignment helpers (Kani-proven).
+# U-25 SNTM Phase 3: Access enum + is_valid_user_ptr multi-region body
+# + reload_pmp_profile (DENY stage + sfence.vma + shadow update FIX-2) +
+# is_sntm_native flag (FIX-3 legacy fallback) + sntm-validate --output-rs
+# codegen (generated.rs PMP_PROFILES). Kernel-side native task loader Phase 4
+# (Sprint U-26) hedef — o noktada is_sntm_native=true task'lar boot eder.
 
 [feature.sntm-safe]
 description     = "SNTM-SAFE — task-lint, binary verifier, certificate (v1.6+)"
@@ -250,3 +262,23 @@ description     = "NAPOT alignment: size power-of-2 ≥ 8 byte AND base size-ali
 required_tests  = ["test_napot_alignment_table"]
 required_proofs = ["napot_alignment_correct"]
 fault_model     = "Power-of-2 olmayan size kabul, unaligned base kabul, size < 8 kabul, ya da geçerli kombinasyon reject"
+
+# ─── U-25 SNTM Phase 3 Requirements ──────────────────────────────────────
+
+[requirement.SNTM-R6]
+description     = "reload_pmp_profile preserves kernel+UART PMP entries (indices 0..PMP_DYNAMIC_START_ENTRY=8) + shadow update consistent (FIX-1 + FIX-2)"
+required_tests  = ["test_reload_pmp_profile_kernel_invariant"]
+required_proofs = ["reload_pmp_kernel_indices_untouched"]
+fault_model     = "reload entry < 8'e yazıyor (UART entry 6/7 lock bypass — izolasyon BREAK), DENY stage skip, sfence.vma eksik (CSR ordering bug), ya da update_dynamic_pmp_shadow eksik (sonraki tick verify_pmp_integrity FAIL → kernel halt)"
+
+[requirement.SNTM-R7]
+description     = "is_valid_user_ptr multi-region: pointer in any active region matching Access perm + checked_add overflow safe + is_sntm_native fallback"
+required_tests  = ["test_is_valid_user_ptr_multi_region_table", "test_is_valid_user_ptr_access_perm_table"]
+required_proofs = ["multi_region_user_ptr_in_region", "multi_region_user_ptr_overflow_safe", "multi_region_dead_task_deny"]
+fault_model     = "region dışı kabul, Access perm mismatch kabul, dead task (region_count=0) için true, ptr+size veya region.base+size overflow durumunda true, ya da is_sntm_native=false task'larda legacy stack-only path bozulması"
+
+[requirement.SNTM-R8]
+description     = "PMP_PROFILES generated.rs content matches sipahi.toml + NAPOT encoding bit-exact (codegen drift detect)"
+required_tests  = ["test_pmp_profile_loaded_from_manifest"]
+required_proofs = ["napot_encoding_size_consistent"]
+fault_model     = "generated.rs stale (manifest değişti, codegen çalıştırılmadı), NAPOT encoding bit mismatch (size_log2 ≠ log2(size) ya da mask bit count off-by-one), region.base/size sipahi.toml'dan sapma"

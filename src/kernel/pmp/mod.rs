@@ -9,3 +9,4 @@
 
 pub mod profile;
 pub mod overlap;
+pub mod generated; // U-25 SNTM Phase 3: sntm-validate --output-rs codegen

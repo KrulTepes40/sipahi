@@ -12,6 +12,15 @@
 /// Maksimum task sayısı (8 task × 24KB = 192KB)
 pub const MAX_TASKS: usize = 8;
 
+/// U-25 FIX-1: PMP entry budget — kernel/UART reserved + SNTM dynamic ayrımı.
+/// SNTM design v0.8 §4.5.1 + Sipahi PMP layout (src/kernel/memory/mod.rs):
+///   entry 0..5: kernel text/rodata/data (lock'lu, boot config)
+///   entry 6..7: UART MMIO TOR + LOCK (debug/trace/self-test path)
+///   entry 8..15: SNTM dynamic (task region'ları — reload_pmp_profile yazar)
+pub const PMP_DYNAMIC_START_ENTRY: u8 = 8;
+pub const MAX_PMP_ENTRIES:         u8 = 16;
+pub const MAX_DYNAMIC_PMP_ENTRIES: u8 = MAX_PMP_ENTRIES - PMP_DYNAMIC_START_ENTRY;
+
 // U-19 GÖREV 1: Magic number'lar config sabiti.
 // MAX_TASKS=8 olduğundan task_id < 8 her zaman geçerli; >= 0xFE kernel sentinel.
 // Aynı 0xFF değeri farklı semantiğe sahip (task_id vs channel) — okuyucu için ayrılır.

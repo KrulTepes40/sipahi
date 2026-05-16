@@ -178,10 +178,12 @@ pub fn init() {
     let id_a = kernel::scheduler::create_task(&TaskConfig {
         entry: crate::task_a, priority: 4, dal: 1,
         budget_cycles: 300_000, period_ticks: 10,
+        is_sntm_native: false,  // U-25 FIX-3: legacy Rust fn task — single-NAPOT path
     });
     let id_b = kernel::scheduler::create_task(&TaskConfig {
         entry: crate::task_b, priority: 8, dal: 2,
         budget_cycles: 200_000, period_ticks: 10,
+        is_sntm_native: false,  // U-25 FIX-3: legacy Rust fn task — single-NAPOT path
     });
     #[cfg(feature = "debug-boot")]
     {

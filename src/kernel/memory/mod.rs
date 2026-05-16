@@ -33,10 +33,22 @@ static PMP_SHADOW: SingleHartCell<u64> = SingleHartCell::new(0);
 /// PMP entry 0-7 address shadow — boot'ta kaydedilir, her tick'te doğrulanır
 static PMP_SHADOW_ADDRS: SingleHartCell<[usize; 8]> = SingleHartCell::new([0; 8]);
 
-/// PMP entry 8 shadow — per-task NAPOT stack region
+/// PMP entry 8 shadow — per-task NAPOT stack region (LEGACY single-NAPOT path).
+/// U-25 FIX-2: multi-region shadow için PMP_SHADOW_DYN_ADDRS eklendi.
+/// Legacy write_per_task_napot bu eski tek-entry'yi güncellemeye devam eder
+/// (task_a/task_b is_sntm_native=false path), ayrıca multi-region shadow'un
+/// 0. entry'sini de mirror'lar.
 // Sprint U-14: pub(crate) -> private (scheduler wrapper üzerinden erişir)
 static PMP_SHADOW_ADDR8: SingleHartCell<usize> = SingleHartCell::new(0);
 static PMP_SHADOW_CFG2: SingleHartCell<usize> = SingleHartCell::new(0);
+
+/// U-25 FIX-2: PMP dynamic entry 8..15 shadow — multi-region reload için.
+/// pmpcfg2 zaten 8 byte (8 entry config) tek u64'te tutuluyor → ek array gerekmez.
+/// pmpaddr8..15 ise 8 ayrı CSR → array gerekli.
+/// Legacy path (write_per_task_napot) ADDR8'i hem PMP_SHADOW_ADDR8'e hem
+/// PMP_SHADOW_DYN_ADDRS[0]'a mirror'lar; multi-region path (reload_pmp_profile)
+/// PMP_SHADOW_DYN_ADDRS'i toplu set eder.
+static PMP_SHADOW_DYN_ADDRS: SingleHartCell<[usize; 8]> = SingleHartCell::new([0; 8]);
 
 // Linker script'ten gelen semboller
 extern "C" {
@@ -144,6 +156,19 @@ pub(crate) fn init_pmp() {
     let packed = pmp::pack_pmpcfg(configs);
     pmp::write_pmpcfg0(packed);
 
+    // U-25 FIX-2: Boot'ta pmpaddr9..15 explicitly zero'la — verify_pmp_integrity
+    // multi-region check'i shadow[1..8]=0 ile karşılaştırır; HW initial state
+    // garbage olmamalı (RISC-V spec implementation-defined, defansif sıfırlama).
+    // Entry 8 task NAPOT scheduler tarafından write edilir; 9..15 dynamic
+    // SNTM aktif olana (U-26 native task) kadar 0 (deny-by-default).
+    pmp::write_pmpaddr(9,  0);
+    pmp::write_pmpaddr(10, 0);
+    pmp::write_pmpaddr(11, 0);
+    pmp::write_pmpaddr(12, 0);
+    pmp::write_pmpaddr(13, 0);
+    pmp::write_pmpaddr(14, 0);
+    pmp::write_pmpaddr(15, 0);
+
     // Shadow kaydet — her tick'te doğrulama için
     // SAFETY: Boot sequence, single-hart, no concurrent access. SingleHartCell write.
     unsafe {
@@ -220,19 +245,49 @@ pub(crate) fn task_stacks_range() -> (usize, usize) {
     (start, end)
 }
 
-/// Sprint U-14: PMP shadow wrapper — scheduler direct access yerine
-/// Entry 8 per-task NAPOT config için. Scheduler bu wrapper üzerinden
-/// shadow'u güncelliyor — memory modülü sınırları korunuyor.
+/// Sprint U-14: PMP shadow wrapper — LEGACY single-NAPOT path için.
+/// Entry 8 per-task NAPOT config (write_per_task_napot). Scheduler bu wrapper
+/// üzerinden shadow'u günceller. U-25 FIX-2: ek olarak multi-region shadow
+/// [0] slot'unu da mirror'lar, böylece legacy → multi geçişinde tutarlılık.
 #[cfg(not(kani))]
 pub(crate) fn update_task_pmp_shadow(addr: usize, cfg: usize) {
     // SAFETY: MIE=0 in trap context (called from schedule/start_first_task), single-hart.
     unsafe {
         *PMP_SHADOW_ADDR8.get_mut() = addr;
         *PMP_SHADOW_CFG2.get_mut() = cfg;
+        // U-25 FIX-2: legacy single-NAPOT eski path da multi-region shadow'a
+        // [0] slot ile yansıtılır (verify_pmp_integrity tek shadow source kullanır).
+        let dyn_addrs = PMP_SHADOW_DYN_ADDRS.get_mut();
+        dyn_addrs[0] = addr;
+        let mut i = 1;
+        while i < 8 {
+            dyn_addrs[i] = 0;
+            i += 1;
+        }
     }
 }
 
-/// PMP bütünlük doğrulama — shadow ile karşılaştır
+/// U-25 FIX-2: SNTM multi-region PMP shadow update — reload_pmp_profile çağırır.
+/// pmpcfg2 (8 entry config, 64 bit) + pmpaddr8..15 (8 ayrı CSR) → shadow.
+/// SAFETY: Caller (reload_pmp_profile) MIE=0 / trap context / single-hart.
+#[cfg(not(kani))]
+#[allow(dead_code)] // U-25: reload_pmp_profile (G8) çağırır, scheduler hook (G11) aktif eder
+pub(crate) fn update_dynamic_pmp_shadow(addrs: &[usize; 8], cfg2: usize) {
+    // SAFETY: Single-hart, MIE=0 in trap context.
+    unsafe {
+        *PMP_SHADOW_CFG2.get_mut() = cfg2;
+        *PMP_SHADOW_ADDR8.get_mut() = addrs[0];  // legacy mirror
+        let dyn_addrs = PMP_SHADOW_DYN_ADDRS.get_mut();
+        let mut i = 0;
+        while i < 8 {
+            dyn_addrs[i] = addrs[i];
+            i += 1;
+        }
+    }
+}
+
+/// PMP bütünlük doğrulama — shadow ile karşılaştır.
+/// U-25 FIX-2: multi-region (pmpaddr8..15) shadow check.
 #[cfg(not(kani))]
 pub(crate) fn verify_pmp_integrity() -> bool {
     // pmpcfg0 shadow
@@ -250,12 +305,19 @@ pub(crate) fn verify_pmp_integrity() -> bool {
         i += 1;
     }
 
-    // Task PMP shadow (entry 8)
+    // pmpcfg2 shadow (entry 8..15 config tek u64)
     let cfg2 = pmp::read_pmpcfg2();
-    let addr8 = pmp::read_pmpaddr8();
     // SAFETY: Single-hart, MIE=0 in trap context. Read-only shadow access.
     let shadow_cfg2 = unsafe { *PMP_SHADOW_CFG2.get() };
+    if cfg2 != shadow_cfg2 { return false; }
+
+    // U-25 FIX-2: pmpaddr8..15 multi-region shadow.
     // SAFETY: Single-hart, MIE=0 in trap context. Read-only shadow access.
-    let shadow_addr8 = unsafe { *PMP_SHADOW_ADDR8.get() };
-    cfg2 == shadow_cfg2 && addr8 == shadow_addr8
+    let shadow_dyn = unsafe { PMP_SHADOW_DYN_ADDRS.get() };
+    let mut j: usize = 0;
+    while j < 8 {
+        if pmp::read_pmpaddr(8 + j) != shadow_dyn[j] { return false; }
+        j += 1;
+    }
+    true
 }

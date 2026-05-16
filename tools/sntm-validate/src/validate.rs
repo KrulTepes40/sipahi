@@ -8,7 +8,15 @@
 
 use crate::manifest::{Manifest, TaskEntry};
 
-const KERNEL_PMP_ENTRIES: u8 = 6;  // SNTM design v0.5 §4.5.1 static budget
+/// U-25 FIX-6: PMP reserved low entries (kernel + UART, lock'lu).
+/// SNTM design v0.8 §4.5.1 + Sipahi PMP layout:
+///   entry 0..5: kernel text/rodata/data
+///   entry 6..7: UART MMIO TOR + LOCK (debug/trace/self-test)
+/// → 8 entry kernel/UART reserved. Dynamic SNTM entry'leri 8..15.
+///
+/// U-24'te bu sabit KERNEL_PMP_ENTRIES=6 idi (UART entry 6/7 sayılmıyordu →
+/// budget yanlış pozitif veriyordu). U-25'te düzeltildi.
+const RESERVED_LOW_PMP_ENTRIES: u8 = 8;
 const MAX_REGIONS_PER_TASK: usize = 6;
 
 // Kernel address range (Sipahi v1.5 sabit layout — sipahi.ld'den).
@@ -151,13 +159,13 @@ fn check_pmp_budget(m: &Manifest) -> Result<(), Vec<String>> {
         .max()
         .unwrap_or(0);
 
-    let required = KERNEL_PMP_ENTRIES as usize + max_per_task;
+    let required = RESERVED_LOW_PMP_ENTRIES as usize + max_per_task;
     let available = m.platform.pmp_entries as usize;
 
     if required > available {
         return Err(vec![format!(
-            "PMP budget exceeded: kernel({}) + max_per_task({}) = {} > platform.pmp_entries({})",
-            KERNEL_PMP_ENTRIES, max_per_task, required, available
+            "PMP budget exceeded: reserved({}) + max_per_task({}) = {} > platform.pmp_entries({})",
+            RESERVED_LOW_PMP_ENTRIES, max_per_task, required, available
         )]);
     }
     Ok(())

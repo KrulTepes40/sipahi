@@ -5,6 +5,106 @@ All notable changes to Sipahi microkernel.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - U-25 SNTM Phase 3
+
+### Added (SNTM Phase 3 — multi-region PMP runtime + manifest-driven codegen)
+- **`src/kernel/pmp/profile.rs`**: `Access` enum (Read/Write/Execute) +
+  `Access::matches(perm)` pure helper (Kani-friendly, const fn).
+- **`src/common/types.rs`**: `TaskConfig.is_sntm_native: bool` (FIX-3,
+  default false — task_a/task_b legacy path preservation).
+- **`src/kernel/scheduler/mod.rs`**:
+  - `TaskControlBlock.is_sntm_native: bool` (Task struct field)
+  - `is_task_sntm_native(task_id) -> bool` helper (FIX-3 dispatch routing)
+  - Scheduler context switch (`do_priority_select_and_switch` + `start_first_task`):
+    conditional reload — `is_sntm_native=true` → `reload_pmp_profile`,
+    `false` → legacy `write_per_task_napot`. Mevcut task_a/task_b unaffected.
+- **`src/kernel/syscall/dispatch.rs`**:
+  - `is_valid_user_ptr(task_id, ptr, size, access: Access) -> bool` — signature
+    refactor (FIX-4 dual-path: legacy stack-only ya da SNTM multi-region)
+  - `check_ptr_in_profile(&PmpProfile, ptr, size, access) -> bool` pure helper
+    (Kani-friendly, no CSR/global state)
+  - `test_check_ptr_in_profile_for_task` self-test wrapper (is_sntm_native bypass)
+  - sys_ipc_send Access::Read, sys_ipc_recv Access::Write callsite migration
+- **`src/arch/pmp.rs`**:
+  - `reload_pmp_profile(&PmpProfile)` — SNTM design v0.8 §4.5.3 sequence:
+    Stage 1 DENY (pmpcfg2=0), Stage 2 sequential write entry 8..15,
+    Stage 3 pmpcfg2 atomic write, Stage 4 sfence.vma, Stage 5 shadow update
+  - `reload_indices_touched` Kani-friendly plan model ([u8;12], usize tuple — FIX-5)
+  - `write_pmpaddr_dyn` helper (entry 8..15 only — FIX-1 lock guard)
+  - `accumulate_cfg2` + `perm_to_cfg` helpers
+  - `read_pmpaddr` indices 8..15 açıldı (multi-region verify için)
+  - `write_pmpaddr` indices 8..15 açıldı (boot-time zero init için)
+  - `PmpEncoding` import compat
+- **`src/common/config.rs`**: `PMP_DYNAMIC_START_ENTRY = 8` (FIX-1: kernel 0..5 +
+  UART 6..7 lock'lu), `MAX_PMP_ENTRIES = 16`, `MAX_DYNAMIC_PMP_ENTRIES = 8`.
+- **`src/kernel/memory/mod.rs`** (FIX-2 multi-region shadow):
+  - `PMP_SHADOW_DYN_ADDRS: [usize; 8]` static — pmpaddr8..15 shadow
+  - `update_task_pmp_shadow` legacy path da `PMP_SHADOW_DYN_ADDRS[0]`'ı mirror'lar
+  - `update_dynamic_pmp_shadow(&addrs, cfg2)` — reload_pmp_profile çağırır
+  - `verify_pmp_integrity`: pmpaddr8..15 + pmpcfg2 multi-region check
+  - `init_pmp` boot'ta pmpaddr9..15 explicitly 0 (defansif initial state)
+- **`src/kernel/pmp/generated.rs`** (sntm-validate codegen output):
+  manifest-driven PMP_PROFILES (task 0 = task_hello 4 region NAPOT, task 1..7 EMPTY).
+- **`src/kernel/pmp/profile.rs::get_pmp_profile`**: `generated::PMP_PROFILES`'tan okur.
+- **`tools/sntm-validate`** (host tool, FIX-6):
+  - `napot.rs`: `napot_size_log2` + `napot_pmpaddr` pure helpers (5 unit test)
+  - `codegen.rs`: `generate_pmp_profiles_rs` — manifest → generated.rs writer
+  - `main.rs`: `--output-rs <path>` flag
+  - `validate.rs`: `RESERVED_LOW_PMP_ENTRIES = 8` (FIX-6, eski KERNEL_PMP_ENTRIES=6 yanıltıcıydı)
+  - Integration tests: `output_rs_codegen_round_trip` eklendi (7 total)
+- **`scripts/regen_pmp_profiles.sh`** + Makefile `regen-pmp` target.
+- **`Tla+/SipahiSNTM.tla` + `.cfg`**: task lifecycle (Loaded/Ready/Running/
+  Isolated/Dead) + PMP reload atomicity. 6 invariant (TypeOK, KernelPmpInvariant,
+  UModeRequiresDispatch, NoIsolatedRunning, AtMostOneRunning, RunningIsCurrent).
+- **CI**: `generated-rs-drift` yeni job (`scripts/regen_pmp_profiles.sh` +
+  `git diff src/kernel/pmp/generated.rs` exit-code check).
+
+### Verification (§18.7 + §18.4 quality gates)
+- Kani proof count: 200 → **205** (+5: `multi_region_user_ptr_in_region` R7,
+  `multi_region_user_ptr_overflow_safe` R7, `multi_region_dead_task_deny` R7,
+  `napot_encoding_size_consistent` R8, `reload_pmp_kernel_indices_untouched` R6)
+- Kernel self-test: **4 yeni** [OK] marker:
+  - `test_pmp_profile_loaded_from_manifest` (SNTM-R8 4-region content match)
+  - `test_is_valid_user_ptr_multi_region_table` (SNTM-R7 15-case table)
+  - `test_is_valid_user_ptr_access_perm_table` (SNTM-R7 9-case RX/R/RW×R/W/X)
+  - `test_reload_pmp_profile_kernel_invariant` (SNTM-R6 CSR pmpcfg0+addr0..7
+    preserved + verify_pmp_integrity GREEN post-reload — FIX-1 + FIX-2)
+- TLA+ SipahiSNTM: 23 distinct states, 0 invariant violation (8/8 specs total).
+- sntm-validate integration: 7 test PASS (+output_rs_codegen_round_trip).
+- coverage.toml: **14 feature, 8 requirement (R1, R2-id, R3, R4, R5, R6, R7, R8)**.
+- Test-first discipline: G3+G4 (kernel test + Kani proof) ÖNCE yazıldı, RED
+  gözlemlendi (`cargo check` E0432 unresolved import `test_check_ptr_in_profile_for_task`
+  + `reload_indices_touched`), sonra G5 + G8 GREEN yaptı.
+- Tautology scan: 205 proof, 0 tautoloji.
+- Clippy: -D warnings PASS.
+
+### 7 SNTM Invariant Audit (Sprint başı user kontrolü)
+1. ✅ PMP dynamic writes sadece entry 8..15 — `reload_pmp_profile` sadece
+   pmpcfg2 + pmpaddr8..15 yazar (FIX-1).
+2. ✅ Entry 0..7 hiçbir reload path'inde yazılmaz — pmpcfg0 read-modify-write
+   tamamen kaldırıldı, UART entry 6/7 LOCK korunur.
+3. ✅ Legacy task'lar (task_a/task_b) `is_sntm_native=false` — `boot.rs`
+   create_task çağrıları explicit false, scheduler conditional legacy path.
+4. ✅ `is_valid_user_ptr` legacy task'larda stack-only davranışı korur —
+   `is_task_sntm_native(task_id) == false` ise `task_stack_range` path
+   (cross_task_pointer_rejected self-test GREEN).
+5. ✅ SNTM multi-region path sadece is_sntm_native=true veya test helper
+   üzerinden — production `is_valid_user_ptr` is_sntm_native check, test
+   wrapper `test_check_ptr_in_profile_for_task` flag bypass.
+6. ✅ PMP shadow reload sonrası pmpcfg2 + pmpaddr8..15 ile senkron —
+   `update_dynamic_pmp_shadow` reload_pmp_profile Stage 5 zorunlu;
+   `verify_pmp_integrity` post-reload GREEN (G6 test invariant 3).
+7. ✅ Native task boot U-26'ya kaldı — task_hello kernel'a embed edilmedi,
+   `is_sntm_native=true` task şu an yok; `native_create_task()` API'si U-26.
+
+### Carry-forward (U-26 SNTM Phase 4)
+- `native_create_task(&NativeTaskConfig)` API (is_sntm_native=true setup)
+- sntm-pack tool (task ELF → kernel image)
+- Multi-task boot (task_hello native loader)
+- Runtime SNTM-R2-full (exit isolate behavior, real task)
+- Typed IPC channel sealing
+- TLA+ SipahiSNTM extension (channel sealing + IPC atomicity)
+
 ## [Unreleased] - U-24 SNTM Phase 2
 
 ### Added (SNTM Phase 2 — manifest validator + PmpProfile types)

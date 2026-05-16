@@ -162,8 +162,8 @@ perm = "RX"
 
 #[test]
 fn pmp_budget_exceeded_rejected() {
-    // platform.pmp_entries=8 with kernel(6) + 6 task regions = 12 > 8.
-    // Override platform.pmp_entries to 8 (default 16 not enough headroom).
+    // U-25 FIX-6: RESERVED_LOW_PMP_ENTRIES=8 (kernel 0..5 + UART 6..7).
+    // platform.pmp_entries=8 + 6 task regions → 8+6=14 > 8 fail.
     let mut header_small = HEADER.replace("pmp_entries = 16", "pmp_entries = 8");
     // Add 6 regions to one task. Each region 4K, base aligned.
     header_small.push_str(r#"
@@ -217,3 +217,73 @@ perm = "RW"
     assert!(out.to_lowercase().contains("budget"),
         "expected 'budget' in output:\n{}", out);
 }
+
+/// U-25 G9 SNTM-R8: --output-rs codegen round-trip.
+///
+// VERIFIES: SNTM-R8 (manifest → generated.rs content match)
+// CALLS:    sntm-validate --manifest <toml> --output-rs <path>
+// FAILS-IF: Codegen exit non-zero, output file yok, region_count yanlış,
+//           PmpEncoding::Napot/Permission string'leri eksik, ya da
+//           PmpProfile::EMPTY task 1..7 için emit edilmemiş.
+#[test]
+fn output_rs_codegen_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("sipahi.toml");
+    let out_path = dir.path().join("generated.rs");
+
+    // Manifest: 1 task, 2 NAPOT-aligned region.
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "demo"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+
+[[task.region]]
+name = "text"
+base = 0x80100000
+size = 0x4000
+perm = "RX"
+
+[[task.region]]
+name = "stack"
+base = 0x80110000
+size = 0x2000
+perm = "RW"
+"#);
+    std::fs::write(&manifest_path, &toml).unwrap();
+
+    let out = Command::new(BIN)
+        .arg("--manifest").arg(&manifest_path)
+        .arg("--output-rs").arg(&out_path)
+        .output().unwrap();
+    assert!(out.status.success(),
+        "exit code {:?}\nstderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr));
+
+    let generated = std::fs::read_to_string(&out_path).unwrap();
+
+    // Header + use statements
+    assert!(generated.contains("GENERATED FILE — DO NOT EDIT"),
+        "missing header in:\n{}", generated);
+    assert!(generated.contains("use crate::arch::pmp::PmpEncoding"));
+    assert!(generated.contains("pub static PMP_PROFILES: [PmpProfile; 8]"));
+
+    // Task 0 content
+    assert!(generated.contains("region_count: 2,"),
+        "expected region_count: 2 for task 0\n{}", generated);
+    assert!(generated.contains("0x80100000"));
+    assert!(generated.contains("0x80110000"));
+    assert!(generated.contains("Permission::RX"));
+    assert!(generated.contains("Permission::RW"));
+    assert!(generated.contains("PmpEncoding::Napot"));
+
+    // Task 1..7 = EMPTY (count emit)
+    let empty_count = generated.matches("PmpProfile::EMPTY,").count();
+    assert_eq!(empty_count, 7, "expected 7 EMPTY profiles for task 1..7");
+}
+

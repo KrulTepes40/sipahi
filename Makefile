@@ -12,7 +12,7 @@ BUILD_STD = -Z build-std=core,alloc -Z build-std-features=compiler-builtins-mem
 # build'inde sipahi.ld bulunamıyordu). Sadece kernel build'lerinde aktif.
 KERNEL_RUSTFLAGS = -C link-arg=-Tsipahi.ld
 
-.PHONY: build run clean check kani debug run-self-test
+.PHONY: build run clean check kani debug run-self-test regen-pmp
 
 # Production binary — test/POST kodu YOK, minimal attack surface
 build:
@@ -61,6 +61,12 @@ check:
 # `cargo kani` (flag'siz) tüm harness'leri çalıştırır (CI ile align).
 kani:
 	cargo kani
+
+# U-25 SNTM Phase 3: manifest → src/kernel/pmp/generated.rs codegen.
+# sipahi.toml değiştiğinde manuel çalıştır + commit. CI drift gate'i
+# bunu çalıştırıp git diff'i kontrol eder.
+regen-pmp:
+	bash scripts/regen_pmp_profiles.sh
 
 # Temizle
 clean:

@@ -26,6 +26,31 @@ impl Permission {
     pub const NONE: Self = Self { r: false, w: false, x: false };
 }
 
+/// U-25 SNTM-R7: User pointer doğrulamasında talep edilen erişim türü.
+/// SNTM design v0.8 §5.2 — `ipc_send` Read, `ipc_recv` Write, future
+/// inline-code execute Read+Execute, vb.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Access {
+    Read    = 0,
+    Write   = 1,
+    Execute = 2,
+}
+
+impl Access {
+    /// Talep edilen erişim Permission flag'leriyle uyumlu mu.
+    /// SAFETY/CORRECTNESS: Pure function — branch tablosu, side-effect yok.
+    #[inline]
+    #[must_use]
+    pub const fn matches(self, perm: Permission) -> bool {
+        match self {
+            Access::Read    => perm.r,
+            Access::Write   => perm.w,
+            Access::Execute => perm.x,
+        }
+    }
+}
+
 /// Tek region — task'a grant edilen tek PMP entry (NAPOT) veya
 /// entry-çifti (TOR).
 #[repr(C)]
@@ -65,14 +90,11 @@ impl PmpProfile {
     }
 }
 
-/// Build-time const — Sprint U-24 placeholder, Sprint U-25 sntm-validate generate.
-pub static PMP_PROFILES: [PmpProfile; MAX_TASKS] =
-    [PmpProfile::EMPTY; MAX_TASKS];
-
 /// Caller task ID'ye göre PMP profile lookup.
 ///
-/// U-24 placeholder: tüm task'lar EMPTY profile. U-25'te runtime reload
-/// + Phase 4 manifest-generated tablo aktif olur.
+/// U-24: placeholder EMPTY array. U-25 SNTM Phase 3: `generated.rs`
+/// sntm-validate codegen output'undan okur (manifest-driven).
+/// Drift detection CI gate'i `git diff src/kernel/pmp/generated.rs` ile.
 #[inline]
 #[must_use = "PMP profile lookup result must be checked"]
 pub fn get_pmp_profile(task_id: u8) -> Option<&'static PmpProfile> {
@@ -80,5 +102,5 @@ pub fn get_pmp_profile(task_id: u8) -> Option<&'static PmpProfile> {
     if idx >= MAX_TASKS {
         return None;
     }
-    Some(&PMP_PROFILES[idx])
+    Some(&crate::kernel::pmp::generated::PMP_PROFILES[idx])
 }

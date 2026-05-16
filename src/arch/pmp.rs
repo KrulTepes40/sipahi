@@ -65,6 +65,8 @@ pub enum PmpEncoding {
 
 /// pmpaddr register'ına yaz
 /// addr: fiziksel adres (fonksiyon >> 2 yaparak yazar)
+/// U-25 FIX-2: indices 8..15 boot-time zero için açıldı (verify_pmp_integrity
+/// multi-region check için defansif initial state).
 #[cfg(not(kani))]
 pub fn write_pmpaddr(index: usize, addr: usize) {
     let shifted = addr >> 2; // PMP adresi 4-byte granülarite
@@ -79,7 +81,15 @@ pub fn write_pmpaddr(index: usize, addr: usize) {
             5 => asm!("csrw pmpaddr5, {}", in(reg) shifted),
             6 => asm!("csrw pmpaddr6, {}", in(reg) shifted),
             7 => asm!("csrw pmpaddr7, {}", in(reg) shifted),
-            _ => {} // 8-15 Sprint 5'te kullanılmıyor
+            8 => asm!("csrw pmpaddr8, {}", in(reg) shifted),
+            9 => asm!("csrw pmpaddr9, {}", in(reg) shifted),
+            10 => asm!("csrw pmpaddr10, {}", in(reg) shifted),
+            11 => asm!("csrw pmpaddr11, {}", in(reg) shifted),
+            12 => asm!("csrw pmpaddr12, {}", in(reg) shifted),
+            13 => asm!("csrw pmpaddr13, {}", in(reg) shifted),
+            14 => asm!("csrw pmpaddr14, {}", in(reg) shifted),
+            15 => asm!("csrw pmpaddr15, {}", in(reg) shifted),
+            _ => {}
         }
     }
 }
@@ -119,7 +129,9 @@ pub fn read_pmpcfg2() -> usize {
 }
 
 /// pmpaddr8 oku (task stack NAPOT)
+/// U-25: read_pmpaddr(8) ile değiştirilebilir; geriye uyumluluk için tutuldu.
 #[cfg(not(kani))]
+#[allow(dead_code)] // U-25: read_pmpaddr(8) ile değiştirildi, geriye uyumluluk
 pub fn read_pmpaddr8() -> usize {
     let val: usize;
     // SAFETY: CSR read in M-mode — always accessible.
@@ -127,7 +139,8 @@ pub fn read_pmpaddr8() -> usize {
     val
 }
 
-/// pmpaddr register'ını oku (0-7)
+/// pmpaddr register'ını oku (0-15)
+/// U-25 FIX-2: indices 8..15 verify_pmp_integrity multi-region için açıldı.
 #[cfg(not(kani))]
 pub fn read_pmpaddr(index: usize) -> usize {
     let val: usize;
@@ -142,6 +155,14 @@ pub fn read_pmpaddr(index: usize) -> usize {
             5 => asm!("csrr {}, pmpaddr5", out(reg) val),
             6 => asm!("csrr {}, pmpaddr6", out(reg) val),
             7 => asm!("csrr {}, pmpaddr7", out(reg) val),
+            8 => asm!("csrr {}, pmpaddr8",  out(reg) val),
+            9 => asm!("csrr {}, pmpaddr9",  out(reg) val),
+            10 => asm!("csrr {}, pmpaddr10", out(reg) val),
+            11 => asm!("csrr {}, pmpaddr11", out(reg) val),
+            12 => asm!("csrr {}, pmpaddr12", out(reg) val),
+            13 => asm!("csrr {}, pmpaddr13", out(reg) val),
+            14 => asm!("csrr {}, pmpaddr14", out(reg) val),
+            15 => asm!("csrr {}, pmpaddr15", out(reg) val),
             _ => { val = 0; }
         }
     }
@@ -197,4 +218,164 @@ pub const fn pack_pmpcfg(configs: [u8; 8]) -> u64 {
         i += 1;
     }
     result
+}
+
+// ═══════════════════════════════════════════════════════
+// U-25 SNTM Phase 3 — Multi-region PMP profile reload (§4.5.3)
+// ═══════════════════════════════════════════════════════
+
+/// U-25 SNTM-R6: Reload sırasında hangi pmpcfg indekslerine yazılacak —
+/// Kani-friendly pure model. Real impl write yapmadan SADECE planı döner.
+///
+/// FIX-1: kernel (0..5) + UART (6,7) lock'lu — DAİMA `>= PMP_DYNAMIC_START_ENTRY=8`.
+/// FIX-5: heapless dep YASAK → ([u8; 12], usize) sabit array + count tuple.
+///
+/// Return: (indices, count). count ≤ 12 (worst-case 6 region × TOR 2-entry).
+#[must_use]
+#[allow(dead_code)] // U-25 G8: Kani harness + G11 scheduler hook tüketir
+pub fn reload_indices_touched(
+    profile: &crate::kernel::pmp::profile::PmpProfile,
+) -> ([u8; 12], usize) {
+    use crate::common::config::{PMP_DYNAMIC_START_ENTRY, MAX_PMP_ENTRIES};
+
+    let mut out = [0u8; 12];
+    let mut count: usize = 0;
+    let mut entry = PMP_DYNAMIC_START_ENTRY;
+    let active = profile.active_regions();
+    let mut i = 0;
+    while i < active.len() && entry < MAX_PMP_ENTRIES && count < 12 {
+        match active[i].encoding {
+            PmpEncoding::Napot { .. } => {
+                out[count] = entry;
+                count += 1;
+                entry += 1;
+            }
+            PmpEncoding::Tor { .. } => {
+                out[count] = entry;
+                count += 1;
+                entry += 1;
+                if entry < MAX_PMP_ENTRIES && count < 12 {
+                    out[count] = entry;
+                    count += 1;
+                    entry += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    (out, count)
+}
+
+/// Permission → pmpcfg byte (R|W|X bit'leri). U-25 G8 helper.
+#[inline]
+#[allow(dead_code)] // U-25 G8: reload_pmp_profile tüketir, G11 scheduler hook ile aktif
+const fn perm_to_cfg(p: crate::kernel::pmp::profile::Permission) -> u8 {
+    (if p.r { PMP_R } else { 0 })
+        | (if p.w { PMP_W } else { 0 })
+        | (if p.x { PMP_X } else { 0 })
+}
+
+/// Multi-region PMP profile reload. SNTM design v0.8 §4.5.3 + U-25 FIX-1 + FIX-2.
+///
+/// SAFETY:
+///   - Trap context / kernel boot — MIE=0, M-mode, single hart.
+///   - Kernel + UART entry'leri (0..7) lock'lu → ASLA overwrite (FIX-1).
+///   - Sadece pmpcfg2 + pmpaddr8..15 yazılır.
+///   - DENY stage atomicity garantili (single actor, M-mode, MIE=0).
+///   - Shadow update (FIX-2) sfence sonrası ZORUNLU — sonraki tick'in
+///     verify_pmp_integrity'sini geçmek için.
+#[cfg(not(kani))]
+#[allow(dead_code)] // U-25 G8: G11 scheduler hook is_sntm_native=true ile çağırır
+pub unsafe fn reload_pmp_profile(profile: &crate::kernel::pmp::profile::PmpProfile) {
+    use crate::common::config::{PMP_DYNAMIC_START_ENTRY, MAX_PMP_ENTRIES};
+
+    // Stage 1: DENY — pmpcfg2 = 0 (entry 8..15 hepsi OFF).
+    // FIX-1: pmpcfg0 (entry 0..7) ASLA dokunulmaz.
+    // SAFETY: M-mode CSR write — caller invariant MIE=0.
+    unsafe { asm!("csrw pmpcfg2, zero"); }
+
+    // Stage 2: Yeni profile'i sıralı yaz (entry 8'den başla).
+    let active = profile.active_regions();
+    let mut entry: u8 = PMP_DYNAMIC_START_ENTRY;
+    let mut new_addrs: [usize; 8] = [0; 8];
+    let mut new_cfg2: u64 = 0;
+    let mut i = 0;
+    while i < active.len() && entry < MAX_PMP_ENTRIES {
+        let r = &active[i];
+        match r.encoding {
+            PmpEncoding::Napot { addr, size_log2: _ } => {
+                // SAFETY: entry in 8..16 range — write_pmpaddr_dyn debug_assert ile guard.
+                unsafe { write_pmpaddr_dyn(entry, addr); }
+                let cfg_byte = perm_to_cfg(r.perm) | PMP_NAPOT;
+                accumulate_cfg2(&mut new_cfg2, entry, cfg_byte);
+                new_addrs[(entry - PMP_DYNAMIC_START_ENTRY) as usize] = addr;
+                entry += 1;
+            }
+            PmpEncoding::Tor { lo, hi } => {
+                let lo_enc = lo >> 2;
+                // SAFETY: entry in 8..16 range.
+                unsafe { write_pmpaddr_dyn(entry, lo_enc); }
+                accumulate_cfg2(&mut new_cfg2, entry, 0);  // OFF (TOR base)
+                new_addrs[(entry - PMP_DYNAMIC_START_ENTRY) as usize] = lo_enc;
+                entry += 1;
+                if entry < MAX_PMP_ENTRIES {
+                    let hi_enc = hi >> 2;
+                    // SAFETY: entry in 8..16 range.
+                    unsafe { write_pmpaddr_dyn(entry, hi_enc); }
+                    let cfg_byte = perm_to_cfg(r.perm) | PMP_TOR;
+                    accumulate_cfg2(&mut new_cfg2, entry, cfg_byte);
+                    new_addrs[(entry - PMP_DYNAMIC_START_ENTRY) as usize] = hi_enc;
+                    entry += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    // Stage 3: pmpcfg2 toplu yaz (8 byte = 8 entry config, tek atomic write).
+    // SAFETY: M-mode CSR write.
+    unsafe { asm!("csrw pmpcfg2, {}", in(reg) new_cfg2); }
+
+    // Stage 4: SFENCE.VMA — RISC-V Priv Spec §3.7.2 PMP ordering.
+    // SAFETY: M-mode fence instruction.
+    unsafe { asm!("sfence.vma zero, zero"); }
+
+    // Stage 5 (FIX-2): Shadow update — verify_pmp_integrity için.
+    crate::kernel::memory::update_dynamic_pmp_shadow(&new_addrs, new_cfg2 as usize);
+}
+
+/// U-25 G8 helper: pmpcfg2 byte accumulator (entry idx → byte position).
+#[inline]
+#[allow(dead_code)] // U-25 G8: reload_pmp_profile tüketir
+fn accumulate_cfg2(cfg2: &mut u64, idx: u8, byte: u8) {
+    use crate::common::config::{PMP_DYNAMIC_START_ENTRY, MAX_PMP_ENTRIES};
+    debug_assert!((PMP_DYNAMIC_START_ENTRY..MAX_PMP_ENTRIES).contains(&idx));
+    let shift = ((idx - PMP_DYNAMIC_START_ENTRY) as u64) * 8;
+    *cfg2 |= (byte as u64) << shift;
+}
+
+/// U-25 G8 helper: pmpaddr8..15 writer — FIX-1: entry < 8 ASLA match etmez.
+/// SAFETY: Caller debug_assert ile entry range'i doğrular; out-of-range no-op.
+#[cfg(not(kani))]
+#[allow(dead_code)] // U-25 G8: reload_pmp_profile tüketir
+unsafe fn write_pmpaddr_dyn(idx: u8, val: usize) {
+    use crate::common::config::{PMP_DYNAMIC_START_ENTRY, MAX_PMP_ENTRIES};
+    debug_assert!((PMP_DYNAMIC_START_ENTRY..MAX_PMP_ENTRIES).contains(&idx));
+    // SAFETY: M-mode CSR write, caller MIE=0.
+    unsafe {
+        match idx {
+            8  => asm!("csrw pmpaddr8,  {}", in(reg) val),
+            9  => asm!("csrw pmpaddr9,  {}", in(reg) val),
+            10 => asm!("csrw pmpaddr10, {}", in(reg) val),
+            11 => asm!("csrw pmpaddr11, {}", in(reg) val),
+            12 => asm!("csrw pmpaddr12, {}", in(reg) val),
+            13 => asm!("csrw pmpaddr13, {}", in(reg) val),
+            14 => asm!("csrw pmpaddr14, {}", in(reg) val),
+            15 => asm!("csrw pmpaddr15, {}", in(reg) val),
+            _ => {
+                // FIX-1 defansif: kernel/UART range — no-op.
+                debug_assert!(false, "write_pmpaddr_dyn: idx out of dynamic range");
+            }
+        }
+    }
 }

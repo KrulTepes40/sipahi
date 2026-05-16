@@ -206,6 +206,220 @@ mod verification {
         }
     }
 
+    // VERIFIES: SNTM-R7 (region-scan + Access perm iff invariant)
+    // CALLS:    crate::kernel::syscall::dispatch::check_ptr_in_profile
+    //           + crate::kernel::pmp::profile::{Access, Permission, PmpProfile, Region}
+    // FAILS-IF: Region dışı ptr için true, region içi ptr için false, partial
+    //           overlap kabul, access-perm mismatch kabul, ya da empty profile
+    //           için true. Kani bounded: 1 region, ptr/size ≤ 2^16.
+    // PROOF (U-25 SNTM-R7): pointer ⊂ region AND access.matches(perm) iff result.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn multi_region_user_ptr_in_region() {
+        use crate::kernel::pmp::profile::{Access, PmpProfile, Region, Permission};
+        use crate::kernel::syscall::dispatch::check_ptr_in_profile;
+        use crate::arch::pmp::PmpEncoding;
+
+        let region_base: usize = kani::any();
+        let region_size: usize = kani::any();
+        kani::assume(region_base <= 0xFFFF);
+        kani::assume(region_size > 0 && region_size <= 0x1000);
+        kani::assume(region_base.checked_add(region_size).is_some());
+
+        let perm_r: bool = kani::any();
+        let perm_w: bool = kani::any();
+        let perm_x: bool = kani::any();
+        let perm = Permission { r: perm_r, w: perm_w, x: perm_x };
+
+        let mut profile = PmpProfile::EMPTY;
+        profile.region_count = 1;
+        profile.regions[0] = Region {
+            base: region_base,
+            size: region_size,
+            encoding: PmpEncoding::Napot { addr: 0, size_log2: 0 },
+            perm,
+        };
+
+        let ptr: usize = kani::any();
+        let size: usize = kani::any();
+        kani::assume(size <= 0x1000);
+        let access: Access = kani::any();
+
+        let result = check_ptr_in_profile(&profile, ptr, size, access);
+
+        // Reference oracle.
+        let oracle = ptr != 0
+            && ptr.checked_add(size).is_some()
+            && ptr >= region_base
+            && ptr.wrapping_add(size) <= region_base + region_size
+            && access.matches(perm);
+
+        assert!(result == oracle);
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PROOF (U-25 SNTM-R7): is_valid_user_ptr overflow guard — 2 path symbolic.
+    //
+    // VERIFIES: SNTM-R7 overflow defansif (ptr+size AND region.base+region.size).
+    // CALLS:    crate::kernel::syscall::dispatch::check_ptr_in_profile
+    // FAILS-IF: ptr+size overflow durumunda true, region.base+size overflow
+    //           durumunda true, ya da checked_add bypass edilirse.
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn multi_region_user_ptr_overflow_safe() {
+        use crate::kernel::pmp::profile::{Access, PmpProfile, Region, Permission};
+        use crate::kernel::syscall::dispatch::check_ptr_in_profile;
+        use crate::arch::pmp::PmpEncoding;
+
+        // Path A: ptr+size overflow
+        {
+            let ptr: usize = kani::any();
+            let size: usize = kani::any();
+            kani::assume(ptr.checked_add(size).is_none());
+
+            let mut profile = PmpProfile::EMPTY;
+            profile.region_count = 1;
+            profile.regions[0] = Region {
+                base: 0x8010_0000,
+                size: 0x4000,
+                encoding: PmpEncoding::Napot { addr: 0, size_log2: 0 },
+                perm: Permission::RW,
+            };
+
+            assert!(!check_ptr_in_profile(&profile, ptr, size, Access::Read));
+        }
+
+        // Path B: region.base+region.size overflow
+        {
+            let region_base: usize = kani::any();
+            let region_size: usize = kani::any();
+            kani::assume(region_base.checked_add(region_size).is_none());
+
+            let mut profile = PmpProfile::EMPTY;
+            profile.region_count = 1;
+            profile.regions[0] = Region {
+                base: region_base,
+                size: region_size,
+                encoding: PmpEncoding::Napot { addr: 0, size_log2: 0 },
+                perm: Permission::RW,
+            };
+
+            let ptr: usize = kani::any();
+            let size: usize = kani::any();
+            kani::assume(size <= 0x1000);
+            kani::assume(ptr.checked_add(size).is_some());
+
+            assert!(!check_ptr_in_profile(&profile, ptr, size, Access::Read));
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PROOF (U-25 SNTM-R7): Dead/EMPTY task profile → always deny.
+    //
+    // VERIFIES: SNTM-R7 (region_count == 0 → daima false)
+    // CALLS:    crate::kernel::syscall::dispatch::check_ptr_in_profile
+    // FAILS-IF: EMPTY profile için herhangi (ptr, size, access) true döner.
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn multi_region_dead_task_deny() {
+        use crate::kernel::pmp::profile::{Access, PmpProfile};
+        use crate::kernel::syscall::dispatch::check_ptr_in_profile;
+
+        let ptr: usize = kani::any();
+        let size: usize = kani::any();
+        let access: Access = kani::any();
+        kani::assume(size <= 0x1000);
+
+        let profile = PmpProfile::EMPTY;
+        assert!(!check_ptr_in_profile(&profile, ptr, size, access));
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PROOF (U-25 SNTM-R8): NAPOT pmpaddr encoding — exact bit count + round-trip.
+    //
+    // VERIFIES: SNTM-R8 (NAPOT encoding mask bit count == size_log2 - 3 EXACT)
+    // CALLS:    Pure bitwise math (kernel encoding formula).
+    // FAILS-IF: Mask bit count != size_log2 - 3, encoded base decode != base,
+    //           ya da next bit (at size_log2 - 3) not zero (alignment bug).
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn napot_encoding_size_consistent() {
+        let base: u64 = kani::any();
+        let size_log2: u8 = kani::any();
+        kani::assume(size_log2 >= 3 && size_log2 <= 30);
+        kani::assume(base & ((1u64 << size_log2) - 1) == 0);
+
+        let mask = (1u64 << (size_log2 - 3)) - 1;
+        let encoded = (base >> 2) | mask;
+
+        // Invariant 1: bit at position (size_log2 - 3) MUST be 0 — alignment kanıtı.
+        let next_bit = (encoded >> (size_log2 - 3)) & 1;
+        assert!(next_bit == 0);
+
+        // Invariant 2: trailing_ones exact (not >=).
+        let trailing_ones = encoded.trailing_ones() as u8;
+        assert!(trailing_ones == size_log2 - 3);
+
+        // Invariant 3: round-trip decode.
+        let decoded = (encoded & !mask) << 2;
+        assert!(decoded == base);
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PROOF (U-25 SNTM-R6): reload_pmp_profile YALNIZCA indices 8..15 yazar.
+    //
+    // VERIFIES: SNTM-R6 (FIX-1: kernel + UART entry 0..7 ASLA touch edilmez)
+    // CALLS:    crate::arch::pmp::reload_indices_touched (G8'de eklenir)
+    // FAILS-IF: (1) Touched indices'lerden biri < PMP_DYNAMIC_START_ENTRY=8
+    //               (UART entry 6/7 lock bypass — isolation break),
+    //           (2) Touched indices >= MAX_PMP_ENTRIES (CSR sınırı aşımı),
+    //           (3) Non-empty profile için touched boş (reload no-op),
+    //           (4) Plan monotonik artmıyor (DENY stage sırası bozulur).
+    // ═══════════════════════════════════════════════════════
+    #[kani::proof]
+    fn reload_pmp_kernel_indices_untouched() {
+        use crate::arch::pmp::{reload_indices_touched, PmpEncoding};
+        use crate::kernel::pmp::profile::{PmpProfile, Region, Permission};
+        use crate::common::config::{PMP_DYNAMIC_START_ENTRY, MAX_PMP_ENTRIES};
+
+        let region_count: u8 = kani::any();
+        kani::assume(region_count >= 1 && region_count <= 6);
+
+        // Profile build — her region NAPOT (TOR ayrı harness).
+        let mut profile = PmpProfile::EMPTY;
+        profile.region_count = region_count;
+        let mut i = 0;
+        while i < region_count as usize {
+            profile.regions[i] = Region {
+                base: 0x8010_0000 + (i * 0x4000),
+                size: 0x4000,
+                encoding: PmpEncoding::Napot { addr: 0, size_log2: 14 },
+                perm: Permission::RW,
+            };
+            i += 1;
+        }
+
+        let (touched, count) = reload_indices_touched(&profile);
+
+        // Invariant 1: NAPOT plan size = region_count (TOR olsaydı 2×).
+        assert!(count == region_count as usize);
+
+        // Invariant 2: Her index lower + upper bound içinde.
+        let mut j = 0;
+        while j < count {
+            assert!(touched[j] >= PMP_DYNAMIC_START_ENTRY);  // kernel+UART range dışı
+            assert!(touched[j] < MAX_PMP_ENTRIES);
+            j += 1;
+        }
+
+        // Invariant 3: Plan monotonik artıyor.
+        let mut k = 1;
+        while k < count {
+            assert!(touched[k] > touched[k - 1]);
+            k += 1;
+        }
+    }
+
     // ═══════════════════════════════════════════════════════
     // PROOF 7: IPC kanal bellek hesabı
     // Slot verisi ayrı, gerçek struct boyutu ayrı kontrol ediliyor.

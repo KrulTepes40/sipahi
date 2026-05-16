@@ -768,7 +768,9 @@ fn test_cross_task_pointer_rejected() {
     let range = crate::kernel::scheduler::task_stack_range(0);
     if let Some((base, _top)) = range {
         // Task 1, Task 0'ın stack base'ini pointer olarak veriyor -> REJECT
-        let result = crate::kernel::syscall::dispatch::test_is_valid_user_ptr(1, base, 64);
+        // U-25: Access::Read — bu test cross-task reject davranışı (Access bağımsız)
+        use crate::kernel::pmp::profile::Access;
+        let result = crate::kernel::syscall::dispatch::test_is_valid_user_ptr(1, base, 64, Access::Read);
         test_result(!result,
             "[PASS] cross_task_pointer_rejected [OK]",
             "[FAIL] cross_task_pointer_rejected [FAIL]");
@@ -1114,6 +1116,237 @@ fn test_pmp_profile_struct_smoke() {
         "[FAIL] PmpProfile struct broken [FAIL]");
 }
 
+// ═══════════════════════════════════════════════════════════════
+// U-25 SNTM Phase 3 — Multi-region runtime tests
+// ═══════════════════════════════════════════════════════════════
+//
+// G3 self-test'leri TEST-FIRST disiplinde yazıldı. cfg(any()) flag'i G9
+// codegen + G5 multi-region body GREEN olduğunda silinir (G9 sonu).
+// Audit izi: RED gözlemi için commit ara aşaması.
+
+/// U-25 SNTM-R6 — PMP_PROFILES[0] manifest content match (regression).
+///
+// VERIFIES: SNTM-R6 (generated.rs content matches sipahi.toml manifest task 0)
+// CALLS:    crate::kernel::pmp::profile::get_pmp_profile, PmpProfile::active_regions
+// FAILS-IF: PMP_PROFILES[0].region_count != 4 (manifest has 4 regions),
+//           regions[i].base/size sipahi.toml'daki değerlerden farklı,
+//           perm bit'leri (R/W/X) manifest perm string'i ile uyumsuz,
+//           ya da codegen drift (sntm-validate --output-rs çıktısı stale).
+// SCOPE: G3 yazıldığında PMP_PROFILES hâlâ EMPTY (G9 codegen sonrası
+// dolar) → bu test G3'te RED, G9'da GREEN olur.
+// U-25 G9 sonu aktif (codegen PMP_PROFILES doldu)
+fn test_pmp_profile_loaded_from_manifest() {
+    arch::uart::println("[TEST] PMP_PROFILES task 0 content vs sipahi.toml");
+
+    use crate::kernel::pmp::profile::get_pmp_profile;
+
+    let prof = match get_pmp_profile(0) {
+        Some(p) => p,
+        None => {
+            test_result(false,
+                "[PASS] PMP_PROFILES[0] manifest content [OK]",
+                "[FAIL] PMP_PROFILES[0] None (codegen never ran) [FAIL]");
+            return;
+        }
+    };
+
+    // sipahi.toml task 0 (task_hello) 4 region:
+    //   text:    base 0x80100000 size 0x4000  RX
+    //   rodata:  base 0x80104000 size 0x1000  R
+    //   data:    base 0x80105000 size 0x1000  RW
+    //   stack:   base 0x80110000 size 0x2000  RW
+    let expected: &[(usize, usize, bool, bool, bool)] = &[
+        (0x80100000, 0x4000,  true,  false, true),   // text RX
+        (0x80104000, 0x1000,  true,  false, false),  // rodata R
+        (0x80105000, 0x1000,  true,  true,  false),  // data RW
+        (0x80110000, 0x2000,  true,  true,  false),  // stack RW
+    ];
+
+    let count_ok = (prof.region_count as usize) == expected.len();
+    let mut content_ok = count_ok;
+    if count_ok {
+        let active = prof.active_regions();
+        let mut i = 0;
+        while i < expected.len() {
+            let (eb, es, er, ew, ex) = expected[i];
+            let r = &active[i];
+            if r.base != eb || r.size != es
+                || r.perm.r != er || r.perm.w != ew || r.perm.x != ex {
+                content_ok = false;
+            }
+            i += 1;
+        }
+    }
+
+    test_result(content_ok,
+        "[PASS] PMP_PROFILES[0] = task_hello 4 region [OK]",
+        "[FAIL] PMP_PROFILES[0] content drift vs sipahi.toml [FAIL]");
+}
+
+/// U-25 SNTM-R7 — is_valid_user_ptr multi-region table.
+/// SCOPE: 15 case (region içi/gap/cross/oob/overflow/EMPTY/oob-task_id).
+/// is_sntm_native bypass via test_check_ptr_in_profile_for_task wrapper.
+// VERIFIES: SNTM-R7 (multi-region scan — region içi kabul, gap/cross/oob red)
+// CALLS:    crate::kernel::syscall::dispatch::test_check_ptr_in_profile_for_task
+//           + crate::kernel::pmp::profile::Access
+// FAILS-IF: Region içi reject, region dışı kabul, gap'te kabul, cross-region
+//           span kabul, overflow kabul, EMPTY task kabul, oob task_id kabul.
+fn test_is_valid_user_ptr_multi_region_table() {
+    arch::uart::println("[TEST] is_valid_user_ptr multi-region 15-case");
+
+    use crate::kernel::syscall::dispatch::test_check_ptr_in_profile_for_task;
+    use crate::kernel::pmp::profile::Access;
+
+    // (task_id, ptr, size, access, expected)
+    let cases: &[(u8, usize, usize, Access, bool)] = &[
+        // Region içi (valid) — task_hello manifest regions
+        (0, 0x80100000, 1,        Access::Execute, true),   // text start, X
+        (0, 0x80103FFF, 1,        Access::Read,    true),   // text last byte, R
+        (0, 0x80104000, 1,        Access::Read,    true),   // rodata start, R
+        (0, 0x80110000, 0x2000,   Access::Write,   true),   // stack full span, W
+        (0, 0x80105000, 0x1000,   Access::Read,    true),   // data full span, R
+        // Gap'te (region'lar arasında, manifest layout 0x80106000-0x80110000 boş)
+        (0, 0x80106000, 1,        Access::Read,    false),
+        (0, 0x8010_FFFF, 1,       Access::Read,    false),
+        // Cross-region span (single region tüm aralığı kapsamalı)
+        (0, 0x80103FFF, 2,        Access::Read,    false),  // text/rodata sınırı
+        (0, 0x80105FFF, 2,        Access::Read,    false),  // data/gap sınırı
+        // Region öncesi/sonrası
+        (0, 0x800F_FFFF, 1,       Access::Read,    false),  // kernel sınırı altı
+        (0, 0x80112000, 1,        Access::Read,    false),  // stack üstü
+        // Overflow
+        (0, usize::MAX - 5, 100,  Access::Read,    false),
+        (0, 0xFFFF_FFFF_FFFF_FFF0, 0x20, Access::Read, false),
+        // Task 1 (EMPTY profile) — her zaman red
+        (1, 0x80100000, 1,        Access::Read,    false),
+        // Out-of-bounds task_id (MAX_TASKS=8)
+        (8, 0x80100000, 1,        Access::Read,    false),
+    ];
+
+    let mut all_pass = true;
+    let mut i = 0;
+    while i < cases.len() {
+        let (tid, ptr, sz, acc, expected) = cases[i];
+        let actual = test_check_ptr_in_profile_for_task(tid, ptr, sz, acc);
+        if actual != expected {
+            all_pass = false;
+        }
+        i += 1;
+    }
+
+    test_result(all_pass,
+        "[PASS] is_valid_user_ptr 15-case multi-region table [OK]",
+        "[FAIL] is_valid_user_ptr table mismatch [FAIL]");
+}
+
+/// U-25 SNTM-R7 — Access perm filtering (RX/R/RW × R/W/X).
+/// SCOPE: 9 concrete case (3 region × 3 access). Manifest task 0 perms.
+// VERIFIES: SNTM-R7 (Access perm filtering — perm bit'lerine uyar)
+// CALLS:    crate::kernel::syscall::dispatch::test_check_ptr_in_profile_for_task
+//           + crate::kernel::pmp::profile::Access
+// FAILS-IF: RX region'a W kabul, R region'a W/X kabul, RW region'a X kabul,
+//           ya da matching perm reject.
+fn test_is_valid_user_ptr_access_perm_table() {
+    arch::uart::println("[TEST] is_valid_user_ptr Access perm 9-case");
+
+    use crate::kernel::syscall::dispatch::test_check_ptr_in_profile_for_task;
+    use crate::kernel::pmp::profile::Access;
+
+    // task 0 region perms (manifest task_hello):
+    //   text   RX → R=ok, X=ok, W=red
+    //   rodata R  → R=ok, X=red, W=red
+    //   data   RW → R=ok, W=ok, X=red
+    let cases: &[(usize, Access, bool)] = &[
+        // text (RX)
+        (0x80100000, Access::Read,    true),
+        (0x80100000, Access::Execute, true),
+        (0x80100000, Access::Write,   false),
+        // rodata (R)
+        (0x80104000, Access::Read,    true),
+        (0x80104000, Access::Write,   false),
+        (0x80104000, Access::Execute, false),
+        // data (RW)
+        (0x80105000, Access::Read,    true),
+        (0x80105000, Access::Write,   true),
+        (0x80105000, Access::Execute, false),
+    ];
+
+    let mut all_pass = true;
+    let mut i = 0;
+    while i < cases.len() {
+        let (ptr, acc, expected) = cases[i];
+        let actual = test_check_ptr_in_profile_for_task(0, ptr, 1, acc);
+        if actual != expected {
+            all_pass = false;
+        }
+        i += 1;
+    }
+
+    test_result(all_pass,
+        "[PASS] Access perm 9-case (RX/R/RW filtering) [OK]",
+        "[FAIL] Access perm filter broken [FAIL]");
+}
+
+/// U-25 SNTM-R6 — reload_pmp_profile kernel + UART preserved + shadow consistent.
+///
+// VERIFIES: SNTM-R6 (reload_pmp_profile FIX-1 + FIX-2)
+// CALLS:    crate::arch::pmp::{reload_pmp_profile, read_pmpcfg0, read_pmpaddr}
+//           + crate::kernel::pmp::profile::get_pmp_profile
+//           + crate::kernel::memory::verify_pmp_integrity
+// FAILS-IF: pmpcfg0 herhangi bir byte (0..7) değişti (FIX-1 ihlali — UART
+//           lock'lu entry'lere yazma denemesi), pmpaddr0..7 değişti,
+//           reload sonrası verify_pmp_integrity FAIL (FIX-2 shadow eksik).
+// SCOPE: PRE/POST CSR snapshot entry 0..7 + verify_pmp_integrity GREEN.
+// U-25 G11 sonu aktif (reload_pmp_profile + shadow update + scheduler hook hazır)
+fn test_reload_pmp_profile_kernel_invariant() {
+    arch::uart::println("[TEST] reload_pmp_profile kernel+UART preserved + shadow consistent");
+
+    use crate::arch::pmp::{reload_pmp_profile, read_pmpcfg0, read_pmpaddr};
+    use crate::kernel::pmp::profile::get_pmp_profile;
+    use crate::kernel::memory::verify_pmp_integrity;
+    use crate::common::config::PMP_DYNAMIC_START_ENTRY;
+
+    // PRE snapshot — entry 0..7
+    let pre_cfg0 = read_pmpcfg0();
+    let mut pre_addrs = [0usize; 8];
+    let mut i = 0;
+    while i < PMP_DYNAMIC_START_ENTRY as usize {
+        pre_addrs[i] = read_pmpaddr(i);
+        i += 1;
+    }
+
+    let profile = match get_pmp_profile(0) {
+        Some(p) => p,
+        None => {
+            test_result(false,
+                "[PASS] reload kernel+UART preserved [OK]",
+                "[FAIL] get_pmp_profile(0) None [FAIL]");
+            return;
+        }
+    };
+    // SAFETY: Boot self-test context — MIE=0, single hart, no concurrent access.
+    unsafe { reload_pmp_profile(profile); }
+
+    let post_cfg0 = read_pmpcfg0();
+    let cfg0_ok = pre_cfg0 == post_cfg0;
+    let mut addr_ok = true;
+    let mut j = 0;
+    while j < PMP_DYNAMIC_START_ENTRY as usize {
+        if read_pmpaddr(j) != pre_addrs[j] {
+            addr_ok = false;
+        }
+        j += 1;
+    }
+
+    // FIX-2: shadow update reload sonu zorunlu → verify_pmp_integrity OK
+    let shadow_ok = verify_pmp_integrity();
+
+    let pass = cfg0_ok && addr_ok && shadow_ok;
+    test_result(pass,
+        "[PASS] reload kernel cfg0+addr0..7 preserved + shadow OK [OK]",
+        "[FAIL] reload clobbered kernel/UART entry OR shadow stale [FAIL]");
+}
+
 /// INFO: Ready task watchdog counter — U-16 Bug 9 doğrulaması
 /// Watchdog SADECE Running task için artar. Task 1 (Ready/Suspended çoğunlukta)
 /// counter düşük olmalı (boot sonrası 0-10 arası).
@@ -1163,6 +1396,14 @@ pub fn run_all() {
     arch::uart::println("");
     arch::uart::println("[TEST] U-23 SNTM Phase 1 tests:");
     test_syscall_id_table();
+
+    // U-25 SNTM Phase 3 — G9/G11 sonu aktif.
+    arch::uart::println("");
+    arch::uart::println("[TEST] U-25 SNTM Phase 3 — multi-region runtime:");
+    test_pmp_profile_loaded_from_manifest();
+    test_is_valid_user_ptr_multi_region_table();
+    test_is_valid_user_ptr_access_perm_table();
+    test_reload_pmp_profile_kernel_invariant();
 
     // U-24 SNTM Phase 2 tests — table-driven helper semantics:
     arch::uart::println("");

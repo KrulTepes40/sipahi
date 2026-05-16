@@ -80,4 +80,10 @@ pub struct TaskConfig {
     pub dal: u8,
     pub budget_cycles: u32,
     pub period_ticks: u32,
+    /// U-25 FIX-3: SNTM native task flag — manifest-driven multi-region PMP.
+    /// Default = false (legacy task_a/task_b: single-NAPOT stack entry 8).
+    /// Native task'lar U-26'da native_create_task() ile bu flag'i true set eder.
+    /// is_sntm_native=true ise scheduler reload_pmp_profile (entry 8..15) çağırır
+    /// ve is_valid_user_ptr multi-region + Access kontrolü aktif olur.
+    pub is_sntm_native: bool,
 }

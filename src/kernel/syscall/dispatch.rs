@@ -93,32 +93,106 @@ fn kernel_start_addr() -> usize {
     { 0x80000000 } // RAM_BASE mock
 }
 
-/// User pointer doğrulama — caller'ın KENDİ stack aralığına sınırlandırılmış.
-/// Sprint U-16: Eski versiyon `_end` (WASM arena sonu) altındaki TÜM adresleri
-/// reddediyordu — task stack'leri _end'in ALTINDA olduğundan tüm syscall pointer'ları
-/// dormant olarak başarısız olurdu. Yeni versiyon caller'ın stack range'ini sorar
-/// ve sadece o aralığı kabul eder. Cross-task pointer impersonation engellendi.
+/// U-25 SNTM-R7 PURE helper — Kani-friendly, no CSR/global state.
+/// Bir profile'da pointer'ın matching region'ı var mı + Access perm OK mı.
 ///
-/// ptr == 0 -> reject, ptr+size overflow -> reject, ptr range != caller stack -> reject.
-#[must_use = "pointer validation result must be checked"]
-fn is_valid_user_ptr(caller_task_id: u8, ptr: usize, size: usize) -> bool {
+/// SAFETY/CORRECTNESS (SNTM design v0.8 §5.2):
+///   - Bounded loop (region_count ≤ 6 by PmpProfile invariant)
+///   - checked_add hem ptr+size hem region.base+region.size için (defansif)
+///   - Empty profile (region_count=0) → always false (dead task deny)
+///   - ptr == 0 → false (null guard)
+#[must_use]
+pub(crate) fn check_ptr_in_profile(
+    profile: &crate::kernel::pmp::profile::PmpProfile,
+    ptr: usize,
+    size: usize,
+    access: crate::kernel::pmp::profile::Access,
+) -> bool {
     if ptr == 0 { return false; }
     let end = match ptr.checked_add(size) {
         Some(e) => e,
         None => return false,
     };
-    // Caller'ın stack aralığı — helper unsafe/aliasing'i kapsüller
-    match crate::kernel::scheduler::task_stack_range(caller_task_id) {
-        Some((base, top)) => ptr >= base && end <= top,
-        None => false, // Dead/Isolated/uninitialized -> default deny
+
+    let active = profile.active_regions();
+    let mut i = 0;
+    while i < active.len() {
+        let r = &active[i];
+        let region_end = match r.base.checked_add(r.size) {
+            Some(e) => e,
+            None => return false,  // region overflow defansif → deny
+        };
+        if ptr >= r.base && end <= region_end {
+            return access.matches(r.perm);
+        }
+        i += 1;
     }
+    false
 }
 
-/// U-17 GÖREV 9: Test-only helper — is_valid_user_ptr private, ama negatif
-/// test'lerde caller_hart erişimi gerekli. self-test feature gate'li.
+/// User pointer doğrulama — caller'ın grant edilmiş region(lar)ına sınırlı.
+/// U-25 SNTM-R7: signature `(task_id, ptr, size, access: Access) -> bool`.
+///
+/// FIX-3 + FIX-4 dual-path:
+///   - is_sntm_native=false (legacy task_a/task_b): task_stack_range path,
+///     Access parametresi ignore (legacy davranış korunur, regression yok).
+///   - is_sntm_native=true: SNTM multi-region scan + Access perm filtering
+///     via check_ptr_in_profile pure helper.
+#[must_use = "pointer validation result must be checked"]
+fn is_valid_user_ptr(
+    caller_task_id: u8,
+    ptr: usize,
+    size: usize,
+    access: crate::kernel::pmp::profile::Access,
+) -> bool {
+    // FIX-4: SNTM path SADECE is_sntm_native task'lar için aktif.
+    // Aksi halde legacy task_stack_range fallback'i.
+    if !crate::kernel::scheduler::is_task_sntm_native(caller_task_id) {
+        // Legacy single-NAPOT stack — Access ignore (mevcut self-test korunur).
+        if ptr == 0 { return false; }
+        let end = match ptr.checked_add(size) {
+            Some(e) => e,
+            None => return false,
+        };
+        return match crate::kernel::scheduler::task_stack_range(caller_task_id) {
+            Some((base, top)) => ptr >= base && end <= top,
+            None => false,
+        };
+    }
+    // SNTM native task: multi-region + Access via PMP profile.
+    let profile = match crate::kernel::pmp::profile::get_pmp_profile(caller_task_id) {
+        Some(p) if p.region_count > 0 => p,
+        _ => return false,  // SNTM-flagged ama EMPTY profile → defansif deny
+    };
+    check_ptr_in_profile(profile, ptr, size, access)
+}
+
+/// U-17 GÖREV 9 + U-25: Test-only helper — is_valid_user_ptr private.
+/// Production semantics (is_sntm_native gating dahil).
 #[cfg(feature = "self-test")]
-pub(crate) fn test_is_valid_user_ptr(caller: u8, ptr: usize, size: usize) -> bool {
-    is_valid_user_ptr(caller, ptr, size)
+pub(crate) fn test_is_valid_user_ptr(
+    caller: u8, ptr: usize, size: usize,
+    access: crate::kernel::pmp::profile::Access,
+) -> bool {
+    is_valid_user_ptr(caller, ptr, size, access)
+}
+
+/// U-25 G3/G4 test-only wrapper — is_sntm_native flag BYPASS.
+/// Multi-region davranışı doğrudan PMP profile üzerinden ölçer (production
+/// semantics ayrı `test_is_valid_user_ptr` ile). Legacy task'ların
+/// task_stack_range path'i bu wrapper'dan etkilenmez (Kani proof + test
+/// table'ı pure helper'ı çağırır).
+#[cfg(feature = "self-test")]
+#[allow(dead_code)] // U-25 G5: G9 sonu test'ler aktif olunca tüketilir
+pub(crate) fn test_check_ptr_in_profile_for_task(
+    task_id: u8, ptr: usize, size: usize,
+    access: crate::kernel::pmp::profile::Access,
+) -> bool {
+    let profile = match crate::kernel::pmp::profile::get_pmp_profile(task_id) {
+        Some(p) => p,
+        None => return false,
+    };
+    check_ptr_in_profile(profile, ptr, size, access)
 }
 
 type SyscallHandler = fn(usize, usize, usize, usize) -> usize;
@@ -355,7 +429,8 @@ fn sys_ipc_send(channel_id: usize, msg_ptr: usize, _: usize, _: usize) -> usize 
         return E_INVALID_ARG;
     }
     let caller = crate::kernel::scheduler::current_task_id();
-    if !is_valid_user_ptr(caller, msg_ptr, 64) {
+    // U-25 SNTM-R7: sys_ipc_send msg_ptr READ erişimi (kernel buffer'a kopyalanır).
+    if !is_valid_user_ptr(caller, msg_ptr, 64, crate::kernel::pmp::profile::Access::Read) {
         return E_INVALID_ARG;
     }
     if !msg_ptr.is_multiple_of(8) {
@@ -422,7 +497,8 @@ fn sys_ipc_recv(channel_id: usize, buf_ptr: usize, _: usize, _: usize) -> usize 
         return E_INVALID_ARG;
     }
     let caller = crate::kernel::scheduler::current_task_id();
-    if !is_valid_user_ptr(caller, buf_ptr, 64) {
+    // U-25 SNTM-R7: sys_ipc_recv buf_ptr WRITE erişimi (kernel'dan kopyalanır).
+    if !is_valid_user_ptr(caller, buf_ptr, 64, crate::kernel::pmp::profile::Access::Write) {
         return E_INVALID_ARG;
     }
     if !buf_ptr.is_multiple_of(8) {
@@ -605,19 +681,21 @@ mod verification {
 
     #[kani::proof]
     fn null_pointer_always_rejected() {
+        use crate::kernel::pmp::profile::Access;
         let caller: u8 = kani::any();
-        assert!(!is_valid_user_ptr(caller, 0, 64));
-        assert!(!is_valid_user_ptr(caller, 0, 0));
+        assert!(!is_valid_user_ptr(caller, 0, 64, Access::Read));
+        assert!(!is_valid_user_ptr(caller, 0, 0, Access::Read));
     }
 
     #[kani::proof]
     fn unknown_task_pointer_rejected() {
         // Sprint U-16: Kani'de TASK_COUNT = 0 -> task_stack_range her caller için None
         // -> her pointer reddedilir. Default-deny davranışı doğrulandı.
+        use crate::kernel::pmp::profile::Access;
         let ptr: usize = kani::any();
         kani::assume(ptr > 0);
         let caller: u8 = kani::any();
-        assert!(!is_valid_user_ptr(caller, ptr, 64));
+        assert!(!is_valid_user_ptr(caller, ptr, 64, Access::Read));
     }
 
     #[kani::proof]
@@ -678,32 +756,35 @@ mod verification {
     /// (default-deny davranışı). Production'da caller'ın kendi stack aralığı dışı reddedilir.
     #[kani::proof]
     fn any_address_default_deny_in_kani() {
+        use crate::kernel::pmp::profile::Access;
         let addr: usize = kani::any();
         let size: usize = kani::any();
         let caller: u8 = kani::any();
         kani::assume(size > 0 && size <= 64);
         kani::assume(addr > 0);
         // Kernel adres dahil, RAM dışı dahil — hepsi reddedilir (TASK_COUNT=0)
-        assert!(!is_valid_user_ptr(caller, addr, size));
+        assert!(!is_valid_user_ptr(caller, addr, size, Access::Read));
     }
 
     /// Proof 158: Null pointer herhangi size ile reject
     #[kani::proof]
     fn null_pointer_any_size_rejected() {
+        use crate::kernel::pmp::profile::Access;
         let size: usize = kani::any();
         let caller: u8 = kani::any();
-        assert!(!is_valid_user_ptr(caller, 0, size));
+        assert!(!is_valid_user_ptr(caller, 0, size, Access::Read));
     }
 
     /// Proof 171: RAM üstü adres -> reject
     #[kani::proof]
     fn ptr_above_ram_rejected() {
+        use crate::kernel::pmp::profile::Access;
         let ptr: usize = kani::any();
         kani::assume(ptr >= crate::common::config::RAM_END);
         let size: usize = kani::any();
         let caller: u8 = kani::any();
         kani::assume(size > 0 && size <= 64);
-        assert!(!is_valid_user_ptr(caller, ptr, size));
+        assert!(!is_valid_user_ptr(caller, ptr, size, Access::Read));
     }
 
     /// dispatch() geçersiz syscall ID -> E_INVALID_SYSCALL

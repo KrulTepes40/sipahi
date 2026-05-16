@@ -1,6 +1,8 @@
 //! Sipahi SNTM Manifest Validator — host tool.
 //!
-//! Usage: sntm-validate --manifest sipahi.toml
+//! Usage:
+//!   sntm-validate --manifest sipahi.toml
+//!   sntm-validate --manifest sipahi.toml --output-rs src/kernel/pmp/generated.rs
 //!
 //! Validates 6 invariants (SNTM-R3, R4, R5 + uniqueness + kernel-overlap + budget):
 //!   1. Task ID uniqueness
@@ -8,9 +10,14 @@
 //!   3. Region overlap (intra-task) (SNTM-R3)
 //!   4. Region overlap (cross-task) (SNTM-R3)
 //!   5. Region overlap (kernel-task) (SNTM-R3 critical)
-//!   6. PMP entry budget (kernel 6 + per-task ≤ platform.pmp_entries)
+//!   6. PMP entry budget (reserved + per-task ≤ platform.pmp_entries)
+//!
+//! With --output-rs: emits src/kernel/pmp/generated.rs with PMP_PROFILES const
+//! (manifest-driven build-time table). U-25 SNTM Phase 3 codegen.
 
+mod codegen;
 mod manifest;
+mod napot;
 mod validate;
 
 use std::path::PathBuf;
@@ -19,6 +26,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let mut manifest_path: Option<PathBuf> = None;
+    let mut output_rs_path: Option<PathBuf> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -30,8 +38,16 @@ fn main() -> ExitCode {
                 manifest_path = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
+            "--output-rs" => {
+                if i + 1 >= args.len() {
+                    eprintln!("FAIL: --output-rs requires a path argument");
+                    return ExitCode::from(2);
+                }
+                output_rs_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
             "-h" | "--help" => {
-                println!("Usage: sntm-validate --manifest sipahi.toml");
+                println!("Usage: sntm-validate --manifest sipahi.toml [--output-rs PATH]");
                 return ExitCode::from(0);
             }
             other => {
@@ -44,7 +60,7 @@ fn main() -> ExitCode {
     let path = match manifest_path {
         Some(p) => p,
         None => {
-            eprintln!("Usage: sntm-validate --manifest sipahi.toml");
+            eprintln!("Usage: sntm-validate --manifest sipahi.toml [--output-rs PATH]");
             return ExitCode::from(2);
         }
     };
@@ -74,11 +90,13 @@ fn main() -> ExitCode {
                 m.tasks.len(),
                 total_regions,
             );
-            // U-24 PLACEHOLDER: generated const tables (PMP_PROFILES)
-            // Sprint U-25 hedefi (--output-rs flag eklenecek).
-            println!(
-                "PLACEHOLDER: generated const tables (PMP_PROFILES) — Sprint U-25 hedefi"
-            );
+            if let Some(ref out) = output_rs_path {
+                if let Err(e) = codegen::generate_pmp_profiles_rs(&m, out) {
+                    eprintln!("FAIL: codegen error: {}", e);
+                    return ExitCode::from(1);
+                }
+                println!("PASS: generated {}", out.display());
+            }
             ExitCode::from(0)
         }
         Err(errs) => {
