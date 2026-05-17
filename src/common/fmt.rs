@@ -11,7 +11,10 @@ use crate::arch::uart;
 /// U-19 GÖREV 7: defensive bound (`i < 10`) — u32 max 4_294_967_295 (10 hane)
 /// olduğundan döngü garantili sonlanır. Sınır savunmacı ek katman: register
 /// bozulması veya ABI ihlali halinde sonsuz döngü riski yok.
+/// U-29: production build'de (debug-boot/trace OFF) hiç çağrılmaz — feature-gated
+/// kullanıcılar (boot.rs task_a/task_b print) için API yüzeyi korunur.
 #[cfg(not(kani))]
+#[allow(dead_code)]
 pub fn print_u32(mut val: u32) {
     if val == 0 { uart::putc(b'0'); return; }
     let mut buf = [0u8; 10];

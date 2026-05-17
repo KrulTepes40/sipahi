@@ -35,9 +35,11 @@ gibi ayrı kanıtlar gerektirir.
 - `src/kernel/capability`: token, broker, cache
 - `src/ipc`: SPSC IPC kanalları ve blackbox recorder
 - `src/kernel/policy`: failure policy engine
-- `src/sandbox`: feature-gated WASM prototype path
+- `src/kernel/loader`: SNTM native task loader (bounded copy + zero fill + PMP region)
 - `sipahi_api`: SNTM task-side API crate
-- `tasks/task_hello`: standalone native task scaffold
+- `tasks/task_hello`: native task #2 (SNTM Phase 1)
+- `tasks/task_world`: native task #3 (SNTM Phase 5 two-task demo)
+- (v1.x'te `src/sandbox/` WASM prototype path vardı; U-29 v2.0'da kaldırıldı.)
 
 ---
 
@@ -236,25 +238,21 @@ gibi ayrı kanıtlar gerektirir.
 
 ---
 
-## 10. WASM Sandbox Durumu
+## 10. WASM Sandbox Durumu (tarihsel — v2.0'da kaldırıldı)
 
-WASM artık ana gelecek yönü değildir; prototype/test path olarak tutulur.
+**U-29 v2.0: WASM tamamen kaldırıldı.** v1.x'te (Wasmi 1.0.9 + 4MB bump
+allocator + float opcode rejection + LEB128 parser + fuel metering) prototype
+path olarak vardı, `wasm-sandbox` feature arkasında gated. U-29'da:
 
-### Var olan özellikler
+- `wasmi` dep silindi
+- `wasm-sandbox` feature silindi
+- `src/sandbox/` klasörü tamamen silindi (~700 LOC)
+- `.wasm_arena` linker section silindi
+- ~13-15 WASM-tied Kani proof silindi (213 → 189)
+- `extern crate alloc` + `#[global_allocator]` + `#[alloc_error_handler]` silindi
+- `ed25519-dalek` (alloc dep) → `ed25519-compact` (pure no_alloc) migration
 
-- `wasm-sandbox` feature arkasında.
-- `self-test` feature WASM'i test için açar.
-- Wasmi 1.0.9 kullanımı.
-- 4 MB arena/bump allocator.
-- WASM magic/version/code-section kontrolleri.
-- Float opcode rejection heuristic'i.
-- 0xFC saturating truncation ve br_table skip tarafı için ek kontroller.
-
-### Sınırlar
-
-- Tam WASM grammar parser değildir.
-- Production default build'de WASM path'i kapalıdır.
-- SNTM tamamlandıkça WASM path'i azaltılacak/kaldırılacaktır.
+Kernel artık pure `no_std + no_alloc`. SNTM Native Task Model v2.0 final.
 
 ---
 

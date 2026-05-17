@@ -669,8 +669,8 @@ mod verification {
 
     // ═══════════════════════════════════════════════════════
     // PROOF 8: Bellek bütçesi 4MB RAM'e sığar
-    // Sprint 12'de linker script 512K -> 4M oldu (wasmi binary ~700KB).
-    // WASM_HEAP_SIZE Sprint 13'te 256KB'a yükseltildi (wasmi 1.0.9 overhead).
+    // U-29 v2.0: WASM_HEAP_SIZE silindi (wasmi + sandbox/ kaldırıldı).
+    // wasm_heap term = 0 → toplam ~4MB azaldı, RAM sığma daha geniş margin.
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
     fn memory_fits_in_ram() {
@@ -684,8 +684,8 @@ mod verification {
         let kernel_total = kernel_text + kernel_data + kernel_rodata
             + ipc_pool + blackbox + device_mmio + dma_buffer;
         let task_total = MAX_TASKS * 24 * 1024;
-        let wasm_heap = WASM_HEAP_SIZE;
-        let total = kernel_total + task_total + wasm_heap;
+        // U-29: wasm_heap term kaldırıldı (WASM removed).
+        let total = kernel_total + task_total;
         // QEMU virt = 512MB, linker script RAM = 8MB (sipahi.ld)
         let ram_size: usize = 8 * 1024 * 1024;
         assert!(total < ram_size);

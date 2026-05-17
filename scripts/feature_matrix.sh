@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # U-22 GÖREV 27: Sipahi feature combination build matrix.
-# G5 (v2-hal), G6 (production-otp), G8 (wasm-sandbox), G25 (entropy check)
-# sonrası feature kombinasyonları breakage riski oluşturur. Her geçerli
-# kombinasyon CI'da derlenebilir olmalı.
+# G5 (v2-hal), G6 (production-otp), G25 (entropy check) sonrası feature
+# kombinasyonları breakage riski oluşturur. Her geçerli kombinasyon CI'da
+# derlenebilir olmalı.
+# U-29 v2.0: G8 (wasm-sandbox) feature kaldırıldı — wasm-sandbox kombinasyonları
+# matrix'ten temizlendi.
 set -eo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,15 +16,14 @@ echo ""
 # olarak sağlaması gereken `production_provision_from_otp` extern fn'ini
 # referans verir; lokal stub yok -> link error tasarımsal (deploy-time wired).
 # CI kapsamında sadece BUILD edilebilen kombinasyonlar test edilir.
+# U-29: wasm-sandbox kombinasyonları silindi (feature artık yok).
 COMBOS=(
     "fast-crypto,fast-sign,test-keys"
     "fast-crypto,fast-sign,test-keys,trace"
     "fast-crypto,fast-sign,test-keys,debug-boot"
     "fast-crypto,fast-sign,test-keys,trace,debug-boot"
     "fast-crypto,fast-sign,self-test"
-    "fast-crypto,fast-sign,test-keys,wasm-sandbox"
     "fast-crypto,fast-sign,test-keys,v2-hal"
-    "fast-crypto,fast-sign,test-keys,wasm-sandbox,v2-hal"
     "fast-crypto,fast-sign,test-keys,sntm"           # U-23 SNTM Phase 1
     "fast-crypto,fast-sign,self-test,sntm"           # U-23 SNTM Phase 1
 )

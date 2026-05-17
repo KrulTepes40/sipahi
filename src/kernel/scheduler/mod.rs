@@ -973,7 +973,7 @@ pub(crate) fn handle_task_fault() {
             let dal = TASKS.get()[current].dal;
             let action = crate::kernel::policy::apply_policy(
                 current as u8,
-                crate::kernel::policy::PolicyEvent::WasmTrap,
+                crate::kernel::policy::PolicyEvent::TaskFault,
                 dal,
             );
             apply_action(current, action);

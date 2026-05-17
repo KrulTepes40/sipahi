@@ -1,13 +1,15 @@
 //! Sipahi microkernel entry point — boot, init, sprint integration tests.
 // Sipahi — Safety-Critical Hard Real-Time Microkernel
-// RISC-V 64-bit · Rust · no_std · alloc (WASM sandbox için)
+// RISC-V 64-bit · Rust · no_std · no_alloc (U-29 v2.0: WASM removed)
 
 #![no_std]
 #![no_main]
-#![feature(alloc_error_handler)]
 
-// alloc crate — SADECE wasmi sandbox kullanır, kernel kodu KULLANMAZ
-extern crate alloc;
+// U-29 v2.0: alloc bağımlılığı tamamen kaldırıldı.
+// - WASM sandbox silindi (sandbox/ klasörü yok)
+// - ed25519-dalek → ed25519-compact (no_alloc verify path)
+// - #[global_allocator], #[alloc_error_handler], extern crate alloc YOK
+// Kernel artık pure no_std + no_alloc — Sipahi doctrine compliance.
 
 // U-21 GÖREV 6 [H2]: Capability MAC key provisioning şart. Pre-fix default
 // build secure_boot + provision_key'i sessizce compile-out ediyordu ->
@@ -27,7 +29,6 @@ mod common;
 mod hal;
 mod ipc; // U-19 GÖREV 8: pub gereksiz (binary crate, external consumer yok)
 mod kernel;
-mod sandbox;
 #[cfg(not(kani))]
 mod boot;
 // Sprint U-16: Test suite sadece self-test build'de derlenir.
@@ -36,22 +37,6 @@ mod boot;
 mod tests;
 #[cfg(kani)]
 mod verify;
-
-// ═══ WASM Bump Allocator — GlobalAlloc ═══
-#[cfg(not(kani))]
-#[global_allocator]
-static ALLOCATOR: sandbox::allocator::BumpAllocator = sandbox::allocator::BumpAllocator;
-
-// OOM handler — panic DEĞİL, wfi loop
-#[cfg(not(kani))]
-#[alloc_error_handler]
-fn alloc_error(_layout: core::alloc::Layout) -> ! {
-    arch::uart::puts("[OOM] WASM arena dolu — offset=");
-    print_u32(sandbox::allocator::current_offset() as u32);
-    arch::uart::println(" wfi");
-    // SAFETY: WFI instruction — halts hart until interrupt, no state corruption.
-    loop { unsafe { core::arch::asm!("wfi") }; }
-}
 
 // ═══ Task fonksiyonları ═══
 
@@ -63,7 +48,7 @@ pub fn task_a() -> ! {
         #[cfg(feature = "trace")]
         if counter.is_multiple_of(50) {
             arch::uart::puts("[TASK-A] tick ");
-            print_u32(counter);
+            common::fmt::print_u32(counter);
             arch::uart::println("");
         }
         // SAFETY: NOP — U-mode'da WFI illegal instruction trap verir (QEMU TW=1).
@@ -79,7 +64,7 @@ pub fn task_b() -> ! {
         #[cfg(feature = "trace")]
         if counter.is_multiple_of(50) {
             arch::uart::puts("[TASK-B] tick ");
-            print_u32(counter);
+            common::fmt::print_u32(counter);
             arch::uart::println("");
         }
         // SAFETY: NOP — U-mode'da WFI illegal instruction trap verir (QEMU TW=1).
@@ -114,11 +99,8 @@ pub extern "C" fn rust_main() -> ! {
     boot::start();
 }
 
-// U-19 GÖREV 5: print_hex const _ hack silindi — boot.rs/scheduler tam path
-// (crate::common::fmt::print_hex) ile çağırıyor, bu modülde yalnızca print_u32
-// gerek (alloc_error içinde).
-#[cfg(not(kani))]
-use common::fmt::print_u32;
+// U-29 v2.0: print_u32 import kaldırıldı (alloc_error fn silindiği için artık
+// kullanılmıyor). boot.rs/scheduler kendi fmt path'lerini tam path ile çağırır.
 
 #[cfg(not(kani))]
 use core::panic::PanicInfo;

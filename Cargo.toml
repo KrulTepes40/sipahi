@@ -42,14 +42,18 @@ debug-boot = []           # Boot sırasında [DBG] teşhis çıktıları (üreti
 test-keys = []            # QEMU test key'leri (development/CI)
 production-otp = []       # HSM/OTP key provisioning (v2.0 — gerçek silikon)
 v2-hal = []               # U-22 G5: device.rs DeviceAccess trait (v2.0 SPI/I2C/GPIO)
-wasm-sandbox = ["dep:wasmi"] # U-22 G8 [M14]: WASM sandbox (self-test/prototype only)
+# U-29 v2.0: wasm-sandbox feature SİLİNDİ (WASM tamamen kaldırıldı).
+# Tarihsel: v1.x'te `wasm-sandbox = ["dep:wasmi"]` opt-in wasmi interpreter
+# için vardı; U-29'da sandbox/ + wasmi dep + wasm_arena hepsi silindi.
+
 # U-22.5 G8: SNTM phased rollout için umbrella feature'lar.
 # Şu an BOŞ — v1.5'te (Sprint U-23) sntm body doldurulacak,
 # v1.6+'da (SAFE-1..4) sntm-safe body doldurulacak.
 # Default features'a EKLENMEZ (yarım SNTM production'a sızmasın).
 sntm      = []                # SNTM v1.5 base — task loader, typed IPC, manifest
 sntm-safe = ["sntm"]          # SAFE-1..4 katmanları — task-lint, verifier, cert
-self-test = ["test-keys", "trace", "debug-boot", "wasm-sandbox"] # U-16/U-17/U-22: test + tüm UART output + WASM
+# U-29: self-test feature'dan wasm-sandbox kaldırıldı.
+self-test = ["test-keys", "trace", "debug-boot"] # U-16/U-17/U-22: test + tüm UART output
 # U-27.5: Cross-task PMP runtime ihlal observation demo (opt-in only).
 # Self-test feature'a EKLENMEZ — kernel tests::run_all scheduler START öncesi
 # çalışır, runtime observation için uygun DEĞIL. make run-cross-isolation ile
@@ -57,18 +61,16 @@ self-test = ["test-keys", "trace", "debug-boot", "wasm-sandbox"] # U-16/U-17/U-2
 cross-isolation-demo = []
 
 [dependencies]
-# U-22 G8 [M14]: wasmi optional → wasm-sandbox feature ile aktif olur.
-# Production binary (default features): wasmi linklenmez (~200KB tasarruf).
+# U-29 v2.0: wasmi dep SİLİNDİ (WASM tamamen kaldırıldı).
+# Tarihsel: v1.x'te `wasmi = "=1.0.9"` optional dep wasm-sandbox feature
+# arkasında vardı. U-29'da sandbox/ + wasm_arena ile birlikte temizlendi.
+
 # U-22 G11 [L2]: tüm dep'ler exact pin (=X.Y.Z) — supply chain determinism.
-wasmi = { version = "=1.0.9", default-features = false, features = ["prefer-btree-collections"], optional = true }
 # Sprint 13: Gerçek BLAKE3 (no_std uyumlu, std feature kapalı)
 blake3 = { version = "=1.8.4", default-features = false }
-# Sprint 13: Ed25519 imza doğrulama (no_std + alloc, getrandom gereksiz — sadece verify)
-# U-22.5 G8 NOT: v2.0 SNTM final'inde ed25519-compact ile değiştirilecek (Sprint U-29).
-# Gerekçe: alloc bağımlılığını tam kaldırmak (no_std + no_alloc doctrine).
-# ed25519-compact pure no_std API sağlar — API farklı, port gerekli.
-# v1.5/v2.0-rc'de korunur; migration sprint U-29 (SNTM design v0.4 §12 Aşama 6).
-ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["alloc"] }
+# U-29 v2.0: ed25519-compact (pure no_std + no_alloc, RFC8032 wire format aynı).
+# ed25519-dalek alloc bağımlılığından kurtuluş — kernel artık no_alloc.
+ed25519-compact = { version = "=2.2.0", default-features = false }
 # NOT: hash-table random init → safety-critical'da kabul edilemez, btree kullan
 
 [dev-dependencies]
@@ -87,4 +89,4 @@ codegen-units = 1         # Tek derleme birimi (determinizm)
 overflow-checks = true    # Integer overflow → trap (safety-critical)
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys", "multi-hart", "self-test", "trace", "debug-boot", "production-otp", "v2-hal", "wasm-sandbox", "sntm", "sntm-safe", "cross-isolation-demo"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys", "multi-hart", "self-test", "trace", "debug-boot", "production-otp", "v2-hal", "sntm", "sntm-safe", "cross-isolation-demo"))'] }

@@ -44,7 +44,11 @@ pub enum FailureMode {
 pub enum PolicyEvent {
     BudgetExhausted  = 0,
     StackOverflow    = 1,
-    WasmTrap         = 2,
+    // U-29 v2.0: WasmTrap → TaskFault rename. WASM kalkınca semantic
+    // WASM-spesifik olamaz; SNTM native task fault için generic isim.
+    // decide_action(event=2, ...) davranışı DEĞIŞMEZ (restart_count<MAX_RESTART_FAULT
+    // → Restart, else Isolate; DAL-D 3-şans politikası korunur).
+    TaskFault        = 2,
     CapViolation     = 3,
     IopmpViolation   = 4,
     PmpIntegrityFail = 5,

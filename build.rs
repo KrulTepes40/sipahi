@@ -17,13 +17,9 @@ fn main() {
         );
     }
 
-    // .wasm_arena ALIGN(4096) page-aligned — WASM_HEAP_SIZE = 4MB
-    if !ld.contains("ALIGN(4096)") {
-        panic!(
-            "config drift: sipahi.ld must contain ALIGN(4096) for .wasm_arena \
-             (4KB page boundary)."
-        );
-    }
+    // U-29 v2.0: .wasm_arena drift check SİLİNDİ — wasm_arena section yok.
+    // Tarihsel: v1.x'te ALIGN(4096) WASM heap için zorunluydu; WASM kalkınca
+    // kontrol anlamsız.
 
     println!("cargo:rerun-if-changed=sipahi.ld");
     println!("cargo:rerun-if-changed=src/common/config.rs");
