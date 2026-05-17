@@ -18,6 +18,10 @@ mkdir -p "$OUT_DIR"
 echo "[native] task_hello build (RISC-V)"
 (cd tasks/task_hello && cargo build --release 2>&1 | tail -3)
 
+# U-27 SNTM Phase 5: task_world ikinci native task.
+echo "[native] task_world build (RISC-V)"
+(cd tasks/task_world && cargo build --release 2>&1 | tail -3)
+
 HOST=$(rustc -vV | sed -n 's/^host: //p')
 echo "[native] sntm-pack target host: $HOST"
 (cd tools/sntm-pack && cargo run --target "$HOST" --release -- \
@@ -26,6 +30,12 @@ echo "[native] sntm-pack target host: $HOST"
     --out-rodata ../../$OUT_DIR/task_hello.rodata.bin \
     --out-data   ../../$OUT_DIR/task_hello.data.bin)
 
+(cd tools/sntm-pack && cargo run --target "$HOST" --release -- \
+    --elf       ../../target/riscv64imac-unknown-none-elf/release/task_world \
+    --out-text   ../../$OUT_DIR/task_world.text.bin \
+    --out-rodata ../../$OUT_DIR/task_world.rodata.bin \
+    --out-data   ../../$OUT_DIR/task_world.data.bin)
+
 echo "[native] output:"
-ls -la "$OUT_DIR/" | tail -5
+ls -la "$OUT_DIR/" | tail -10
 echo "[native] done."

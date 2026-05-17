@@ -69,8 +69,19 @@ switch_context:
     ld      s11, 104(a1)
     ld      t0,  112(a1)
     csrw    mepc, t0
+    # U-27 FIX: Trap frame mepc slot (SABİT ADRES __stack_top - 136) GÜNCELLE.
+    # trap.S `.restore_regs` mepc'i frame'den geri yüklüyor (sp+136), bu yüzden
+    # switch_context'ın csrw mepc'i ezilir. Frame slot'unu da yazmak ZORUNLU.
+    # Aksi halde context switch sonrası mret eski (önceki task'ın) mepc'sine
+    # döner → PMP-disjoint adres fetch → instruction access fault (U-26'da
+    # task_hello early-exit ile gizlenmiş, U-27 iki native task ile patladı).
+    la      t1, __stack_top
+    sd      t0, -136(t1)
     ld      t0,  120(a1)
     csrw    mstatus, t0
+    # U-27 FIX: Trap frame mcause slot (sp+128, __stack_top - 144) için
+    # ihtiyaç YOK — restore_regs sadece mepc'i frame'den okuyor; mcause
+    # sadece dispatch için, restore path'inde değil.
 
     # ra yüklendi → ret yeni task'ın ra'sına atlar
     ret

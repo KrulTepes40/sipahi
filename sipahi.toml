@@ -59,6 +59,45 @@ perm = "RW"
 # guard region: implicit (NAPOT layout — SNTM design v0.5 §4.3 default-on).
 # TOR layout için explicit guard region zorunlu olur, ama task_hello NAPOT.
 
+# U-27 SNTM Phase 5: second native task (task_id=3).
+# Memory layout: task_hello 0x80600000..0x80612000 + buffer → task_world
+# 0x80700000+ (1MB margin). RAM_END 0xA0000000 → 511MB headroom.
+# Budget/period FIX-C tuned (G5 production live boot watchdog window match):
+# 500_000 cycles / 50 ticks (500ms). task_hello yield-loop kick-too-early
+# policy regression'ı bu tuning ile çözüldü.
+[[task]]
+name          = "task_world"
+binary        = "target/riscv64imac-unknown-none-elf/release/task_world"
+task_id       = 3          # task_hello(2) ile çakışma yok
+priority      = 7          # task_hello(6) + 1
+period_ticks  = 50         # 500ms — FIX-C
+budget_cycles = 500_000    # FIX-C
+dal_level     = "D"
+
+[[task.region]]
+name = "text"
+base = 0x80700000          # task_hello.stack top 0x80612000 + 1MB margin
+size = 0x4000              # 16K NAPOT (0x80700000 % 0x4000 = 0)
+perm = "RX"
+
+[[task.region]]
+name = "rodata"
+base = 0x80704000
+size = 0x1000              # 4K NAPOT
+perm = "R"
+
+[[task.region]]
+name = "data"
+base = 0x80705000
+size = 0x1000              # 4K NAPOT (data + bss)
+perm = "RW"
+
+[[task.region]]
+name = "stack"
+base = 0x80710000
+size = 0x2000              # 8K NAPOT (0x80710000 % 0x2000 = 0)
+perm = "RW"
+
 # ─── Channels ───────────────────────────────────────────────────
 # Phase 5 (Sprint U-27) iki-task IPC demo'sunda eklenir.
 # [[channel]]

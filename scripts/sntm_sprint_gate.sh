@@ -132,13 +132,20 @@ else
 fi
 
 # ─── E5: sntm-pack image assembly (SNTM v1.5+) ──────────────────────
-if command -v sntm-pack > /dev/null 2>&1; then
-    run_check "E5" "sntm-pack image build" \
-        "sntm-pack --manifest sipahi.toml --output target/sntm-image.bin 2>&1 | tail -5" \
+# U-27 fix: tool repo-içi sub-workspace (tools/sntm-pack), PATH'te değil.
+# Eski `command -v sntm-pack` her zaman SKIP → false-green. Repo-local
+# binary'yi tercih et, yoksa build et; her iki durumda da gerçek E5 koşar.
+SNTM_PACK="tools/sntm-pack/target/release/sntm-pack"
+if [ ! -x "$SNTM_PACK" ]; then
+    (cd tools/sntm-pack && cargo build --release --target "$HOST") > /dev/null 2>&1 || true
+fi
+if [ -x "$SNTM_PACK" ] || [ -x "tools/sntm-pack/target/$HOST/release/sntm-pack" ]; then
+    run_check "E5" "sntm-pack assembly (build_native_tasks.sh)" \
+        "bash scripts/build_native_tasks.sh 2>&1 | tail -5" \
         "base"
 else
-    echo "[E5] SKIP — sntm-pack tool henüz yok"
-    SKIPPED+=("E5: sntm-pack")
+    echo "[E5] SKIP — sntm-pack build başarısız (tools/sntm-pack/)"
+    SKIPPED+=("E5: sntm-pack build fail")
     echo ""
 fi
 

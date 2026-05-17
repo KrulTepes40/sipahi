@@ -311,3 +311,26 @@ description     = "isolate_task runtime: Running/Ready → Isolated state transi
 required_tests  = ["test_sys_exit_runtime_isolates_task"]
 required_proofs = []
 fault_model     = "isolate_task sonrası state Isolated değil, ikinci çağrı state değişti, panic, ya da invalidate_task_capabilities çağrılmadı (sys_exit handler full integration U-27 demo'da)"
+
+# ─── U-27 SNTM Phase 5 Requirements ──────────────────────────────────────
+
+[requirement.SNTM-R12]
+description     = "Cross-task PMP isolation statik kanıt: task A profile'ı task B region adresini reddedir + manifest overlap compile-time reject + runtime PMP_PROFILES disjoint assertion. Runtime ihlal observe (trap → isolate) U-27.5'e DEFER (Codex pre-review scope creep guard)."
+required_tests  = ["test_pmp_profiles_disjoint"]
+required_proofs = ["check_ptr_in_profile_rejects_other_task_region", "check_ptr_in_profile_symmetric_isolation"]
+fault_model     = "PMP entry overlap allowed (sntm-validate bypass), region size off-by-one (boundary +1 byte kabul), Access::Write task A region'ı için kabul (perm matrix bug), ya da PMP_PROFILES[2]+[3] codegen drift (sntm-validate overlap check bypass)"
+deferred        = "runtime_observe"
+deferred_reason = "Runtime ihlal test'i trap_handler mcause 7 → isolate_task hook + tasks/task_hello cross-isolation-demo feature gerektirir; U-27 production live boot tuning ile scope creep — U-27.5 ayrı sprint"
+deferred_target = "U-27.5 (cross-isolation-demo feature + trap hook)"
+
+[requirement.SNTM-R13]
+description     = "Sealed channel atomicity: seal_channels() POST-state assign_channel reddedir (idempotent + atomic — flag reset yok). TLA+ SealedAtomicityInvariant + Kani post-seal proof + runtime self-test."
+required_tests  = ["test_sealed_channel_assign_rejected"]
+required_proofs = ["post_seal_assign_returns_false", "seal_channels_idempotent"]
+fault_model     = "seal=true post-state assign accepted (flag check bypass), seal=true ama state reset edildi (race), atomic ordering kayıp (Release/Acquire eksik), ya da seal_channels() ikinci çağrı state bozdu (idempotency violation)"
+
+[requirement.SNTM-R14]
+description     = "Multi-task SNTM scheduler integrity: iki is_sntm_native=true task runnable (task_hello + task_world), native_create_task idempotent (aynı task_id ikinci çağrı state bozmaz), PMP_PROFILES[2]+[3] disjoint reload, kernel mepc trap frame slot sync (context.S U-27 fix)."
+required_tests  = ["test_two_native_tasks_runnable", "test_native_create_task_idempotent"]
+required_proofs = []
+fault_model     = "native_create_task ikinci çağrı task_hello state'i bozdu, scheduler is_sntm_native bit drift (task_id swap'inde flag kaymaz), PMP_PROFILES[2] task_world load sırasında overwrite, scheduler context switch sırasında pmpaddr[8..15] yanlış task profile'ı yüklendi, ya da context.S trap frame mepc slot update eksik (switch_context csrw mepc ezilir — U-26'da masked, U-27'de instruction access fault)"

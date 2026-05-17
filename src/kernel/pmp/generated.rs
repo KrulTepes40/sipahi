@@ -24,7 +24,18 @@ pub static PMP_PROFILES: [PmpProfile; 8] = [
             Region { base: 0, size: 0, encoding: PmpEncoding::Napot { addr: 0, size_log2: 0 }, perm: Permission::NONE },
         ],
     },
-    PmpProfile::EMPTY,
+    // Task 3 (task_world)
+    PmpProfile {
+        region_count: 4,
+        regions: [
+            Region { base: 0x80700000, size: 0x4000, encoding: PmpEncoding::Napot { addr: 0x201c07ff, size_log2: 14 }, perm: Permission::RX },
+            Region { base: 0x80704000, size: 0x1000, encoding: PmpEncoding::Napot { addr: 0x201c11ff, size_log2: 12 }, perm: Permission::R },
+            Region { base: 0x80705000, size: 0x1000, encoding: PmpEncoding::Napot { addr: 0x201c15ff, size_log2: 12 }, perm: Permission::RW },
+            Region { base: 0x80710000, size: 0x2000, encoding: PmpEncoding::Napot { addr: 0x201c43ff, size_log2: 13 }, perm: Permission::RW },
+            Region { base: 0, size: 0, encoding: PmpEncoding::Napot { addr: 0, size_log2: 0 }, perm: Permission::NONE },
+            Region { base: 0, size: 0, encoding: PmpEncoding::Napot { addr: 0, size_log2: 0 }, perm: Permission::NONE },
+        ],
+    },
     PmpProfile::EMPTY,
     PmpProfile::EMPTY,
     PmpProfile::EMPTY,

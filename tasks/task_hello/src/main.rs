@@ -24,14 +24,15 @@ pub extern "C" fn _start() -> ! {
 }
 
 fn main_loop() -> ! {
+    // U-27: Production live boot — forever yield, NO auto-exit.
+    // U-26'da auto-exit (counter>=1000 → syscall::exit(0)) vardı, U-27'de
+    // task_world ikinci native task ile beraber çalıştığında her ikisi de
+    // Isolated state'e girdiği için MultiModuleCrash (isolated_count>=2) →
+    // SHUTDOWN tetikledi. Forever yield: production'da heartbeat pattern.
     let mut counter: u32 = 0;
     loop {
         syscall::yield_cpu();
         counter = counter.wrapping_add(1);
-        if counter >= 1000 {
-            // 1000 yield sonrası graceful exit (kernel isolate eder).
-            syscall::exit(0);
-        }
     }
 }
 

@@ -287,3 +287,106 @@ perm = "RW"
     assert_eq!(empty_count, 7, "expected 7 EMPTY profiles for task 1..7");
 }
 
+/// U-27 SNTM-R12 statik kanıt: cross-task region overlap manifest level reject.
+///
+// VERIFIES: SNTM-R12 (cross-task PMP isolation statik — sntm-validate
+//           compile-time overlap reject; runtime trap → isolate U-27.5)
+// CALLS:    sntm-validate --manifest <toml> (iki task, overlap region)
+// FAILS-IF: Validator iki farklı task'in çakışan region'larını kabul ederse
+//           (statik isolation kırılır), ya da hata mesajı 'overlap' içermez.
+#[test]
+fn cross_task_overlap_rejected() {
+    // task_a region: [0x80100000..0x80104000)
+    // task_b region: [0x80102000..0x80106000) — overlap at 0x80102000..0x80104000
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "task_a"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+
+[[task.region]]
+name = "text"
+base = 0x80100000
+size = 0x4000
+perm = "RX"
+
+[[task]]
+name = "task_b"
+binary = ""
+task_id = 1
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+
+[[task.region]]
+name = "text"
+base = 0x80102000
+size = 0x4000
+perm = "RX"
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "cross-task overlap should fail, got code=0\n{}", out);
+    assert!(out.to_lowercase().contains("overlap"),
+        "expected 'overlap' in output:\n{}", out);
+}
+
+/// U-27 SNTM-R14 prereq: iki task disjoint region accepted (positive case).
+///
+// VERIFIES: PMP_PROFILES[2]+[3] disjoint manifest accepted.
+// CALLS:    sntm-validate --manifest <toml> (task_hello + task_world layout)
+// FAILS-IF: Validator disjoint iki task'i overlap diye reject ederse (false
+//           positive), kernel-overlap diye reject ederse (FIX-A regression).
+#[test]
+fn two_tasks_disjoint_accepted() {
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "task_hello_like"
+binary = ""
+task_id = 2
+priority = 6
+period_ticks = 50
+budget_cycles = 500000
+dal_level = "D"
+
+[[task.region]]
+name = "text"
+base = 0x80600000
+size = 0x4000
+perm = "RX"
+
+[[task.region]]
+name = "stack"
+base = 0x80610000
+size = 0x2000
+perm = "RW"
+
+[[task]]
+name = "task_world_like"
+binary = ""
+task_id = 3
+priority = 7
+period_ticks = 50
+budget_cycles = 500000
+dal_level = "D"
+
+[[task.region]]
+name = "text"
+base = 0x80700000
+size = 0x4000
+perm = "RX"
+
+[[task.region]]
+name = "stack"
+base = 0x80710000
+size = 0x2000
+perm = "RW"
+"#);
+    let (code, out) = run(&toml);
+    assert_eq!(code, 0, "disjoint two-task should pass, got code={}\n{}", code, out);
+}
+

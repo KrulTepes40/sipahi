@@ -683,14 +683,17 @@ mod verification {
     }
 
     #[kani::proof]
+    #[kani::unwind(7)]
     fn null_pointer_always_rejected() {
         use crate::kernel::pmp::profile::Access;
         let caller: u8 = kani::any();
+        kani::assume((caller as usize) < crate::common::config::MAX_TASKS);
         assert!(!is_valid_user_ptr(caller, 0, 64, Access::Read));
         assert!(!is_valid_user_ptr(caller, 0, 0, Access::Read));
     }
 
     #[kani::proof]
+    #[kani::unwind(7)]
     fn unknown_task_pointer_rejected() {
         // Sprint U-16: Kani'de TASK_COUNT = 0 -> task_stack_range her caller için None
         // -> her pointer reddedilir. Default-deny davranışı doğrulandı.
@@ -698,6 +701,7 @@ mod verification {
         let ptr: usize = kani::any();
         kani::assume(ptr > 0);
         let caller: u8 = kani::any();
+        kani::assume((caller as usize) < crate::common::config::MAX_TASKS);
         assert!(!is_valid_user_ptr(caller, ptr, 64, Access::Read));
     }
 
@@ -758,11 +762,13 @@ mod verification {
     /// Proof 157: Sprint U-16 — TASK_COUNT=0 Kani durumunda her caller için reddedilir
     /// (default-deny davranışı). Production'da caller'ın kendi stack aralığı dışı reddedilir.
     #[kani::proof]
+    #[kani::unwind(7)]
     fn any_address_default_deny_in_kani() {
         use crate::kernel::pmp::profile::Access;
         let addr: usize = kani::any();
         let size: usize = kani::any();
         let caller: u8 = kani::any();
+        kani::assume((caller as usize) < crate::common::config::MAX_TASKS);
         kani::assume(size > 0 && size <= 64);
         kani::assume(addr > 0);
         // Kernel adres dahil, RAM dışı dahil — hepsi reddedilir (TASK_COUNT=0)
@@ -771,21 +777,28 @@ mod verification {
 
     /// Proof 158: Null pointer herhangi size ile reject
     #[kani::proof]
+    #[kani::unwind(7)]
     fn null_pointer_any_size_rejected() {
         use crate::kernel::pmp::profile::Access;
         let size: usize = kani::any();
         let caller: u8 = kani::any();
+        kani::assume((caller as usize) < crate::common::config::MAX_TASKS);
         assert!(!is_valid_user_ptr(caller, 0, size, Access::Read));
     }
 
-    /// Proof 171: RAM üstü adres -> reject
+    /// Proof 171: RAM üstü adres -> reject.
+    /// caller < MAX_TASKS sınırı + unwind(7): u8 unbounded (256 değer) ×
+    /// `check_ptr_in_profile` slice loop (active.len() symbolic) → CBMC SAT
+    /// patlar (60+ dakika hang). Bounded caller + unwind(7) ile pratik runtime.
     #[kani::proof]
+    #[kani::unwind(7)]
     fn ptr_above_ram_rejected() {
         use crate::kernel::pmp::profile::Access;
         let ptr: usize = kani::any();
         kani::assume(ptr >= crate::common::config::RAM_END);
         let size: usize = kani::any();
         let caller: u8 = kani::any();
+        kani::assume((caller as usize) < crate::common::config::MAX_TASKS);
         kani::assume(size > 0 && size <= 64);
         assert!(!is_valid_user_ptr(caller, ptr, size, Access::Read));
     }

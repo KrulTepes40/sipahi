@@ -196,9 +196,23 @@ pub fn write_per_task_napot(napot_addr: usize, cfg_val: usize) {
     // sfence.vma zero, zero: tüm address translation cache flush
     // (PMP + virtual memory aynı barrier). M-mode + no paging → minimal etki,
     // sadece sıralama garantisi.
+    //
+    // U-27 FIX: Legacy reload sonrası pmpaddr9..15 HW register'larında ÖNCEKİ
+    // native task'ın region adresleri kalıyordu. pmpcfg2 OFF olduğu için
+    // functional impact yok AMA verify_pmp_integrity shadow=0 bekliyor →
+    // FAIL → SHUTDOWN. SNTM native ↔ legacy task switch path'inde bug.
+    // Fix: pmpaddr9..15 explicit sıfırla (shadow ile sync).
     unsafe {
         asm!("csrw pmpcfg2, zero");
         asm!("csrw pmpaddr8, {}", in(reg) napot_addr);
+        // U-27 FIX: SNTM legacy ↔ native switch shadow sync.
+        asm!("csrw pmpaddr9, zero");
+        asm!("csrw pmpaddr10, zero");
+        asm!("csrw pmpaddr11, zero");
+        asm!("csrw pmpaddr12, zero");
+        asm!("csrw pmpaddr13, zero");
+        asm!("csrw pmpaddr14, zero");
+        asm!("csrw pmpaddr15, zero");
         asm!("csrw pmpcfg2, {}", in(reg) cfg_val);
         // U-22.5 G5: SFENCE.VMA zorunlu (PMP CSR ordering barrier)
         asm!("sfence.vma zero, zero");
@@ -330,6 +344,16 @@ pub unsafe fn reload_pmp_profile(profile: &crate::kernel::pmp::profile::PmpProfi
             }
         }
         i += 1;
+    }
+
+    // U-27 FIX: Kullanılmayan dynamic entry'lerin pmpaddr HW register'larını
+    // explicit sıfırla. cfg2 OFF olduğu için functional yok ama
+    // verify_pmp_integrity HW vs shadow karşılaştırması yapıyor; shadow
+    // new_addrs[] init = 0 olduğundan HW de 0 olmalı (sync).
+    // SAFETY: entry in 8..16 range — write_pmpaddr_dyn debug_assert guard.
+    while entry < MAX_PMP_ENTRIES {
+        unsafe { write_pmpaddr_dyn(entry, 0); }
+        entry += 1;
     }
 
     // Stage 3: pmpcfg2 toplu yaz (8 byte = 8 entry config, tek atomic write).

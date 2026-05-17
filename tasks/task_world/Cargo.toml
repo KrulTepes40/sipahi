@@ -1,0 +1,18 @@
+[package]
+name = "task_world"
+version = "0.1.0"
+edition = "2021"
+description = "Sipahi SNTM Phase 5 second native task — yield + exit loop (task_id=3)"
+license = "Apache-2.0"
+
+[[bin]]
+name = "task_world"
+path = "src/main.rs"
+
+# task_hello pattern: kernel'in dep ağacında sipahi_api YOK; task path-dep alır.
+[dependencies]
+sipahi_api = { path = "../../sipahi_api" }
+
+# NOT: [profile.release] workspace root'tan inherit edilir
+# (Cargo.toml: opt-level="s", lto=true, codegen-units=1, panic="abort",
+# overflow-checks=true). Task için aynı profil ideal.

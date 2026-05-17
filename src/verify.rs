@@ -377,6 +377,7 @@ mod verification {
     //           (4) Plan monotonik artmıyor (DENY stage sırası bozulur).
     // ═══════════════════════════════════════════════════════
     #[kani::proof]
+    #[kani::unwind(13)]
     fn reload_pmp_kernel_indices_untouched() {
         use crate::arch::pmp::{reload_indices_touched, PmpEncoding};
         use crate::kernel::pmp::profile::{PmpProfile, Region, Permission};
@@ -430,7 +431,7 @@ mod verification {
     //           byte missing (count mismatch), ya da src/dst overlap UB.
     // PROOF (U-26 SNTM-R9): src/dst separate region, length-bounded atomicity.
     #[kani::proof]
-    #[kani::unwind(8)]
+    #[kani::unwind(17)]
     fn loader_bounded_copy_atomic() {
         use crate::kernel::loader::bounded_copy;
 
@@ -464,7 +465,7 @@ mod verification {
     // CALLS:    crate::kernel::loader::zero_fill
     // FAILS-IF: Bir byte sıfırlanmadı, ya da out-of-bounds yazıldı.
     #[kani::proof]
-    #[kani::unwind(8)]
+    #[kani::unwind(17)]
     fn loader_zero_fill_complete() {
         use crate::kernel::loader::zero_fill;
 
@@ -535,6 +536,109 @@ mod verification {
         // Invariant 2: bss tail tamamen 0.
         let mut j = data_len;
         while j < region_size { assert!(region[j] == 0); j += 1; }
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // U-27 SNTM Phase 5 — Cross-task PMP isolation static proofs (SNTM-R12)
+    // ═══════════════════════════════════════════════════════
+
+    // VERIFIES: SNTM-R12 (cross-task PMP isolation statik kanıt — task_hello
+    //           PMP profile task_world.data adresini reddedir).
+    // CALLS:    crate::kernel::syscall::dispatch::check_ptr_in_profile,
+    //           crate::kernel::pmp::profile::get_pmp_profile (PMP_PROFILES[2]).
+    // FAILS-IF: Multi-region matcher task_hello profile'ında task_world.data
+    //           (0x80705000..0x80706000) adresini kabul ederse, ya da
+    //           Access::Write task_hello region perm matrix bypass.
+    // PROOF (U-27 SNTM-R12): symbolic size [1..64] + concrete cross-task ptr,
+    // task_hello profile (PMP_PROFILES[2]) için check_ptr_in_profile → false.
+    #[kani::proof]
+    #[kani::unwind(7)]
+    fn check_ptr_in_profile_rejects_other_task_region() {
+        use crate::kernel::pmp::profile::{Access, get_pmp_profile};
+        use crate::kernel::syscall::dispatch::check_ptr_in_profile;
+
+        // task_hello (task_id=2) profile + task_world.data region adresi.
+        let profile_hello = get_pmp_profile(2).unwrap();
+        // task_world.data: 0x80705000 (sipahi.toml task_world[data] base).
+        let target_in_world: usize = 0x80705000;
+        let size: usize = kani::any();
+        kani::assume(size > 0 && size <= 64);
+
+        // Reject for both Read and Write access (region disjoint).
+        let res_w = check_ptr_in_profile(profile_hello, target_in_world, size, Access::Write);
+        assert!(!res_w);
+        let res_r = check_ptr_in_profile(profile_hello, target_in_world, size, Access::Read);
+        assert!(!res_r);
+    }
+
+    // VERIFIES: SNTM-R12 (symmetric — task_world rejects task_hello region).
+    // CALLS:    check_ptr_in_profile, get_pmp_profile (PMP_PROFILES[3]).
+    // FAILS-IF: task_world matcher task_hello.text (0x80600000) kabul ederse.
+    #[kani::proof]
+    #[kani::unwind(7)]
+    fn check_ptr_in_profile_symmetric_isolation() {
+        use crate::kernel::pmp::profile::{Access, get_pmp_profile};
+        use crate::kernel::syscall::dispatch::check_ptr_in_profile;
+
+        let profile_world = get_pmp_profile(3).unwrap();
+        // task_hello.text: 0x80600000 (sipahi.toml task_hello[text] base).
+        let target_in_hello: usize = 0x80600000;
+        let size: usize = kani::any();
+        kani::assume(size > 0 && size <= 64);
+
+        let res_r = check_ptr_in_profile(profile_world, target_in_hello, size, Access::Read);
+        assert!(!res_r);
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // U-27 SNTM Phase 5 — Sealed channel atomicity (SNTM-R13)
+    // ═══════════════════════════════════════════════════════
+
+    // VERIFIES: SNTM-R13 (seal_channels() POST-state assign_channel reddedir;
+    //           idempotent + atomic — flag reset yok).
+    // CALLS:    crate::ipc::{seal_channels, assign_channel, is_sealed}.
+    // FAILS-IF: seal=true post-state assign_channel kabul ederse (flag check
+    //           bypass), seal_channels() state'i reset edebilirse, ya da
+    //           assign_channel'in seal kontrolü out-of-order yapılırsa.
+    // PROOF (U-27 SNTM-R13): seal_channels() çağrısı sonrası symbolic ch/p/c
+    // ile assign_channel total function check → her giriş için false.
+    #[kani::proof]
+    fn post_seal_assign_returns_false() {
+        use crate::common::config::{MAX_IPC_CHANNELS, MAX_TASKS};
+        use crate::ipc::{assign_channel, is_sealed, seal_channels};
+
+        // Pre-condition: seal aktif.
+        seal_channels();
+        assert!(is_sealed());
+
+        // Symbolic input: tüm valid (channel_id, producer, consumer) tripleleri.
+        let channel_id: usize = kani::any();
+        let producer: u8 = kani::any();
+        let consumer: u8 = kani::any();
+        kani::assume(channel_id < MAX_IPC_CHANNELS);
+        kani::assume((producer as usize) < MAX_TASKS);
+        kani::assume((consumer as usize) < MAX_TASKS);
+
+        let result = assign_channel(channel_id, producer, consumer);
+        // Sealed durumda her assign reddedilir (atomicity invariant).
+        assert!(!result);
+
+        // Post-condition: seal hala true (idempotency).
+        assert!(is_sealed());
+    }
+
+    // VERIFIES: SNTM-R13 prereq — seal_channels() idempotent (ikinci çağrı
+    //           state'i bozmaz, post-state hala sealed).
+    #[kani::proof]
+    fn seal_channels_idempotent() {
+        use crate::ipc::{is_sealed, seal_channels};
+        seal_channels();
+        let after_first = is_sealed();
+        seal_channels();
+        let after_second = is_sealed();
+        assert!(after_first);
+        assert!(after_second);
+        assert!(after_first == after_second);
     }
 
     // ═══════════════════════════════════════════════════════

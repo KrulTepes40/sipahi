@@ -22,7 +22,7 @@ authors = ["gzhno"]
 # ayrı sub-workspace olarak `cargo {build,test,run}` ile invocation
 # tools/sntm-validate/ cwd'sinde yapılır (kendi .cargo/config.toml'u host
 # target'ı zorlar).
-members = [".", "sipahi_api", "tasks/task_hello"]
+members = [".", "sipahi_api", "tasks/task_hello", "tasks/task_world"]
 exclude = ["tools/sntm-validate", "tools/sntm-pack"]
 resolver = "2"
 

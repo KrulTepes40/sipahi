@@ -1534,6 +1534,142 @@ fn test_sys_exit_runtime_isolates_task() {
         "[FAIL] isolate_task runtime broken [FAIL]");
 }
 
+// ─── U-27 SNTM Phase 5 — Two-task demo + sealed channel atomicity ───
+
+/// U-27 SNTM-R12 statik kanıt — PMP_PROFILES[2]+[3] pair-wise region disjoint.
+// VERIFIES: SNTM-R12 (cross-task PMP isolation runtime spot check — NO trap)
+// CALLS:    crate::kernel::pmp::profile::get_pmp_profile
+// FAILS-IF: task_hello (id=2) ve task_world (id=3) profilleri overlap'lı
+//           region içeriyorsa (sntm-validate compile-time bypass + codegen
+//           drift), ya da profile EMPTY (manifest yüklenmedi).
+// SCOPE: Runtime ihlal test (cross-isolation-demo + trap hook) U-27.5'e DEFER.
+fn test_pmp_profiles_disjoint() {
+    arch::uart::println("[TEST] PMP_PROFILES[2]+[3] pair-wise disjoint (SNTM-R12 static)");
+    use crate::kernel::pmp::profile::get_pmp_profile;
+
+    let p2 = match get_pmp_profile(2) {
+        Some(p) => p,
+        None => {
+            test_result(false, "", "[FAIL] PMP_PROFILES[2] empty");
+            return;
+        }
+    };
+    let p3 = match get_pmp_profile(3) {
+        Some(p) => p,
+        None => {
+            test_result(false, "", "[FAIL] PMP_PROFILES[3] empty");
+            return;
+        }
+    };
+    let regions_2 = p2.active_regions();
+    let regions_3 = p3.active_regions();
+
+    let mut disjoint = true;
+    let mut i = 0;
+    while i < regions_2.len() {
+        let r2 = &regions_2[i];
+        let r2_end = r2.base.checked_add(r2.size).unwrap_or(usize::MAX);
+        let mut j = 0;
+        while j < regions_3.len() {
+            let r3 = &regions_3[j];
+            let r3_end = r3.base.checked_add(r3.size).unwrap_or(usize::MAX);
+            // Half-open intersection: NOT (r2_end <= r3.base || r3_end <= r2.base).
+            let overlap = !(r2_end <= r3.base || r3_end <= r2.base);
+            if overlap {
+                disjoint = false;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    test_result(disjoint,
+        "[PASS] PMP_PROFILES[2] + [3] disjoint (SNTM-R12 static) [OK]",
+        "[FAIL] PMP_PROFILES[2] and [3] overlap — cross-task isolation broken");
+}
+
+/// U-27 SNTM-R14 — iki native task runnable + is_sntm_native flag invariant.
+// VERIFIES: SNTM-R14 (multi-task SNTM scheduler integrity)
+// CALLS:    crate::kernel::scheduler::{task_state_for_test, is_task_sntm_native}
+// FAILS-IF: task 2 veya task 3 state Ready/Running değil, ya da is_sntm_native
+//           flag drift (false beklenen task'lar için true, true beklenen task'lar
+//           için false). Boot context invariant: native_create_task çağrısı
+//           sonrası state = Ready, is_sntm_native = true.
+fn test_two_native_tasks_runnable() {
+    arch::uart::println("[TEST] task_hello (id=2) + task_world (id=3) runnable + SNTM flag");
+    use crate::common::types::TaskState;
+    use crate::kernel::scheduler;
+
+    let st2 = scheduler::task_state_for_test(2);
+    let st3 = scheduler::task_state_for_test(3);
+    let flag2 = scheduler::is_task_sntm_native(2);
+    let flag3 = scheduler::is_task_sntm_native(3);
+    let flag0 = scheduler::is_task_sntm_native(0);  // task_a (legacy) → false beklenen
+    let flag1 = scheduler::is_task_sntm_native(1);  // task_b (legacy) → false beklenen
+
+    let st2_ok = matches!(st2, TaskState::Ready | TaskState::Running);
+    let st3_ok = matches!(st3, TaskState::Ready | TaskState::Running);
+    let flags_ok = flag2 && flag3 && !flag0 && !flag1;
+
+    let pass = st2_ok && st3_ok && flags_ok;
+    test_result(pass,
+        "[PASS] two native tasks runnable + is_sntm_native flag invariant [OK]",
+        "[FAIL] two-task SNTM scheduler integrity broken");
+}
+
+/// U-27 SNTM-R14 — native_create_task idempotent.
+// VERIFIES: SNTM-R14 (ikinci çağrı state'i bozmaz; mevcut config preserved)
+// CALLS:    crate::kernel::scheduler::native_create_task
+// FAILS-IF: task_id=2 ile ikinci native_create_task çağrı: önceki state'i
+//           overwrite ederse (return Some + state reset) ya da state başka
+//           bir değer alırsa. Beklenen: None (DENY) + state Ready preserved.
+fn test_native_create_task_idempotent() {
+    arch::uart::println("[TEST] native_create_task idempotent (SNTM-R14)");
+    use crate::common::types::{NativeTaskConfig, TaskState};
+    use crate::kernel::scheduler;
+
+    // PRE: task 2 (task_hello) Ready post-boot.
+    let pre_state = scheduler::task_state_for_test(2);
+    let pre_ok = matches!(pre_state, TaskState::Ready | TaskState::Running);
+
+    // İkinci çağrı: task_id=2 ile farklı config (priority değişikliği teşhis).
+    // Beklenen: None (zaten Ready → DENY) + state preserved.
+    let cfg = NativeTaskConfig {
+        task_id: 2, priority: 99, dal: 3,
+        budget_cycles: 999_999, period_ticks: 99,
+    };
+    let result = scheduler::native_create_task(&cfg);
+    let returned_none = result.is_none();
+
+    let post_state = scheduler::task_state_for_test(2);
+    let state_preserved = matches!(post_state, TaskState::Ready | TaskState::Running);
+
+    let pass = pre_ok && returned_none && state_preserved;
+    test_result(pass,
+        "[PASS] native_create_task idempotent (2nd call DENY + state preserved) [OK]",
+        "[FAIL] native_create_task NOT idempotent — state corruption risk");
+}
+
+/// U-27 SNTM-R13 — sealed channel atomicity runtime.
+// VERIFIES: SNTM-R13 (boot sonrası seal_channels() çağrıldı,
+//           assign_channel REDDEDIR; seal flag reset YOK)
+// CALLS:    crate::ipc::{is_sealed, assign_channel}
+// FAILS-IF: is_sealed() false (boot seq seal_channels çağırmadı),
+//           sealed iken assign_channel kabul ederse (flag check bypass),
+//           ya da assign sonrası is_sealed false (reset side-effect).
+fn test_sealed_channel_assign_rejected() {
+    arch::uart::println("[TEST] sealed channel atomicity (SNTM-R13)");
+    use crate::ipc::{assign_channel, is_sealed};
+
+    let pre_sealed = is_sealed();
+    let ok = assign_channel(7, 0, 1);  // channel 7 boş, ama seal aktif olmalı
+    let post_sealed = is_sealed();
+
+    let pass = pre_sealed && !ok && post_sealed;
+    test_result(pass,
+        "[PASS] sealed channel atomicity: post-seal reassign REJECTED [OK]",
+        "[FAIL] sealed channel atomicity broken");
+}
+
 /// Tüm entegrasyon testlerini çalıştır
 /// Fail varsa kernel HALT — production'da test başarısız = boot durmalı (DO-178C)
 /// NOT: test_wcet_limits() QEMU TCG'de her zaman EXCEED — bu FAIL sayılmaz
@@ -1589,8 +1725,19 @@ pub fn run_all() {
     test_native_task_loaded_to_region();
     test_native_task_bss_zero();
     test_native_task_stack_zero();
+
+    // U-27 SNTM Phase 5 — two-task demo + sealed channel atomicity.
+    // ÖNEMLI sıralama: cross-task + idempotent + seal testleri sys_exit'ten ÖNCE
+    // (sys_exit task 2'yi Isolated yapıyor — sonraki test'ler bozulur).
+    arch::uart::println("");
+    arch::uart::println("[TEST] U-27 SNTM Phase 5 — two-task + sealed channel:");
+    test_pmp_profiles_disjoint();          // SNTM-R12 static
+    test_two_native_tasks_runnable();      // SNTM-R14
+    test_native_create_task_idempotent();  // SNTM-R14
+    test_sealed_channel_assign_rejected(); // SNTM-R13
+
     // FIX-F: sys_exit test EN SON (task 2 Isolated yapar — diğer test'lere
-    // etki etmesin).
+    // etki etmesin). U-27 test'leri yukarıda → task 2 hala Ready.
     test_sys_exit_runtime_isolates_task();
 
     // U-24 SNTM Phase 2 tests — table-driven helper semantics:

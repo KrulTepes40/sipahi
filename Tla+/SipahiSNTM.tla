@@ -14,11 +14,13 @@ EXTENDS Integers, FiniteSets
 
 CONSTANTS
     Tasks,                 \* Set of task IDs
+    Channels,              \* U-27: IPC channel IDs (small set for state cap)
     ReservedLowEntries,    \* Kernel + UART PMP entries (8)
     MaxPmpEntries          \* Total PMP entry budget (16)
 
 ASSUME
     /\ Cardinality(Tasks) \in 1..4
+    /\ Cardinality(Channels) \in 1..2     \* U-27: state explosion guard
     /\ ReservedLowEntries = 8
     /\ MaxPmpEntries = 16
 
@@ -28,9 +30,12 @@ VARIABLES
     kernelPmpInit,   \* Ghost: boot-time kernel+UART snapshot (immutable)
     miMode,          \* TRUE if M-mode, FALSE if U-mode
     mie,             \* mstatus.MIE interrupt-enable bit
-    currentTask      \* Currently running task or "NONE"
+    currentTask,     \* Currently running task or "NONE"
+    sealed,          \* U-27: IPC channels sealed flag (post-boot lock)
+    channels,        \* U-27: channels[c] \in Tasks \cup {"NONE"} — producer assignment
+    channelsAtSeal   \* U-27: ghost snapshot at SealChannels — atomicity proof
 
-vars == <<state, pmp, kernelPmpInit, miMode, mie, currentTask>>
+vars == <<state, pmp, kernelPmpInit, miMode, mie, currentTask, sealed, channels, channelsAtSeal>>
 
 TaskState == { "Loaded", "Ready", "Running", "Isolated", "Dead" }
 PmpClass  == { "Locked", "Dynamic", "Off" }
@@ -43,6 +48,9 @@ Init ==
     /\ miMode = TRUE        \* boot in M-mode
     /\ mie = FALSE          \* interrupts disabled at boot
     /\ currentTask = "NONE"
+    /\ sealed = FALSE       \* U-27: channels unsealed at boot
+    /\ channels = [c \in Channels |-> "NONE"]  \* U-27: no producers yet
+    /\ channelsAtSeal = [c \in Channels |-> "NONE"]  \* U-27: ghost snapshot
 
 (* FIX-1: kernel + UART entries (0..ReservedLowEntries-1) NEVER change.
    ReloadAtomic only rewrites dynamic range (ReservedLowEntries..). *)
@@ -67,7 +75,7 @@ ReloadAtomic ==
 Boot(t) ==
     /\ state[t] = "Loaded"
     /\ state' = [state EXCEPT ![t] = "Ready"]
-    /\ UNCHANGED <<pmp, kernelPmpInit, miMode, mie, currentTask>>
+    /\ UNCHANGED <<pmp, kernelPmpInit, miMode, mie, currentTask, sealed, channels, channelsAtSeal>>
 
 (* U-26 SNTM Phase 4 — Native task load transition.
    Boot context (M-mode, MIE=0). Loader bounded_copy + zero_fill yapar AMA
@@ -80,7 +88,7 @@ LoadNative(t) ==
     /\ miMode = TRUE
     /\ mie = FALSE
     /\ state' = [state EXCEPT ![t] = "Ready"]
-    /\ UNCHANGED <<pmp, kernelPmpInit, miMode, mie, currentTask>>
+    /\ UNCHANGED <<pmp, kernelPmpInit, miMode, mie, currentTask, sealed, channels, channelsAtSeal>>
 
 Dispatch(t) ==
     /\ state[t] = "Ready"
@@ -92,7 +100,7 @@ Dispatch(t) ==
     /\ currentTask' = t
     /\ miMode' = FALSE          \* mret → U-mode
     /\ mie' = TRUE              \* mstatus.MIE bit set in mstatus
-    /\ UNCHANGED kernelPmpInit
+    /\ UNCHANGED <<kernelPmpInit, sealed, channels, channelsAtSeal>>
 
 Preempt(t) ==
     /\ currentTask = t
@@ -101,7 +109,7 @@ Preempt(t) ==
     /\ currentTask' = "NONE"
     /\ miMode' = TRUE           \* trap → M-mode
     /\ mie' = FALSE
-    /\ UNCHANGED <<pmp, kernelPmpInit>>
+    /\ UNCHANGED <<pmp, kernelPmpInit, sealed, channels, channelsAtSeal>>
 
 ExitVoluntary(t) ==
     /\ currentTask = t
@@ -110,7 +118,7 @@ ExitVoluntary(t) ==
     /\ currentTask' = "NONE"
     /\ miMode' = TRUE
     /\ mie' = FALSE
-    /\ UNCHANGED <<pmp, kernelPmpInit>>
+    /\ UNCHANGED <<pmp, kernelPmpInit, sealed, channels, channelsAtSeal>>
 
 Isolate(t) ==
     /\ state[t] \in {"Running", "Ready"}
@@ -118,7 +126,26 @@ Isolate(t) ==
     /\ currentTask' = IF currentTask = t THEN "NONE" ELSE currentTask
     /\ miMode' = IF currentTask = t THEN TRUE ELSE miMode
     /\ mie' = IF currentTask = t THEN FALSE ELSE mie
-    /\ UNCHANGED <<pmp, kernelPmpInit>>
+    /\ UNCHANGED <<pmp, kernelPmpInit, sealed, channels, channelsAtSeal>>
+
+(* U-27 SNTM-R13: Pre-seal channel assignment — boot context.
+   ipc::assign_channel modeli. Sealed durumda no-op (action disabled). *)
+AssignChannel(c, p) ==
+    /\ sealed = FALSE
+    /\ miMode = TRUE
+    /\ mie = FALSE
+    /\ channels' = [channels EXCEPT ![c] = p]
+    /\ UNCHANGED <<state, pmp, kernelPmpInit, miMode, mie, currentTask, sealed, channelsAtSeal>>
+
+(* U-27 SNTM-R13: SealChannels — boot sonrası tek seferlik kilit.
+   Ghost: channelsAtSeal snapshot atomicity invariant için. Idempotent —
+   ikinci çağrı state'i bozmaz. *)
+SealChannels ==
+    /\ miMode = TRUE
+    /\ mie = FALSE
+    /\ sealed' = TRUE
+    /\ channelsAtSeal' = IF sealed = FALSE THEN channels ELSE channelsAtSeal
+    /\ UNCHANGED <<state, pmp, kernelPmpInit, miMode, mie, currentTask, channels>>
 
 Next ==
     \/ \E t \in Tasks : Boot(t)
@@ -127,6 +154,8 @@ Next ==
     \/ \E t \in Tasks : Preempt(t)
     \/ \E t \in Tasks : ExitVoluntary(t)
     \/ \E t \in Tasks : Isolate(t)
+    \/ \E c \in Channels, p \in Tasks : AssignChannel(c, p)   \* U-27 SNTM-R13
+    \/ SealChannels                                            \* U-27 SNTM-R13
 
 Spec == Init /\ [][Next]_vars
 
@@ -138,7 +167,10 @@ TypeOK ==
     /\ kernelPmpInit \in [0..(ReservedLowEntries - 1) -> PmpClass]
     /\ miMode \in BOOLEAN
     /\ mie \in BOOLEAN
-    /\ currentTask = "NONE" \/ currentTask \in Tasks
+    /\ (currentTask = "NONE" \/ currentTask \in Tasks)
+    /\ sealed \in BOOLEAN
+    /\ channels \in [Channels -> Tasks \cup {"NONE"}]
+    /\ channelsAtSeal \in [Channels -> Tasks \cup {"NONE"}]
 
 (* INV 1 (SNTM-R6 + FIX-1): Kernel + UART PMP entries bit-equal to boot snapshot.
    No reload path overwrites entries 0..ReservedLowEntries-1. *)
@@ -173,6 +205,14 @@ LoaderInvariant ==
     \A i \in 0..(ReservedLowEntries - 1) :
         pmp[i] = kernelPmpInit[i]
 
+(* INV 7 (U-27 SNTM-R13): Sealed channel atomicity — seal SONRASI
+   channels[c] kalıbı SEAL anındaki snapshot ile birebir aynı kalır.
+   AssignChannel sealed=TRUE iken kabul edilmez (action disabled),
+   SealChannels idempotent (ikinci çağrı snapshot'ı bozmaz). *)
+SealedAtomicityInvariant ==
+    sealed = TRUE =>
+        \A c \in Channels : channels[c] = channelsAtSeal[c]
+
 THEOREM Spec => []TypeOK
 THEOREM Spec => []KernelPmpInvariant
 THEOREM Spec => []LoaderInvariant
@@ -180,5 +220,6 @@ THEOREM Spec => []UModeRequiresDispatch
 THEOREM Spec => []NoIsolatedRunning
 THEOREM Spec => []AtMostOneRunning
 THEOREM Spec => []RunningIsCurrent
+THEOREM Spec => []SealedAtomicityInvariant   \* U-27 SNTM-R13
 
 ====

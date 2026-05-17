@@ -31,6 +31,7 @@ impl Permission {
 /// inline-code execute Read+Execute, vb.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Access {
     Read    = 0,
     Write   = 1,

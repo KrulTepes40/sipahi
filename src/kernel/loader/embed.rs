@@ -23,3 +23,17 @@ pub static TASK_HELLO_RODATA: &[u8] =
 /// FIX-D: load_region zero_fill ÖNCE, sonra src copy).
 pub static TASK_HELLO_DATA: &[u8] =
     include_bytes!("../../../target/native/task_hello.data.bin");
+
+// ─── U-27 SNTM Phase 5: task_world (task_id=3) ────────────────────────
+
+/// task_world .text segment — RX, base 0x80700000 (task_hello + 1MB margin).
+pub static TASK_WORLD_TEXT: &[u8] =
+    include_bytes!("../../../target/native/task_world.text.bin");
+
+/// task_world .rodata segment — R, base 0x80704000.
+pub static TASK_WORLD_RODATA: &[u8] =
+    include_bytes!("../../../target/native/task_world.rodata.bin");
+
+/// task_world .data segment — RW, base 0x80705000.
+pub static TASK_WORLD_DATA: &[u8] =
+    include_bytes!("../../../target/native/task_world.data.bin");

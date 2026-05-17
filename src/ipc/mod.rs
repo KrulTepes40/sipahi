@@ -219,6 +219,14 @@ pub fn seal_channels() {
     unsafe { *CHANNELS_SEALED.get_mut() = true; }
 }
 
+/// U-27 SNTM-R13: Seal flag accessor — test + Kani proof tarafından kullanılır.
+/// Production'da read-only; runtime'da reset YOK (seal_channels idempotent).
+#[cfg(any(feature = "self-test", kani))]
+pub fn is_sealed() -> bool {
+    // SAFETY: Single-hart read.
+    unsafe { *CHANNELS_SEALED.get() }
+}
+
 /// Caller bu kanala SEND edebilir mi (atanmış producer mı)?
 /// Default deny: CHANNEL_UNASSIGNED (0xFF) != caller (caller < MAX_TASKS = 8).
 pub fn can_send(channel_id: usize, caller_task_id: u8) -> bool {

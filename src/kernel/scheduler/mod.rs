@@ -256,6 +256,9 @@ pub(crate) fn is_task_sntm_native(task_id: u8) -> bool {
 /// SAFETY: Boot context, MIE=0, single hart. Manifest task_id PMP profile
 /// için validated (build-time const).
 /// U-26: production'da self-test feature altında çağrılır (task_hello defer U-27).
+/// U-27 FIX-G: SNTM-R14 idempotency — ikinci çağrı (zaten Ready/Running task_id
+/// için) None döner, state DEĞIŞMEZ. Aksi halde scheduler runtime'da
+/// double-create state corruption riski.
 #[allow(dead_code)]
 pub(crate) fn native_create_task(cfg: &crate::common::types::NativeTaskConfig)
     -> Option<u8>
@@ -266,6 +269,16 @@ pub(crate) fn native_create_task(cfg: &crate::common::types::NativeTaskConfig)
 
     let profile = crate::kernel::pmp::profile::get_pmp_profile(task_id)?;
     if profile.region_count < 1 { return None; }
+
+    // U-27 FIX-G SNTM-R14: Idempotency — task slot zaten aktif ise DENY.
+    // SAFETY: Single-hart, boot/test context, no concurrent access.
+    let already_active = unsafe {
+        let t = &TASKS.get()[task_id as usize];
+        matches!(t.state, TaskState::Ready | TaskState::Running)
+    };
+    if already_active {
+        return None;
+    }
     let regions = profile.active_regions();
     let text_region  = &regions[0];
     // Stack region: last region (manifest convention: text, rodata, data, stack).
@@ -298,7 +311,14 @@ pub(crate) fn native_create_task(cfg: &crate::common::types::NativeTaskConfig)
         t.period_counter   = 0;
         t.watchdog_counter     = 0;
         t.watchdog_limit       = WATCHDOG_LIMIT;
-        t.watchdog_window_min  = WATCHDOG_WINDOW_MIN;
+        // U-27 FIX-C: Native task'lar için watchdog window check disabled.
+        // SNTM native task yield ritmi (tight yield_cpu loop) WATCHDOG_WINDOW_MIN=3
+        // ile çakışıyor (kick-too-early → policy degrade cycle → instruction
+        // access fault). Window check WASM-style sandboxed kontrol akışı için
+        // anlamlı, RISC-V native code için anlamlı değil (PMP + budget yeterli
+        // izolasyon). window_min=0 → window check no-op (watchdog_kick'te
+        // `if window > 0 && counter < window` koşulu false → güvenli).
+        t.watchdog_window_min  = 0;
         t.original_budget      = cfg.budget_cycles;
         // pmp_addr_napot: legacy unused (native task reload_pmp_profile kullanır).
         t.pmp_addr_napot   = 0;
