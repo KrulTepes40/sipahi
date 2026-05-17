@@ -5,6 +5,196 @@ All notable changes to Sipahi microkernel.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - U-27.5 SNTM-R12 Runtime Observation
+
+### Added (cross-task PMP runtime ihlal observe + script gate)
+- **`cross-isolation-demo` feature** (root Cargo.toml + tasks/task_hello/Cargo.toml,
+  default OFF, `check-cfg` listesine eklendi — clippy `-D warnings` guard):
+  opt-in runtime gözlem; production unaffected (compile-out), self-test
+  unaffected (feature DAHIL EDİLMEZ).
+- **`tasks/task_hello/src/main.rs`**: `cfg(cross-isolation-demo)` altında
+  deliberate cross-region write — `*0x80705000 = 0xAA` (task_world.data,
+  task_hello PMP profile dışı). Disassembly: 6 instruction (lui+addi+slli+li+sb).
+- **`src/arch/trap.rs` mcause 5|7 IN-HANDLER state check** (Codex hardening):
+  `handle_task_fault()` SONRASI `task_state_for_test` ile attacker (task=2)
+  Isolated mı + victim (task=3) Ready/Running mı doğrulanır. Marker:
+  - `[OK] Cross-task PMP isolation enforced: task=2 attempted=0x80705000 REJECTED`
+    SADECE task=2 attacker + Isolated + victim Ready/Running ise
+  - `[FAIL] Cross-task PMP isolation BROKEN: ...` collateral damage (victim
+    Dead/Isolated) ya da unexpected attacker durumunda
+  - **SILENT** restart pattern sırasında (`PolicyEvent::WasmTrap` event=2
+    `restart_count < MAX_RESTART_FAULT=3` → Restart×3 → Isolate; DAL-D 3-şans
+    politikası, doğru davranış)
+- **`scripts/check_cross_isolation.sh`** (yeni, 4-gate QEMU log verification):
+  - Gate 1: `[OK] Cross-task PMP isolation enforced: task=2` marker var
+  - Gate 2: `[FAIL] ... BROKEN` marker YOK
+  - Gate 3: marker sonrası ≥3 `[TICK]` (task_world unaffected + scheduler ilerliyor)
+  - Gate 4: NO FATAL / [NF] / [POLICY] SHUTDOWN
+  Fail durumunda non-zero exit; make target hata propagate eder.
+- **`make run-cross-isolation`** Makefile target: `SIPAHI_CROSS_ISOLATION=1`
+  env propagation (build_native_tasks.sh task_hello'yu feature ile build eder),
+  `--features cross-isolation-demo,debug-boot` kernel build (Codex fix: `self-test`
+  feature DAHIL EDİLMEZ — `tests::run_all` scheduler START öncesi çalışır,
+  runtime observation için uygun değil; timing bug guard), QEMU 30s,
+  `scripts/check_cross_isolation.sh /tmp/u275_xi.log` invocation.
+- **`scripts/build_native_tasks.sh`**: `SIPAHI_CROSS_ISOLATION` env → task_hello
+  cargo build'a `--features cross-isolation-demo` propagate eder.
+- **`scripts/check_coverage.sh` schema extension**: `required_scripts` field
+  (~12 satır, `os.access(X_OK)` guard ile executable kontrolü). Codex fix:
+  kernel self-test ismi DEĞİL, script gate adı doğrulanır.
+- **`src/kernel/scheduler/mod.rs`**: `task_state_for_test` cfg gate genişletildi
+  (`any(feature = "self-test", feature = "cross-isolation-demo")`) — trap.rs
+  IN-HANDLER state check için minimum erişim.
+
+### Changed
+- **`coverage.toml` SNTM-R12 entry**: `deferred = "runtime_observe"` KALDIRILDI
+  (statik kanıt + runtime observation tam); `required_scripts =
+  ["check_cross_isolation.sh"]` eklendi (Codex fix: kernel self-test ismi DEĞİL);
+  `description` + `fault_model` genişletildi (4-gate senaryoları).
+- **`coverage.toml`** yeni `[feature.cross-isolation-demo]` entry
+  (`non_safety = true` — runtime test gate feature, safety mekanizması değil).
+- **`src/tests/mod.rs`**: yorum sadeleştirildi (`cross-isolation-demo` referansı
+  kaldırıldı). Kullanıcı dikkat 5 birebir uyum: kernel self-test'te
+  `cross-isolation-demo` cfg gate YOK; runtime gate sadece script/Makefile.
+
+### Codex 5-Madde Dikkat Noktası (hepsi karşılandı)
+1. **check_cross_isolation.sh fail'de non-zero exit** ✓ — her 4 gate `exit 1`
+2. **[FAIL] marker varsa kesin fail** ✓ — Gate 2 `grep -qF` + exit 1
+3. **Marker SADECE task=2 + Isolated + victim Ready/Running ise [OK] bassın**
+   ✓ — trap.rs `if task_id == 2 && attacker_isolated && victim_runnable` guard;
+   restart pattern sırasında SILENT (sahte [FAIL] yazmaz)
+4. **Production marker leak YOK** ✓ — `grep -c Cross-task /tmp/u275_prod.log = 0`
+5. **src/tests/mod.rs cross-isolation-demo eklenmedi** ✓ —
+   `grep -c cross-isolation-demo src/tests/mod.rs = 0`
+
+### Verification (§18.7 + §18.4)
+- Kani proof count: **213/213 PASS** (no delta — U-27 statik kanıtlar korunur)
+- TLA+: **8/8 specs PASS** (SipahiSNTM 138 distinct states korunur)
+- Self-test (normal `make run-self-test`): **ALL TESTS PASSED**
+  (cross-isolation feature OFF, U-27'nin 14 test korunur)
+- Cross-isolation gate (`make run-cross-isolation`): **4/4 PASS**
+  (marker var, BROKEN yok, post-marker [TICK]=3, no FATAL)
+- Production smoke (`make run` 30s): **NF/FATAL/POLICY-free**,
+  `Cross-task` marker count = 0 (compile-out kanıtı)
+- Coverage: **15 feature** (cross-isolation-demo eklendi, non_safety=true)
+  + **14 requirement** (R12 deferred kalktı, required_scripts schema)
+- Clippy: -D warnings PASS (check-cfg list `cross-isolation-demo` dahil)
+
+### Runtime Bulgu (kernel policy davranışı)
+`PolicyEvent::WasmTrap` (event=2) için `decide_action`
+([policy/mod.rs:107-110](src/kernel/policy/mod.rs#L107-L110)):
+`restart_count < MAX_RESTART_FAULT=3` → `Restart`, aksi → `Isolate`.
+Cross-task ihlal yapan task DAL-D için 3 trap'te Restart edilir, 4. trap'te
+Isolated. Trap marker bu pattern'a uyumlu — Restart sırasında SILENT (beklenen
+3-şans davranışı), 4. trap'te `[OK]` (full pipeline kanıtı).
+
+### Carry-forward (U-28+ FPGA bring-up bekliyor)
+- U-28: CVA6 FPGA silicon test (hardware bekliyor)
+- U-29: WASM tamamen sil + ed25519-compact migration (~1 gün)
+- v1.7 SAFE-2: Typed IPC codegen + Static cap table
+- v1.8 SAFE-3: Binary verifier + Task certificate
+- v1.9 SAFE-4: Stack analyzer
+
+## [Unreleased] - U-27 SNTM Phase 5
+
+### Added (two-task demo + v1.5 closure)
+- **`tasks/task_world/`** (yeni dizin) — ikinci native SNTM task (task_id=3):
+  - `Cargo.toml`, `build.rs`, `task_world.ld` (MEMORY origin 0x80700000),
+    `src/main.rs` (forever yield_cpu loop, fail-closed `panic = syscall::exit(255)`)
+  - workspace member ([Cargo.toml:25](Cargo.toml#L25))
+  - 16K text + 4K rodata + 4K data + 8K stack NAPOT regions
+- **`sipahi.toml`**: `[[task]]` task_world entry (task_id=3, priority=7,
+  budget=500_000, period=50, DAL-D) + 4 region (0x80700000+, 1MB margin from
+  task_hello). FIX-C tuned values.
+- **`src/kernel/pmp/generated.rs`**: PMP_PROFILES[3] regen (sntm-validate
+  codegen) — NAPOT encoding bit-exact, region count=4.
+- **`src/kernel/loader/`** generic helper refactor:
+  - `NativeTaskSegments` struct (text + Option<rodata> + Option<data>)
+  - `load_native_task(task_id, &segments)` — task_hello + task_world ortak path
+  - `load_task_hello()` + `load_task_world()` thin wrapper
+  - `load_region_zero_only` — segment'siz region için FIX-D zero-fill only
+- **`src/kernel/loader/embed.rs`**: `TASK_WORLD_TEXT/RODATA/DATA` include_bytes!()
+- **`scripts/build_native_tasks.sh`**: task_world build + sntm-pack invocation
+- **`src/boot.rs`**: task_hello + task_world production live boot (U-26
+  `cfg(self-test)` gate KALDIRILDI), her ikisi `budget=500_000 period=50`
+  (FIX-C tune).
+- **`src/ipc/mod.rs`**: `is_sealed()` accessor (cfg `any(self-test, kani)`) —
+  SNTM-R13 test ve Kani proof için.
+- **TLA+ SipahiSNTM extension**: Multi-task `LoadNative(t)` + `AssignChannel(c,p)` +
+  `SealChannels` transitions + `channels` + `channelsAtSeal` ghost variables +
+  `SealedAtomicityInvariant`. 23 → **138 distinct states**, 8/8 PASS.
+- **Kani proofs** (4 yeni, R12+R13):
+  - `check_ptr_in_profile_rejects_other_task_region` (SNTM-R12 statik)
+  - `check_ptr_in_profile_symmetric_isolation` (SNTM-R12 symmetric)
+  - `post_seal_assign_returns_false` (SNTM-R13 atomicity)
+  - `seal_channels_idempotent` (SNTM-R13 idempotent)
+- **Self-test entegrasyon (4 yeni)**: `test_pmp_profiles_disjoint`
+  (R12 disjoint), `test_two_native_tasks_runnable` (R14 flags+state),
+  `test_native_create_task_idempotent` (R14 FIX-G idempotent),
+  `test_sealed_channel_assign_rejected` (R13 runtime).
+- **sntm-validate negative tests**: `cross_task_overlap_rejected` +
+  `two_tasks_disjoint_accepted` (tools/sntm-validate/tests/integration.rs).
+- **coverage.toml** R12/R13/R14 entries (description + tests + proofs + fault_model).
+- **`scripts/sntm_sprint_gate.sh` E5 fix** (Codex pre-review): `command -v
+  sntm-pack` PATH lookup yanlıştı (false-green SKIP); repo-local
+  `tools/sntm-pack/target/release/sntm-pack` veya `cargo build` fallback.
+
+### Fixed (5 kritik kernel bug — U-27 production live boot ile keşfedildi)
+- **`src/arch/context.S` trap frame mepc slot sync** (KRITIK, U-26'da masked):
+  `switch_context` CSR mepc'ye yazıyor ama `trap.S .restore_regs` mepc'i trap
+  frame slot'undan (`__stack_top - 136`) geri yüklüyor → switch_context'in
+  CSR yazısı ezilir → mret yanlış (önceki task'ın) mepc'e gider → instruction
+  access fault. U-26'da task_hello early-exit ile gizliydi; U-27 iki native
+  task + tam preemption ile patladı. Fix: switch_context trap frame mepc
+  slot'unu da güncellesin (`sd t0, -136(t1)`).
+- **`src/arch/pmp.rs` legacy reload pmpaddr9..15 zero**: `write_per_task_napot`
+  pmpcfg2'yi sıfırlıyor ama pmpaddr9..15 HW register'larında önceki native
+  task'ın region adresleri kalıyordu. Functional impact yoktu (cfg OFF) ama
+  `verify_pmp_integrity` shadow=0 bekliyor → HW eski değerlerle mismatch →
+  PMP integrity FAIL → POLICY SHUTDOWN. Fix: 7× `csrw pmpaddrN, zero`.
+- **`src/arch/pmp.rs` multi-region reload kullanılmayan pmpaddr zero**:
+  `reload_pmp_profile` aktif region sayısından sonra kalan entries 12..15'i
+  yazmıyordu (önceki task'ın value'su kalıyordu). Aynı shadow drift problemi.
+  Fix: while loop sonu kullanılmayan entries için `write_pmpaddr_dyn(entry, 0)`.
+- **`src/kernel/scheduler/mod.rs` native task `watchdog_window_min = 0`**:
+  Yield-loop tight (yield_cpu/ecall/jump 3 instruction) ile
+  WATCHDOG_WINDOW_MIN=3 ile çakışıyordu (kick-too-early → policy degrade
+  cycle → instruction access fault). SNTM native task'lar için window check
+  WASM-style sandboxed control flow için anlamlı; native RISC-V code için
+  PMP + budget yeterli izolasyon. Fix: `t.watchdog_window_min = 0` (window
+  check no-op, `watchdog_kick`'te `if window > 0` koşulu false → güvenli).
+- **`src/kernel/scheduler/mod.rs` `native_create_task` idempotency (FIX-G)**:
+  Aynı task_id ile ikinci çağrı state'i sessizce overwrite ediyordu (state
+  corruption riski). Fix: `TaskState::Ready | Running` ise `None` döner
+  (DENY), state preserved. SNTM-R14 test gate.
+
+### Verification (§18.7 + §18.4)
+- Kani proof count: 209 → **213** (+4 SNTM-R12/R13)
+- TLA+: **8/8 specs PASS** (SipahiSNTM 23 → 138 distinct states)
+- Self-test: **ALL TESTS PASSED** + 4 yeni `[OK]` marker (R12 disjoint,
+  R14 runnable + idempotent, R13 sealed)
+- Production smoke: **G5.a CI 30s** clean + **G5.b local 120s** clean
+  (NF/FATAL/POLICY-free, 2 native task heartbeat)
+- Coverage: **14 feature, 14 requirement** (R1..R14)
+- SNTM sprint gate: **5 PASS, 0 FAIL, 2 SKIP** (E2 task_world dahil)
+- Clippy: -D warnings PASS
+
+### 14 SNTM Invariant Audit (8 carry + 6 yeni — hepsi GREEN)
+1-8. U-25/U-26'dan korundu (PMP dyn 8..15, kernel 0..7 sabit, legacy
+     fallback, multi-region path gating, shadow sync, native region kernel
+     disjoint, zero-fill ÖNCE)
+9. task_hello production live boot stable (120s clean)
+10. task_world region 0x80700000+ disjoint (sntm-validate + runtime)
+11. seal_channels atomic (Kani + TLA+ SealedAtomicityInvariant)
+12. Cross-task PMP isolation statik (Kani + sntm-validate + runtime disjoint)
+13. native_create_task idempotent (FIX-G)
+14. PMP_PROFILES[2]+[3] disjoint (test_pmp_profiles_disjoint)
+
+### Carry-forward (U-27.5)
+- SNTM-R12 runtime ihlal observation (trap → restart×3 → isolate path)
+- `cross-isolation-demo` feature (opt-in)
+- `scripts/check_cross_isolation.sh` 4-gate verification
+
 ## [Unreleased] - U-26 SNTM Phase 4
 
 ### Added (SNTM Phase 4 — native task loader + sntm-pack tool)

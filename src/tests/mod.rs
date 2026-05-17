@@ -1542,7 +1542,7 @@ fn test_sys_exit_runtime_isolates_task() {
 // FAILS-IF: task_hello (id=2) ve task_world (id=3) profilleri overlap'lı
 //           region içeriyorsa (sntm-validate compile-time bypass + codegen
 //           drift), ya da profile EMPTY (manifest yüklenmedi).
-// SCOPE: Runtime ihlal test (cross-isolation-demo + trap hook) U-27.5'e DEFER.
+// SCOPE: Runtime ihlal test U-27.5'e DEFER (scripts/check_cross_isolation.sh).
 fn test_pmp_profiles_disjoint() {
     arch::uart::println("[TEST] PMP_PROFILES[2]+[3] pair-wise disjoint (SNTM-R12 static)");
     use crate::kernel::pmp::profile::get_pmp_profile;

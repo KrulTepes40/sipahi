@@ -18,6 +18,7 @@ echo ""
 
 python3 - <<'PYEOF'
 import sys
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -234,6 +235,21 @@ for req_id, req in requirements.items():
             errors.append(
                 f"[requirement.{req_id}] proof '{p}' var ama "
                 f"hiçbir source'da '// VERIFIES: {req_id}' yorumu yok"
+            )
+    # U-27.5: required_scripts — runtime gate scripts (NOT kernel self-test).
+    # Codex timing bug fix: cross-isolation gibi runtime observation kernel
+    # tests::run_all scheduler önce çalışır, dış script gate ile yapılmalı.
+    for s in req.get("required_scripts", []):
+        script_path = Path("scripts") / s
+        if not script_path.exists():
+            errors.append(
+                f"[requirement.{req_id}] required_scripts: "
+                f"'scripts/{s}' bulunamadı"
+            )
+        elif not os.access(script_path, os.X_OK):
+            errors.append(
+                f"[requirement.{req_id}] required_scripts: "
+                f"'scripts/{s}' executable değil (chmod +x gerekli)"
             )
 
 # ─── Sonuç ──────────────────────────────────────────────────────────

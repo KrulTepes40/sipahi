@@ -15,8 +15,16 @@ cd "$(dirname "$0")/.."
 OUT_DIR="target/native"
 mkdir -p "$OUT_DIR"
 
-echo "[native] task_hello build (RISC-V)"
-(cd tasks/task_hello && cargo build --release 2>&1 | tail -3)
+# U-27.5: SIPAHI_CROSS_ISOLATION=1 → task_hello cross-isolation-demo feature
+# ile build edilir (deliberate write to 0x80705000). Default unset → production.
+TASK_HELLO_FEATURES=""
+if [ "${SIPAHI_CROSS_ISOLATION:-0}" = "1" ]; then
+    TASK_HELLO_FEATURES="--features cross-isolation-demo"
+    echo "[native] task_hello build (RISC-V) — cross-isolation-demo ENABLED"
+else
+    echo "[native] task_hello build (RISC-V)"
+fi
+(cd tasks/task_hello && cargo build --release $TASK_HELLO_FEATURES 2>&1 | tail -3)
 
 # U-27 SNTM Phase 5: task_world ikinci native task.
 echo "[native] task_world build (RISC-V)"

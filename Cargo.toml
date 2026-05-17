@@ -50,6 +50,11 @@ wasm-sandbox = ["dep:wasmi"] # U-22 G8 [M14]: WASM sandbox (self-test/prototype 
 sntm      = []                # SNTM v1.5 base — task loader, typed IPC, manifest
 sntm-safe = ["sntm"]          # SAFE-1..4 katmanları — task-lint, verifier, cert
 self-test = ["test-keys", "trace", "debug-boot", "wasm-sandbox"] # U-16/U-17/U-22: test + tüm UART output + WASM
+# U-27.5: Cross-task PMP runtime ihlal observation demo (opt-in only).
+# Self-test feature'a EKLENMEZ — kernel tests::run_all scheduler START öncesi
+# çalışır, runtime observation için uygun DEĞIL. make run-cross-isolation ile
+# tetiklenir; production default unaffected (compile-out).
+cross-isolation-demo = []
 
 [dependencies]
 # U-22 G8 [M14]: wasmi optional → wasm-sandbox feature ile aktif olur.
@@ -82,4 +87,4 @@ codegen-units = 1         # Tek derleme birimi (determinizm)
 overflow-checks = true    # Integer overflow → trap (safety-critical)
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys", "multi-hart", "self-test", "trace", "debug-boot", "production-otp", "v2-hal", "wasm-sandbox", "sntm", "sntm-safe"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(feature, values("test-keys", "multi-hart", "self-test", "trace", "debug-boot", "production-otp", "v2-hal", "wasm-sandbox", "sntm", "sntm-safe", "cross-isolation-demo"))'] }

@@ -9,6 +9,12 @@ license = "Apache-2.0"
 name = "task_hello"
 path = "src/main.rs"
 
+# U-27.5 SNTM-R12 runtime observation feature.
+# Default OFF — production task_hello deliberate cross-region write YAPMAZ.
+# Sadece `make run-cross-isolation` build path'i ile aktif.
+[features]
+cross-isolation-demo = []
+
 # Codex review fix: kernel'in dep ağacında sipahi_api YOK.
 # task_hello sipahi_api'yi DIRECT PATH DEP olarak alır.
 # Mimari ayrım: kernel sipahi_api'ye bağımlı OLMAMALI.

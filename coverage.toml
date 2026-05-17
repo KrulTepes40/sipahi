@@ -78,6 +78,12 @@ required_negative_tests = []
 required_kani_proofs    = []
 non_safety              = true
 
+[feature.cross-isolation-demo]
+description = "U-27.5 SNTM-R12 runtime ihlal observation (task_hello deliberate cross-region write → trap → restart×3 → isolate). Opt-in, production default OFF. Validation via scripts/check_cross_isolation.sh (NOT kernel self-test — scheduler START öncesi çalışırdı, timing bug)."
+required_negative_tests = []
+required_kani_proofs    = []
+non_safety              = true
+
 [feature.test-keys]
 description = "QEMU test MAC_KEY=[0x5A; 32] gate (development/CI)"
 required_negative_tests = []
@@ -315,13 +321,11 @@ fault_model     = "isolate_task sonrası state Isolated değil, ikinci çağrı 
 # ─── U-27 SNTM Phase 5 Requirements ──────────────────────────────────────
 
 [requirement.SNTM-R12]
-description     = "Cross-task PMP isolation statik kanıt: task A profile'ı task B region adresini reddedir + manifest overlap compile-time reject + runtime PMP_PROFILES disjoint assertion. Runtime ihlal observe (trap → isolate) U-27.5'e DEFER (Codex pre-review scope creep guard)."
+description     = "Cross-task PMP isolation: task A profile'ı task B region adresini reddedir (Kani statik) + manifest overlap compile-time reject (sntm-validate) + runtime PMP_PROFILES disjoint assertion (kernel self-test) + runtime trap → restart×3 → isolate observe (U-27.5 cross-isolation-demo feature, script gate)."
 required_tests  = ["test_pmp_profiles_disjoint"]
+required_scripts = ["check_cross_isolation.sh"]
 required_proofs = ["check_ptr_in_profile_rejects_other_task_region", "check_ptr_in_profile_symmetric_isolation"]
-fault_model     = "PMP entry overlap allowed (sntm-validate bypass), region size off-by-one (boundary +1 byte kabul), Access::Write task A region'ı için kabul (perm matrix bug), ya da PMP_PROFILES[2]+[3] codegen drift (sntm-validate overlap check bypass)"
-deferred        = "runtime_observe"
-deferred_reason = "Runtime ihlal test'i trap_handler mcause 7 → isolate_task hook + tasks/task_hello cross-isolation-demo feature gerektirir; U-27 production live boot tuning ile scope creep — U-27.5 ayrı sprint"
-deferred_target = "U-27.5 (cross-isolation-demo feature + trap hook)"
+fault_model     = "PMP entry overlap allowed (sntm-validate bypass), region size off-by-one (boundary +1 byte kabul), Access::Write task A region'ı için kabul (perm matrix bug), PMP_PROFILES[2]+[3] codegen drift (sntm-validate overlap check bypass), task A violation sonrası B unaffected değil (collateral damage — check_cross_isolation.sh Gate 3 yakalar), trap handler isolate_task çağrılmadı (mcause 5|7 path missing — IN-HANDLER state check [FAIL] marker yazar, script Gate 2 yakalar), restart_count>=MAX_RESTART_FAULT sonrası hala Isolate edilmedi (policy escalation drift), trap marker emit edilmedi (script Gate 1 fail), ya da scheduler post-trap ilerleyemedi (script Gate 3 [TICK] count fail)"
 
 [requirement.SNTM-R13]
 description     = "Sealed channel atomicity: seal_channels() POST-state assign_channel reddedir (idempotent + atomic — flag reset yok). TLA+ SealedAtomicityInvariant + Kani post-seal proof + runtime self-test."

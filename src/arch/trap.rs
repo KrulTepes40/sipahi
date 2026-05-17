@@ -13,7 +13,7 @@
 //   ecall -> syscall sonucu (trap.S saved a0'a yazar)
 //   interrupt -> 0 (trap.S saved a0'a dokunmaz)
 
-#[cfg(all(not(kani), feature = "debug-boot"))]
+#[cfg(all(not(kani), any(feature = "debug-boot", feature = "cross-isolation-demo")))]
 use crate::arch::uart;
 #[cfg(not(kani))]
 use crate::arch::clint;
@@ -209,6 +209,63 @@ pub extern "C" fn trap_handler(
                     // Genel PMP violation (WASM arena, kernel bölgesi vb.)
                     crate::kernel::scheduler::handle_task_fault();
                 }
+
+                // U-27.5 SNTM-R12 runtime observation: IN-HANDLER state check.
+                //
+                // Kernel policy (WasmTrap, DAL-D): restart_count < MAX_RESTART_FAULT=3
+                // iken Restart, sonra Isolate (decide_action policy/mod.rs:107-110).
+                // İlk 3 trap'te task Restart edilir (state=Ready), 4. trap'te
+                // Isolated. Bu policy DAL-D için 3-şans davranışı — DOĞRU.
+                //
+                // Marker pattern (kullanıcı dikkat 2+3 uyumlu):
+                //   - [OK]: SADECE task=2 attacker + Isolated + victim Ready/Running
+                //   - [FAIL]: GERÇEK anomaly (attacker ≠ 2, ya da victim_runnable=0)
+                //   - Restart sırasında (attacker=2 ama henüz Isolated değil,
+                //     victim runnable): SILENT — marker emit ETME. Bu beklenen
+                //     policy davranışı, sahte [FAIL] yazmak yanlış olur.
+                //
+                // Script Gate 1 ([OK] var): 4. trap sonu marker görür.
+                // Script Gate 2 ([FAIL] yok): collateral damage YOKSA gate PASS.
+                // Production build'de feature compile-out → marker hiç yazılmaz.
+                #[cfg(feature = "cross-isolation-demo")]
+                {
+                    use crate::common::types::TaskState;
+                    let attacker_state =
+                        crate::kernel::scheduler::task_state_for_test(task_id);
+                    let victim_state =
+                        crate::kernel::scheduler::task_state_for_test(3);
+                    let attacker_isolated =
+                        matches!(attacker_state, TaskState::Isolated);
+                    let victim_runnable = matches!(
+                        victim_state,
+                        TaskState::Ready | TaskState::Running
+                    );
+
+                    if task_id == 2 && attacker_isolated && victim_runnable {
+                        // [OK]: Isolate path tamamlandı, victim sağlam.
+                        uart::puts("[OK] Cross-task PMP isolation enforced: task=");
+                        print_u64(task_id as u64);
+                        uart::puts(" attempted=0x");
+                        print_hex(fault_addr);
+                        uart::println(" REJECTED");
+                    } else if task_id == 2 && !victim_runnable {
+                        // [FAIL]: Collateral damage — task_world durdu/öldü.
+                        // Kernel policy yanlış task'ı etkiledi VEYA cross-task
+                        // izolasyon bozuldu (PMP bypass).
+                        uart::puts("[FAIL] Cross-task PMP isolation BROKEN: attacker=");
+                        print_u64(task_id as u64);
+                        uart::puts(" victim_runnable=0 attacker_isolated=");
+                        print_u64(if attacker_isolated { 1 } else { 0 });
+                        uart::println("");
+                    } else if task_id != 2 {
+                        // [FAIL]: Yanlış attacker — beklenmeyen task ihlal yaptı.
+                        uart::puts("[FAIL] Cross-task PMP isolation BROKEN: unexpected_attacker=");
+                        print_u64(task_id as u64);
+                        uart::println("");
+                    }
+                    // else: attacker=2, !isolated, victim_runnable → restart
+                    //       sırasında, SILENT (beklenen policy davranışı).
+                }
                 0
             }
             // U-21 GÖREV 4 [H6]: Unknown exception triage — fail-closed.
@@ -283,5 +340,5 @@ pub extern "C" fn trap_handler(
     }
 }
 
-#[cfg(all(not(kani), feature = "debug-boot"))]
+#[cfg(all(not(kani), any(feature = "debug-boot", feature = "cross-isolation-demo")))]
 use crate::common::fmt::{print_u64, print_hex};

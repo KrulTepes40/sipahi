@@ -12,7 +12,7 @@ BUILD_STD = -Z build-std=core,alloc -Z build-std-features=compiler-builtins-mem
 # build'inde sipahi.ld bulunamıyordu). Sadece kernel build'lerinde aktif.
 KERNEL_RUSTFLAGS = -C link-arg=-Tsipahi.ld
 
-.PHONY: build run clean check kani debug run-self-test regen-pmp build-native
+.PHONY: build run clean check kani debug run-self-test regen-pmp build-native run-cross-isolation
 
 # U-26 SNTM Phase 4 FIX-B: task_hello ELF → embed binaries.
 # build/check/run-self-test/debug HEPSI build-native'a depend.
@@ -45,6 +45,22 @@ run-self-test: build-native
 		-m 512M \
 		-smp 1 \
 		-kernel $(KERNEL)
+
+# U-27.5: Cross-task PMP runtime ihlal demo (opt-in, default OFF).
+# Codex fix: kernel `self-test` feature DAHIL EDILMEZ — tests::run_all
+# scheduler START öncesi çalışır, runtime gözlem için uygun değil. Sadece
+# `cross-isolation-demo + debug-boot` features (TICK markerları script Gate 3
+# için zorunlu). SIPAHI_CROSS_ISOLATION=1 ile task_hello deliberate write
+# build-time propagate edilir. QEMU log /tmp/u275_xi.log'a yazılır,
+# scripts/check_cross_isolation.sh ile 4-gate doğrulanır.
+run-cross-isolation:
+	SIPAHI_CROSS_ISOLATION=1 bash scripts/build_native_tasks.sh
+	RUSTFLAGS="$(KERNEL_RUSTFLAGS)" cargo build --release \
+		--features cross-isolation-demo,debug-boot $(BUILD_STD)
+	timeout 30 $(QEMU) \
+		-machine virt -nographic -bios none -m 512M -smp 1 \
+		-kernel $(KERNEL) 2>&1 | tee /tmp/u275_xi.log || true
+	bash scripts/check_cross_isolation.sh /tmp/u275_xi.log
 
 # Debug modda çalıştır (GDB bağlantısı için bekler)
 debug: build-native

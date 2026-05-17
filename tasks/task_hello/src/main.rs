@@ -20,6 +20,20 @@ pub extern "C" fn _start() -> ! {
     // No global init — Sipahi forbids static initializers.
     // No gp setup — small-data disabled (-G0).
     // No tp setup — TLS not used in SNTM.
+
+    // U-27.5: Deliberate cross-region write to demonstrate PMP isolation.
+    // task_world.data base = 0x80705000 (sipahi.toml task_world[data]).
+    // task_hello PMP profile (entry 8..11) bu adresi KAPSAMIYOR.
+    // Beklenen: STORE_ACCESS_FAULT (mcause=7) → trap → isolate_task(task_hello).
+    // task_world bu sırada DOKUNULMAZ → next tick'te Ready/Running.
+    // Feature default OFF — production build'de bu blok compile-out.
+    #[cfg(feature = "cross-isolation-demo")]
+    unsafe {
+        let target = 0x80705000 as *mut u8;
+        core::ptr::write_volatile(target, 0xAA);
+        // Bu satıra HİÇBİR ZAMAN ulaşılmaz (trap → isolate).
+    }
+
     main_loop()
 }
 

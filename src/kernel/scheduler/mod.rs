@@ -334,7 +334,9 @@ pub(crate) fn native_create_task(cfg: &crate::common::types::NativeTaskConfig)
 }
 
 /// U-26 G9/G10: Self-test helper — task state read (private state için pencere).
-#[cfg(feature = "self-test")]
+/// U-27.5: cross-isolation-demo feature da bu accessor'u kullanır (trap.rs
+/// IN-HANDLER state check), gate genişletildi.
+#[cfg(any(feature = "self-test", feature = "cross-isolation-demo"))]
 #[allow(dead_code)]
 pub(crate) fn task_state_for_test(task_id: u8) -> crate::common::types::TaskState {
     let idx = task_id as usize;
