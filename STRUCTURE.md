@@ -46,9 +46,9 @@ sipahi/
 │   ├── ipc/                     # Layer 2: Communication
 │   │   ├── mod.rs               # SPSC lock-free ring buffer (&self API, CRC32)
 │   │   └── blackbox.rs          # 128-record flight recorder (u64 monotonic tick)
-│   ├── sandbox/                 # Layer 3: WASM isolation
-│   │   ├── mod.rs               # Wasmi runtime, float scanner v2, compute services
-│   │   └── allocator.rs         # Bump allocator (4MB arena, epoch reset)
+│   # U-29 v2.0: sandbox/ klasörü kaldırıldı. v1.x'te WASM isolation (Wasmi
+│   # runtime + bump allocator + compute services) içeriyordu. SNTM Native
+│   # Task Model (tasks/) ile değişti. Layer 3 artık tasks/.
 │   └── common/                  # Cross-cutting
 │       ├── config.rs            # Compile-time constants
 │       ├── types.rs             # TaskState, TaskConfig, Q32, newtypes

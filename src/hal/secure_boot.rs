@@ -37,12 +37,13 @@ use crate::hal::key::{OTP_KEY_SIZE, SIGNATURE_SIZE};
 pub struct Ed25519Provider;
 
 // ─── Gerçek Ed25519 verify (not(kani) guard) ─────────────────────────────────
-// ed25519-dalek Kani içinde çalışmaz (model checking kapsamını aşar).
-// Kani gate: #[cfg(kani)] stub ile kanıtlanır.
+// U-29 v2.0: ed25519-compact (pure no_std + no_alloc) — RFC8032 wire format
+// ed25519-dalek ile bit-eşit. Sadece library imports + error handling değişti.
+// Kani gate: #[cfg(kani)] stub ile kanıtlanır (crypto Kani kapsamı dışı).
 
 #[cfg(all(feature = "fast-sign", not(kani)))]
 impl SignatureVerifier for Ed25519Provider {
-    /// Ed25519 imzasını doğrula — ed25519-dalek v2 (no_std + alloc)
+    /// Ed25519 imzasını doğrula — ed25519-compact v2 (no_std + no_alloc)
     ///
     /// Dönüş: true = geçerli, false = RED
     ///
@@ -51,19 +52,22 @@ impl SignatureVerifier for Ed25519Provider {
     ///   - Bozuk imza (1 bit flip bile red)
     ///   - Mesaj uyumsuzluğu
     fn verify(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        use ed25519_compact::{PublicKey, Signature};
 
         // Public key parse — hatalı key (invalid Edwards nokta) -> false
-        let vk = match VerifyingKey::from_bytes(public_key) {
+        let pk = match PublicKey::from_slice(public_key) {
             Ok(k) => k,
             Err(_) => return false,
         };
 
-        // İmza parse — ed25519-dalek v2: from_bytes infallible (format check yok)
-        let sig = Signature::from_bytes(signature);
+        // İmza parse — ed25519-compact: from_slice Result (length + format check)
+        let sig = match Signature::from_slice(signature) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
 
         // Doğrulama — bütünlük + autentikasyon kontrolü
-        vk.verify(message, &sig).is_ok()
+        pk.verify(message, &sig).is_ok()
     }
 }
 

@@ -77,10 +77,7 @@ pub const IPC_CHANNEL_SLOTS: usize = 16;
 /// Maksimum IPC kanal sayısı
 pub const MAX_IPC_CHANNELS: usize = 8;
 
-/// WASM heap boyutu (byte)
-/// wasmi 1.0.9 Engine::new() + Module::new() lazy allocation ile ~4MB kullanır.
-/// QEMU 512MB RAM, linker script 8MB — 4MB arena güvenli.
-pub const WASM_HEAP_SIZE: usize = 4194304; // 4MB
+// U-29 v2.0: WASM_HEAP_SIZE silindi (wasmi + sandbox/ kaldırıldı, no_alloc kernel).
 
 /// Host call limiti (period başına)
 pub const HOST_CALL_LIMIT: u16 = 16;
@@ -181,11 +178,9 @@ pub const SYS_TASK_INFO: usize = 4;
 pub const SYS_EXIT: usize = 5;       // U-23: SNTM task termination
 pub const SYSCALL_COUNT: usize = 6;  // 5 → 6 (U-23 SYS_EXIT)
 
-// U-22.5 G2: COMPUTE_* ID sabitleri silindi (4 sabit).
-// dispatch_compute fonksiyonu WASM-tied orphan code'du; SNTM v1.5'te
-// task-side typed IPC ile değişiyor. Historical WCET değerleri:
-//   COMPUTE_COPY ~80c, COMPUTE_CRC ~1500c, COMPUTE_MAC ~350c, COMPUTE_MATH ~200c
-// (SIPAHI_V1_TO_V2_TRANSITION.md historical note olarak korunur.)
+// U-29 v2.0: COMPUTE_* yorum bloğu silindi (sabitler U-22.5'te silindi,
+// dispatch_compute + WASM tamamen kaldırıldı). Tarihsel WCET değerleri
+// SIPAHI_V1_TO_V2_TRANSITION.md'de korunur.
 
 // ═══════════════════════════════════════════════════════
 // Capability WCET hedefleri (Sprint 9)
@@ -233,12 +228,9 @@ pub const WATCHDOG_WINDOW_MIN: u32 = 3;
 /// 0 = devre dışı. 100 tick = 1 saniye @ 10ms/tick
 pub const WATCHDOG_LIMIT: u32 = 100;
 
-// U-22.5 G2: WCET_COMPUTE_* sabitleri silindi (4 sabit).
-// Compute service WCET hedefleri WASM dispatch_compute path'i için vardı.
-// Historical reference (FPGA pending):
-//   WCET_COMPUTE_COPY = 80c, WCET_COMPUTE_CRC = 1500c (bit-by-bit),
-//   WCET_COMPUTE_MAC = 350c (BLAKE3), WCET_COMPUTE_MATH = 200c (Q32.32 dot)
-// SIPAHI_V1_TO_V2_TRANSITION.md historical note olarak korunur.
+// U-29 v2.0: WCET_COMPUTE_* yorum bloğu silindi.
+// (Sabitler U-22.5'te + dispatch_compute U-29'da kaldırıldı.
+// Tarihsel WCET değerleri SIPAHI_V1_TO_V2_TRANSITION.md'de korunur.)
 
 // U-22 GÖREV 6 [M10]: WCET zincir -> tick budget invariant.
 // wcet_ordering_consistent (verify.rs:60) tautolojikti (sabitleri kendine

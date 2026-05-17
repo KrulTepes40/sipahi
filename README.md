@@ -31,11 +31,12 @@ Implemented in the current tree:
   limiting
 - Policy engine for restart/isolate/degrade/alert/shutdown style actions
 - Blackbox flight recorder with CRC-protected records
-- Secure-boot verification path using Ed25519 in the current prototype
-- Optional WASM sandbox path behind `wasm-sandbox`; this is being phased out
-  in favor of SNTM
-- SNTM Phase 1 scaffolding: `sipahi_api`, `task_hello`, `sipahi.toml`, and
-  task-side syscall wrappers
+- Secure-boot verification path using Ed25519 (ed25519-compact, no_alloc)
+- SNTM v2.0: `sipahi_api`, `task_hello` + `task_world` native tasks,
+  `sipahi.toml` manifest-driven PMP profiles, generic `load_native_task`
+  loader, sealed channels, cross-task PMP isolation (statik + runtime)
+- Historical: WASM sandbox path (`wasm-sandbox` feature + `wasmi`) v1.x'te
+  vardı; U-29 v2.0'da tamamen kaldırıldı (no_alloc kernel doctrine)
 
 ## What Sipahi Is Not
 
@@ -63,16 +64,19 @@ src/
   ipc/                  SPSC channels and blackbox recorder
   kernel/
     capability/         Token, broker, and validation cache
+    loader/             Native task loader (boot-time PMP region setup)
     memory/             PMP setup and shadow checks
+    pmp/                PMP profile types + manifest-driven generated.rs
     policy/             Failure-policy engine
     scheduler/          Task table, scheduling, budget, watchdog
     syscall/            Syscall ABI, dispatch table, WCET tracking
-  sandbox/              WASM prototype path, gated by `wasm-sandbox`
   tests/                Self-test and regression harness
   verify.rs             Cross-module Kani harnesses
+  (sandbox/ — v1.x WASM, U-29 v2.0'da kaldırıldı)
 
 sipahi_api/             Task-side SNTM API crate
-tasks/task_hello/       Standalone native task scaffold
+tasks/task_hello/       Native task (id=2)
+tasks/task_world/       Native task (id=3) — U-27 SNTM Phase 5
 Tla+/                   TLA+ specs and TLC run artifacts
 scripts/                Sprint, coverage, proof-quality, and feature gates
 .github/workflows/     CI jobs
@@ -192,9 +196,8 @@ runtime.
 - QEMU does not model all cache, bus, PMP, and platform-interference behavior.
 - `test-keys` is enabled in the default development build; production key
   provisioning is a separate target path.
-- WASM support is prototype-only and gated by `wasm-sandbox`.
-- SNTM is incomplete; the current code contains Phase 1 scaffolding, not a full
-  native-task deployment pipeline.
+- SNTM v2.0: native task deployment pipeline complete (two-task demo +
+  cross-task PMP isolation runtime); SAFE-1..4 phased rollout v1.7+'da.
 - IOPMP, SPMP, WorldGuard, CLIC, hardware CFI, and CHERI-style work are roadmap
   topics, not current runtime guarantees.
 
@@ -202,12 +205,12 @@ runtime.
 
 Common flags:
 
-- `self-test`: enables POST, integration tests, trace, debug boot output, and
-  WASM sandbox support for tests
+- `self-test`: enables POST, integration tests, trace, debug boot output
 - `trace`: verbose runtime tracing
 - `debug-boot`: boot-time diagnostic output
-- `wasm-sandbox`: optional WASM prototype path
+- `cross-isolation-demo`: U-27.5 cross-task PMP runtime ihlal observation (opt-in)
 - `v2-hal`: HAL/device abstraction work
+- (`wasm-sandbox`: v1.x'te vardı, U-29 v2.0'da kaldırıldı)
 - `sntm`: SNTM base work, default-off
 - `sntm-safe`: future SNTM hardening layers, default-off
 - `production-otp`: production key provisioning path; requires deployment-side

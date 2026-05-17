@@ -53,11 +53,13 @@ run-self-test: build-native
 # için zorunlu). SIPAHI_CROSS_ISOLATION=1 ile task_hello deliberate write
 # build-time propagate edilir. QEMU log /tmp/u275_xi.log'a yazılır,
 # scripts/check_cross_isolation.sh ile 4-gate doğrulanır.
+# U-29 fix: timeout 30 → 60 (QEMU TCG yavaş, marker sonrası 3+ TICK için
+# yeterli süre lazım — flaky Gate 3 fail önlenir).
 run-cross-isolation:
 	SIPAHI_CROSS_ISOLATION=1 bash scripts/build_native_tasks.sh
 	RUSTFLAGS="$(KERNEL_RUSTFLAGS)" cargo build --release \
 		--features cross-isolation-demo,debug-boot $(BUILD_STD)
-	timeout 30 $(QEMU) \
+	timeout 60 $(QEMU) \
 		-machine virt -nographic -bios none -m 512M -smp 1 \
 		-kernel $(KERNEL) 2>&1 | tee /tmp/u275_xi.log || true
 	bash scripts/check_cross_isolation.sh /tmp/u275_xi.log

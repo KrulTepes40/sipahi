@@ -1,29 +1,30 @@
 /* sipahi.ld — Sipahi Microkernel Linker Script
  * ====================================
- * Sipahi Memory Map (QEMU virt, RV64)
+ * Sipahi Memory Map (QEMU virt, RV64) — U-29 v2.0 (WASM removed)
  *
- * 0x80000000  .text         (RX)   ~490KB  Kernel + Wasmi code
- * 0x800798xx  .rodata       (R)    ~84KB   Constants, Wasmi tables
- * 0x8008xxxx  .data         (RW)   ~150KB  Initialized data
- * 0x800xxxxx  .bss          (RW)   ~10KB   Statics (IPC, blackbox, config)
+ * 0x80000000  .text         (RX)   ~XXKb   Kernel code (Wasmi kaldırıldı)
+ * 0x800xxxxx  .rodata       (R)    ~XXKB   Constants
+ * 0x800xxxxx  .data         (RW)   ~XXKB   Initialized data
+ * 0x800xxxxx  .bss          (RW)   ~XXKB   Statics (IPC, blackbox, config)
  *             kernel stack  (RW)   16KB    Kernel stack
  * __pmp_data_end ─── PMP Entry 5 TOR upper bound ───
  *             .task_stacks  (RW)   64KB    Per-task NAPOT PMP (Entry 8)
- *             .wasm_arena   (RW)   4MB     Wasmi bump allocator (M-mode only)
- * __clear_end / _end
+ * __clear_end / _end                       (U-29: ~4MB küçüldü, wasm_arena yok)
  *
  * PMP Entry 4-5: [data_start, __pmp_data_end) RW L-bit
  * Task stacks: PMP match yok → U-mode DENY, per-task NAPOT Entry 8
- * WASM arena:  PMP match yok → U-mode DENY, M-mode erişir (spec)
  *
  * RAM: 8MB allocated (0x80000000-0x80800000), QEMU 512MB available
+ *
+ * Tarihsel: v1.x'te .wasm_arena (4MB NOLOAD) Wasmi M-mode bump allocator için
+ * rezerveydi. U-29 v2.0'da WASM tamamen kaldırıldı (no_alloc kernel).
  */
 /* QEMU virt machine, RV64, RAM @ 0x80000000   */
 
 ENTRY(_start)
 
 MEMORY {
-    /* 4MB WASM arena + kernel + stack. QEMU virt = 512MB, 8MB güvenli. */
+    /* U-29: WASM arena kalktı; 8MB RAM hala güvenli margin. */
     RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 8M
 }
 
@@ -87,15 +88,12 @@ SECTIONS {
         __task_stacks_end = .;
     } > RAM
 
-    /* WASM arena — Wasmi interpreter M-mode'da erişir */
-    .wasm_arena (NOLOAD) : ALIGN(4096) {
-        __wasm_arena_start = .;
-        *(.wasm_arena)
-        __wasm_arena_end = .;
-    } > RAM
+    /* U-29 v2.0: .wasm_arena (NOLOAD 4MB) SİLİNDİ. WASM tamamen kaldırıldı,
+       kernel artık no_alloc. _end ve __clear_end ~4MB küçüldü → boot clear
+       loop süresi azaldı (binlerce CPU cycle tasarruf). */
 
     /* Boot clear loop: __bss_start → __clear_end
-       BSS + kernel_stack + task_stacks + wasm_arena hepsini sıfırlar */
+       BSS + kernel_stack + task_stacks hepsini sıfırlar (wasm_arena yok) */
     . = ALIGN(8);
     __clear_end = .;
     _end = .;

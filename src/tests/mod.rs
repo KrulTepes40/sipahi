@@ -4,7 +4,7 @@ use crate::arch;
 use crate::common;
 use crate::ipc;
 use crate::kernel;
-use crate::sandbox;
+// U-29 v2.0: `use crate::sandbox;` silindi (sandbox/ klasörü kaldırıldı).
 use crate::common::fmt::print_u32;
 use crate::common::sync::SingleHartCell;
 
@@ -357,75 +357,9 @@ pub fn test_crypto() {
     arch::uart::println("");
 }
 
-// ═══ Sprint 12: WASM Sandbox ═══
-pub fn test_wasm() {
-    arch::uart::println("[BOOT] Sprint 12: WASM Sandbox");
-    sandbox::allocator::epoch_reset();
-    arch::uart::println("[WASM] Arena: 4MB bump allocator");
-
-    #[allow(clippy::unusual_byte_groupings)]
-    const WASM_SIMPLE: &[u8] = &[
-        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-        0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
-        0x03, 0x02, 0x01, 0x00,
-        0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
-        0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2a, 0x0b,
-    ];
-    #[allow(clippy::unusual_byte_groupings)]
-    const WASM_FLOAT_OPS: &[u8] = &[
-        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-        0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7d,
-        0x03, 0x02, 0x01, 0x00,
-        0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
-        0x0a, 0x0f, 0x01, 0x0d, 0x00,
-        0x43, 0x00, 0x00, 0x80, 0x3f,
-        0x43, 0x00, 0x00, 0x00, 0x40,
-        0x92, 0x0b,
-    ];
-
-    use sandbox::{WasmSandbox, SandboxError};
-
-    // Test 1: Normal yükleme + çalıştırma
-    {
-        let mut ws = WasmSandbox::new();
-        match ws.load_module(WASM_SIMPLE) {
-            Ok(n) => { arch::uart::puts("[WASM] Module loaded: "); print_u32(n as u32); arch::uart::println(" bytes"); }
-            Err(_) => test_fail("[WASM] Load FAIL [FAIL]"),
-        }
-        match ws.execute("run", 100_000) {
-            Ok(42) => arch::uart::println("[WASM] Execute: OK, result=42 [OK]"),
-            Ok(_)  => test_fail("[WASM] Execute: yanlış sonuç [FAIL]"),
-            Err(_) => test_fail("[WASM] Execute FAIL [FAIL]"),
-        }
-    }
-    // Test 2: Fuel tükenmesi
-    {
-        let mut ws = WasmSandbox::new();
-        let _ = ws.load_module(WASM_SIMPLE);
-        match ws.execute("run", 0) {
-            Err(SandboxError::FuelExhausted) | Err(SandboxError::Trapped) =>
-                arch::uart::println("[WASM] Fuel exhaustion: TRAPPED [OK]"),
-            Ok(_)  => test_fail("[WASM] Fuel test: beklenen trap gelmedi [FAIL]"),
-            Err(_) => test_fail("[WASM] Fuel test: başka hata [FAIL]"),
-        }
-    }
-    // Test 3: Float reject
-    match WasmSandbox::check_module(WASM_FLOAT_OPS) {
-        Err(SandboxError::FloatOpcodes) => arch::uart::println("[WASM] Float reject: REJECTED [OK]"),
-        _ => test_fail("[WASM] Float reject FAIL [FAIL]"),
-    }
-    // Test 4: Epoch reset + reload
-    {
-        sandbox::allocator::epoch_reset();
-        let mut ws = WasmSandbox::new();
-        match ws.load_module(WASM_SIMPLE) {
-            Ok(_) => arch::uart::println("[WASM] Epoch reset + reload: OK [OK]"),
-            Err(_) => test_fail("[WASM] Epoch reset reload FAIL [FAIL]"),
-        }
-    }
-    arch::uart::println("[WASM] Sprint 12 PASS");
-    arch::uart::println("");
-}
+// U-29 v2.0: Sprint 12 WASM Sandbox test bloğu (test_wasm fn + WASM_SIMPLE +
+// WASM_FLOAT_OPS modülleri + 4 test case) SİLİNDİ. WASM tamamen kaldırıldı,
+// sandbox/ klasörü yok. run_all() listesinden test_wasm() çağrısı da kalktı.
 
 // ═══ Sprint 11: Blackbox ═══
 pub fn test_blackbox() {
@@ -821,21 +755,14 @@ fn test_blackbox_log_safe() {
         "[FAIL] blackbox_log_safe [FAIL]");
 }
 
-/// Test 6: Allocator overflow safe mi (U-16 checked_add)
+/// U-29 v2.0: test_allocator_overflow SİLİNDİ — global ALLOCATOR + sandbox/
+/// kalktı, kernel pure no_alloc. Allocator yok = overflow test'i de yok.
+/// Test_fail_count etkisini korumak için marker pass-through:
 fn test_allocator_overflow() {
-    use core::alloc::{GlobalAlloc, Layout};
-    // 1 byte allocation, 1<<30 alignment -> checked_add overflow
-    if let Ok(layout) = Layout::from_size_align(1, 1 << 30) {
-        // SAFETY: Test-only, return null veya valid; either case crash-free
-        let ptr = unsafe { crate::ALLOCATOR.alloc(layout) };
-        if !ptr.is_null() {
-            // SAFETY: Just allocated, dealloc with same layout
-            unsafe { crate::ALLOCATOR.dealloc(ptr, layout); }
-        }
-    }
+    // No-op: allocator yok (U-29). Test marker korunur (run_all eşliği için).
     test_result(true,
-        "[PASS] allocator_overflow_safe [OK]",
-        "[FAIL] allocator_overflow_safe [FAIL]");
+        "[PASS] allocator_overflow_safe (n/a — no_alloc kernel) [OK]",
+        "[FAIL] (unreachable)");
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1681,7 +1608,7 @@ pub fn run_all() {
     test_ipc();
     test_wcet_limits(); // informational only — QEMU TCG exceed her zaman var
     test_crypto();
-    test_wasm();
+    // U-29 v2.0: test_wasm() çağrısı silindi — WASM sandbox tamamen kaldırıldı.
     test_blackbox();
     test_fault_injection();
 

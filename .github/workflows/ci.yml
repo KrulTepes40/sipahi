@@ -479,20 +479,20 @@ jobs:
               exit 1
           fi
           echo "PASS: .text within 64KB budget"
-      - name: Check .wasm_arena absent in production (G8 verification)
+      - name: Check no WASM artifacts in production (U-29 v2.0 invariant)
         run: |
           BIN=target/riscv64imac-unknown-none-elf/release/sipahi
-          ARENA_SIZE=$(riscv64-linux-gnu-readelf -S $BIN | awk '/\.wasm_arena/ {print $7; exit}')
-          if [ -z "$ARENA_SIZE" ] || [ "$ARENA_SIZE" = "00000000" ]; then
-              echo "PASS: .wasm_arena absent or empty in production"
-          else
-              SIZE_DEC=$((16#${ARENA_SIZE}))
-              if [ "$SIZE_DEC" -gt 64 ]; then
-                  echo "FAIL: .wasm_arena > 64 bytes in production (G8 wasm-sandbox feature leak)"
-                  exit 1
-              fi
-              echo "PASS: .wasm_arena placeholder ($SIZE_DEC bytes <= 64)"
+          # U-29: .wasm_arena section HİÇ olmamalı (v1.x guard'ı invert edildi)
+          if riscv64-linux-gnu-readelf -S $BIN 2>/dev/null | grep -q '\.wasm_arena'; then
+              echo "FAIL: .wasm_arena section found (v2.0 invariant violated — WASM kaldırılmalıydı)"
+              exit 1
           fi
+          # U-29: wasmi symbol HİÇ olmamalı
+          if riscv64-linux-gnu-nm $BIN 2>/dev/null | grep -qi 'wasmi'; then
+              echo "FAIL: wasmi symbol found in production binary (v2.0 invariant violated)"
+              exit 1
+          fi
+          echo "PASS: no WASM artifacts in production binary (.wasm_arena yok, wasmi symbol yok)"
 
   # U-22 GÖREV 27: Feature combination build matrix — feature flag drift catch.
   feature-matrix:

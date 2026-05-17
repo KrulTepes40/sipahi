@@ -160,7 +160,7 @@ pub extern "C" fn trap_handler(
             5 | 7 => {
                 // Load/StoreAccessFault — PMP violation
                 // Fault adresi task stacks bölgesinde -> StackOverflow (policy path)
-                // Dışında -> genel PmpFail (WasmTrap via handle_task_fault)
+                // Dışında -> genel PmpFail (TaskFault via handle_task_fault)
                 let fault_addr = crate::arch::csr::read_mtval();
                 let task_id = crate::kernel::scheduler::current_task_id();
 
@@ -212,7 +212,7 @@ pub extern "C" fn trap_handler(
 
                 // U-27.5 SNTM-R12 runtime observation: IN-HANDLER state check.
                 //
-                // Kernel policy (WasmTrap, DAL-D): restart_count < MAX_RESTART_FAULT=3
+                // Kernel policy (TaskFault, DAL-D): restart_count < MAX_RESTART_FAULT=3
                 // iken Restart, sonra Isolate (decide_action policy/mod.rs:107-110).
                 // İlk 3 trap'te task Restart edilir (state=Ready), 4. trap'te
                 // Isolated. Bu policy DAL-D için 3-şans davranışı — DOĞRU.

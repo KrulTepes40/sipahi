@@ -108,18 +108,11 @@ deferred                = "test+proof"
 deferred_reason         = "v1.x'te hiç callsite yok, dead feature gate (U-22 G5 kararı: SPI/I2C/GPIO v2.0 expansion için scaffolded)"
 deferred_target         = "v2.0 HAL implementation sprint (SPI/I2C/GPIO concrete impls)"
 
-[feature.wasm-sandbox]
-description = "WASM sandbox (deprecated v1.5 — SNTM ile değişiyor)"
-required_negative_tests = [
-    "test_allocator_overflow",
-]
-required_kani_proofs = [
-    "bump_allocator_offsets_never_overlap",
-]
-sunset_target = "v1.5 SNTM Aşama 1.5 (U-22.5) sprint'inde kaldırılır; coverage.toml entry'si o sprint'te silinir"
+# U-29 v2.0: [feature.wasm-sandbox] entry SİLİNDİ (wasmi + sandbox/ + wasm_arena
+# tamamen kaldırıldı; feature artık yok).
 
 [feature.self-test]
-description = "Meta feature: test-keys + trace + debug-boot + wasm-sandbox"
+description = "Meta feature: test-keys + trace + debug-boot (U-29: wasm-sandbox kalktı)"
 required_negative_tests = []
 required_kani_proofs    = []
 non_safety              = true  # meta feature only

@@ -5,6 +5,85 @@ All notable changes to Sipahi microkernel.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - U-29 v2.0: WASM Removal + ed25519-compact Migration
+
+### Removed (WASM tamamen kaldırıldı + alloc bağımlılığı temizlendi)
+- **`src/sandbox/` klasörü** tamamen silindi (~700 LOC: mod.rs Wasmi runtime
+  + float scanner v2 + compute services dispatcher + LEB128 parser; allocator.rs
+  bump allocator)
+- **`wasmi = "=1.0.9"` optional dep** Cargo.toml'dan silindi
+- **`wasm-sandbox` feature** silindi (root Cargo.toml + tasks/task_hello/Cargo.toml +
+  `check-cfg` list + `coverage.toml` `[feature.wasm-sandbox]` entry)
+- **`extern crate alloc`** silindi (`src/main.rs`)
+- **`#[global_allocator] static ALLOCATOR`** silindi (`src/main.rs`)
+- **`#[alloc_error_handler] fn alloc_error`** silindi (`src/main.rs`)
+- **`#![feature(alloc_error_handler)]`** silindi (`src/main.rs`)
+- **`.wasm_arena` linker section** silindi (`sipahi.ld`); `_end` + `__clear_end`
+  küçüldü → boot clear loop süresi azaldı (binlerce CPU cycle tasarruf)
+- **`WASM_HEAP_SIZE` config sabiti** silindi (`src/common/config.rs:83`)
+- **`build.rs` ALIGN(4096) `.wasm_arena` drift check** silindi (config drift detection)
+- **Sprint 12 WASM self-test bloğu** silindi (`src/tests/mod.rs` `fn test_wasm`,
+  WASM_SIMPLE + WASM_FLOAT_OPS modülleri, 4 test case)
+- **WASM-tied Kani proofs** silindi (~24 proof: sandbox::verification mod +
+  allocator wrapping_add + LEB128 + float reject + WASM execution + verify.rs
+  mem_budget_within_ram WASM_HEAP_SIZE removal). Kani 213 → **189** (delta -24).
+- **`PolicyEvent::WasmTrap`** → `TaskFault` rename (WASM-bağımsız generic isim;
+  `decide_action` davranışı invariant: restart_count<MAX_RESTART_FAULT=3 →
+  Restart, else Isolate; DAL-D 3-şans politikası korunur)
+- **CI/script WASM kalıntıları**: `.github/workflows/ci.yml` `.wasm_arena absent`
+  guard "no WASM artifacts" guard'a invert edildi; `scripts/feature_matrix.sh`
+  wasm-sandbox kombinasyonları silindi; `scripts/u19_remove_blanket.sh`
+  `src/sandbox/mod.rs` referansı yorumlu archive
+
+### Changed (ed25519-compact migration)
+- **`ed25519-dalek = "=2.2.0"` (alloc dep)** → **`ed25519-compact = "=2.2.0"`
+  (pure no_alloc)** (`Cargo.toml`)
+- **`src/hal/secure_boot.rs`** API port: `VerifyingKey::from_bytes` →
+  `PublicKey::from_slice`; `Signature::from_bytes` → `Signature::from_slice`;
+  `vk.verify(msg, &sig).is_ok()` → `pk.verify(msg, &sig).is_ok()`. RFC8032 wire
+  format bit-eşit; pubkey 32B + sig 64B + test vectors değişmedi.
+- **`self-test` feature** = `["test-keys", "trace", "debug-boot"]` (wasm-sandbox kalktı)
+- **Kernel doctrine**: pure `no_std + no_alloc` — `Vec`, `Box`, `String`, `format!`
+  HİÇBİRİ kernel kaynak ağacında yok
+
+### Added (U-29 invariant + doc)
+- **3 yeni invariant** (19 toplam):
+  - 16: Kernel `no_std + no_alloc` saf (`grep` boş guard)
+  - 17: WASM compile-out absolute (wasmi/sandbox/wasm_arena/WASM_HEAP_SIZE/
+    dispatch_compute/PolicyEvent::WasmTrap HİÇBİRİ kernel src'sinde YOK;
+    tarihsel doc istisna)
+  - 18: ed25519-compact RFC8032 TV1 valid (3 self-test [OK] marker)
+  - 19: PolicyEvent::WasmTrap rename complete (TaskFault, davranış aynı)
+- **Doc senkron (8 dosya)**: README.md + ARCHITECTURE.md + STRUCTURE.md + CHANGELOG.md +
+  docs/sipahi_context.md + docs/sipahi_features_en.md + docs/sipahi_features_tr.md
+  WASM bölümleri tarihsel context'e taşındı; SIPAHI_SNTM_DESIGN.md §11.5/§11.7
+  v2.0 transition complete.
+- **CI guard invert**: `.wasm_arena` absent check → "no WASM artifacts" hard fail
+  (section yok + wasmi symbol yok)
+
+### Verification metrics
+- Kani: 213 → **189 PASS** (delta -24, WASM Kani proof auto-removed)
+- TLA+: **8/8 PASS** (no delta — runtime spec değişmedi, SipahiSNTM 138 states korunur)
+- Self-test (`make run-self-test`): **ALL TESTS PASSED** + Ed25519 3 marker
+  ([POST] + [SEC] RFC8032 TV1 + tampered RED + wrong key RED) + U-27 4 marker
+  (R12 disjoint + R14 runnable + R14 idempotent + R13 sealed)
+- Cross-isolation gate (`make run-cross-isolation`): **4/4 PASS** (U-27.5
+  invariant 15 korunur; PolicyEvent::TaskFault rename davranış invariant)
+- Production smoke (`make run`): NF/FATAL/POLICY-free
+- Coverage: **14 feature** + **14 requirement** (wasm-sandbox kalktı)
+- Clippy: `-D warnings` PASS
+
+### Surface reduction
+- Kernel kaynak: ~700 satır silindi (sandbox/ + main.rs alloc + self-test WASM)
+- Dependency: -1 crate (wasmi sil), ed25519-dalek → ed25519-compact (alloc-free)
+- Feature flag: 15 → 14 (wasm-sandbox kalktı)
+- Kani proof: 213 → 189 (-24)
+- `_end` + `__clear_end` küçüldü (~8KB; sipahi.ld'de placeholder section idi,
+  4MB explicit reserve değil — boot clear süresi yine de azaldı)
+
+### Tag önerisi
+**v2.0.0** — SNTM v2.0 final: WASM removed + ed25519-compact + no_alloc kernel.
+
 ## [Unreleased] - U-27.5 SNTM-R12 Runtime Observation
 
 ### Added (cross-task PMP runtime ihlal observe + script gate)

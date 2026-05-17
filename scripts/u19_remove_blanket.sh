@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # U-19 GÖREV 3: Remove blanket #![allow(dead_code)] from listed files
+#
+# ARCHIVE — U-19 historical sweep (blanket #[allow] removal).
+# post-U-29 v2.0: src/sandbox/ silindi (WASM tamamen kaldırıldı), ilgili
+# satır yorum altına alındı. Bu script artık benzer haliyle çalıştırılamaz;
+# gelecek benzer sweep'lerde örnek olarak korunur.
 set -eu
 cd "$(dirname "$0")/.."
 files=(
@@ -12,7 +17,7 @@ files=(
     src/common/types.rs
     src/common/sync.rs
     src/common/error.rs
-    src/sandbox/mod.rs
+    # src/sandbox/mod.rs  # U-29: sandbox/ silindi (WASM tamamen kaldırıldı)
     src/kernel/syscall/mod.rs
 )
 for f in "${files[@]}"; do
