@@ -18,8 +18,12 @@ cross-isolation-demo = []
 # Codex review fix: kernel'in dep ağacında sipahi_api YOK.
 # task_hello sipahi_api'yi DIRECT PATH DEP olarak alır.
 # Mimari ayrım: kernel sipahi_api'ye bağımlı OLMAMALI.
+#
+# SAFE-2 (sprint-u31): enable `task_task_hello` feature — gates typed IPC
+# `send_*` wrappers in `sipahi_api::channels` (manifest [[channel]]
+# producer=task_hello). Without this feature, send wrappers don't compile.
 [dependencies]
-sipahi_api = { path = "../../sipahi_api" }
+sipahi_api = { path = "../../sipahi_api", features = ["task_task_hello"] }
 
 # NOT: [profile.release] workspace root'tan inherit edilir
 # (Cargo.toml: opt-level="s", lto=true, codegen-units=1, panic="abort",

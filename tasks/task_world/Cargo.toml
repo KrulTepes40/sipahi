@@ -10,8 +10,11 @@ name = "task_world"
 path = "src/main.rs"
 
 # task_hello pattern: kernel'in dep ağacında sipahi_api YOK; task path-dep alır.
+#
+# SAFE-2 (sprint-u31): enable `task_task_world` feature — gates typed IPC
+# `recv_*` wrappers (manifest [[channel]] consumer=task_world).
 [dependencies]
-sipahi_api = { path = "../../sipahi_api" }
+sipahi_api = { path = "../../sipahi_api", features = ["task_task_world"] }
 
 # NOT: [profile.release] workspace root'tan inherit edilir
 # (Cargo.toml: opt-level="s", lto=true, codegen-units=1, panic="abort",

@@ -7,6 +7,10 @@
 pub mod token;
 pub mod cache;
 pub mod broker;
+// SAFE-2 (sprint-u31): static local capability table.
+pub mod cap_action;
+pub mod cap_generated;
+pub mod local_cap;
 
 #[allow(unused_imports)]
 pub use token::{Token, ACTION_READ, ACTION_WRITE, ACTION_EXECUTE, ACTION_ALL};

@@ -18,6 +18,12 @@ pub struct Manifest {
     pub platform: PlatformEntry,
     #[serde(default, rename = "task")]
     pub tasks:    Vec<TaskEntry>,
+    /// SAFE-2 (sprint-u31): [[resource]] entries — LOCAL_CAP_TABLE column space.
+    #[serde(default, rename = "resource")]
+    pub resources: Vec<ResourceEntry>,
+    /// SAFE-2 (sprint-u31): [[channel]] entries — typed IPC + BOOT_CHANNELS.
+    #[serde(default, rename = "channel")]
+    pub channels: Vec<ChannelEntry>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -59,6 +65,10 @@ pub struct TaskEntry {
     pub demo_feature_waivers: Vec<String>,
     #[serde(default, rename = "region")]
     pub regions:       Vec<RegionEntry>,
+    /// SAFE-2: per-task LOCAL_CAP_TABLE row — list of resource_id grants. Absent
+    /// → deny-all row emitted. Codegen writes CapAction per (task, resource).
+    #[serde(default, rename = "local_cap")]
+    pub local_caps:    Vec<LocalCapGrant>,
 }
 
 fn default_trust_tier() -> String {
@@ -87,4 +97,41 @@ pub struct RegionEntry {
     pub base: usize,
     pub size: usize,
     pub perm: String,  // "RX", "R", "RW", "NONE"
+}
+
+// ─── SAFE-2 schema (Section 8 CR-1..CR-5) ─────────────────────────
+
+/// `[[resource]]` — static local capability table column. Each task entry in
+/// `[[task.local_cap]]` references resource by `id`. LOCAL_CAP_TABLE codegen
+/// emits one column per ResourceEntry, `MAX_RESOURCES` matches manifest count.
+#[derive(Deserialize, Debug, Clone)]
+pub struct ResourceEntry {
+    pub id:   u8,
+    pub name: String,
+    /// "device" | "log" | "channel_endpoint" | "mailbox" | ... (free-form;
+    /// validator accepts but flags unknown kinds with warning later).
+    pub kind: String,
+}
+
+/// `[[channel]]` — typed IPC channel. Producer/consumer task names referenced
+/// by `[[task]] name`; codegen emits `BOOT_CHANNELS` table + per-channel
+/// typed `send_<name>` / `recv_<name>` wrappers.
+#[derive(Deserialize, Debug, Clone)]
+pub struct ChannelEntry {
+    pub id:        u8,
+    pub producer:  String,
+    pub consumer:  String,
+    pub message:   String,  // PascalCase struct name (e.g. "GreetingPing")
+    pub size:      usize,   // repr(C) struct byte count — must be <= IPC_MSG_SIZE
+    #[serde(default)]
+    pub period_ms: Option<u32>,  // optional flow metadata (CR Section 4 FIX-D)
+}
+
+/// `[[task.local_cap]]` — sub-array on TaskEntry. Reserved for SAFE-2 manifest;
+/// initial implementation reads it but produces a deny-all row if absent.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct LocalCapGrant {
+    pub resource_id: u8,
+    /// "Read" | "Write" | "ReadWrite" | "Execute" | "All" | "None"
+    pub action:      String,
 }

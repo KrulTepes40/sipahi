@@ -343,3 +343,19 @@ required_tests   = []   # build-time tool, kernel self-test'inde test yok
 required_scripts = ["sntm_safe_gate.sh"]
 required_proofs  = []
 fault_model      = "task-lint bir yasağı kaçırır (false negative — fixture/manuel test'le yakalanır), cfg-gated demo unsafe yanlış sınıflandırma (false positive — production scope dışı bloğu fail say), manifest demo_feature_waivers orphan feature kabul, default-ON feature waiver kabul (drift guard), DAL-A trusted_unsafe geçerken (sntm-validate enforce eder), extern \"C\" fn ABI annotation foreign block diye fail (FIX-6 ayrım), trusted_unsafe + demo_feature_waivers combine (audit karmaşası), ya da production binary'de unsafe leak (rust-objdump grep guard yakalar)"
+
+# ─── SAFE-2 (U-31) SNTM-SAFE Static Cap + Typed IPC ───
+
+[requirement.SNTM-SAFE-R2]
+description      = "Static Local Capability Table (LOCAL_CAP_TABLE) drift guard: manifest [[resource]] + [[task.local_cap]] grants are the single source of truth; sntm-validate emits src/kernel/capability/cap_generated.rs (LOCAL_CAP_TABLE + BOOT_CHANNELS). Kernel sys_cap_invoke discriminates via cap bit-7 (Section 8 CR-1): bit 7 = 1 → local_cap_check (~5c, no MAC/nonce/cache), bit 7 = 0 → legacy validate_cached. CapAction enum bit-compatible with ACTION_READ/WRITE/EXECUTE/ALL; from_u8 invalid → None → DENY (CR-3, never permissive)."
+required_tests   = []
+required_scripts = ["sntm_safe_gate.sh"]
+required_proofs  = ["local_cap_check_bounded", "local_cap_check_rejects_oob_caller", "local_cap_check_rejects_oob_resource", "local_cap_check_invalid_action_denied", "cap_action_allows_matrix", "boot_channels_well_formed"]
+fault_model      = "manifest [[task.local_cap]] grant cap_generated.rs ile drift eder (regen unutulur — [7/10] git diff yakalar), local_cap_check OOB caller/resource için permissive döner (bounds check eksik), CapAction::from_u8 invalid bit pattern için ReadOnly default verir (security regression), sys_cap_invoke bit-7 ayrımı kaybolur ve cap argümanı semantiği bulanıklaşır (cache-first fallback yanlış tercih — CR-1 reddedildi), BOOT_CHANNELS self-loop (producer == consumer) emit edilir (sntm-validate yakalar), ya da kernel cap_generated.rs hardcoded değiştirilir (drift guard tetikler)"
+
+[requirement.SNTM-SAFE-R3]
+description      = "Typed IPC API codegen + safety gate (CR-4): manifest [[channel]] → sipahi_api/src/channels.rs typed wrappers (cfg-gated by task_<name> feature, producer compiles send_*, consumer compiles recv_*). Compile-time invariants: size_of::<T>() == manifest size, <= IPC_MSG_SIZE (64), repr(C, align(8)). Send wrapper Message::empty() zero-init prevents padding leak; recv copies only size_of::<T>() bytes. Cross-crate drift Kani proof (typed_ipc_size_invariant) cross-checks kernel IpcMessage + IPC_MSG_SIZE. Boot channel ownership iterated from BOOT_CHANNELS (CR-5) — sntm_safe_gate.sh [8/10] git diff drift guard."
+required_tests   = []
+required_scripts = ["sntm_safe_gate.sh"]
+required_proofs  = ["typed_ipc_size_invariant"]
+fault_model      = "channels.rs message struct size manifest size_field ile drift (compile assert yakalar), padding leak send wrapper Message::empty() bypass eder, recv buf'taki 64 byte'ın hepsini okur (size_of::<T>() yerine), cfg-gated send producer feature olmadan compile olur (wrong direction), kernel IpcMessage 64 byte'tan farklı boyuta kayar (typed_ipc_size_invariant Kani yakalar), boot.rs hardcoded assign_channel manifest [[channel]] ile drift eder ([8/10] git diff yakalar), ya da channels.rs manuel düzeltilir (codegen regen ile reset"

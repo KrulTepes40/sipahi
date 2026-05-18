@@ -27,6 +27,8 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let mut manifest_path: Option<PathBuf> = None;
     let mut output_rs_path: Option<PathBuf> = None;
+    let mut output_cap_path: Option<PathBuf> = None;
+    let mut output_channels_path: Option<PathBuf> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -46,8 +48,29 @@ fn main() -> ExitCode {
                 output_rs_path = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
+            "--output-cap-table" => {
+                // SAFE-2 (sprint-u31): emit cap_generated.rs (LOCAL_CAP_TABLE + BOOT_CHANNELS).
+                if i + 1 >= args.len() {
+                    eprintln!("FAIL: --output-cap-table requires a path argument");
+                    return ExitCode::from(2);
+                }
+                output_cap_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--output-channels" => {
+                // SAFE-2 (sprint-u31): emit sipahi_api/src/channels.rs (typed IPC API).
+                if i + 1 >= args.len() {
+                    eprintln!("FAIL: --output-channels requires a path argument");
+                    return ExitCode::from(2);
+                }
+                output_channels_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
             "-h" | "--help" => {
-                println!("Usage: sntm-validate --manifest sipahi.toml [--output-rs PATH]");
+                println!("Usage: sntm-validate --manifest sipahi.toml \\");
+                println!("         [--output-rs <pmp_generated.rs>] \\");
+                println!("         [--output-cap-table <cap_generated.rs>] \\");
+                println!("         [--output-channels <sipahi_api/channels.rs>]");
                 return ExitCode::from(0);
             }
             other => {
@@ -92,7 +115,21 @@ fn main() -> ExitCode {
             );
             if let Some(ref out) = output_rs_path {
                 if let Err(e) = codegen::generate_pmp_profiles_rs(&m, out) {
-                    eprintln!("FAIL: codegen error: {}", e);
+                    eprintln!("FAIL: pmp codegen error: {}", e);
+                    return ExitCode::from(1);
+                }
+                println!("PASS: generated {}", out.display());
+            }
+            if let Some(ref out) = output_cap_path {
+                if let Err(e) = codegen::generate_cap_table_rs(&m, out) {
+                    eprintln!("FAIL: cap-table codegen error: {}", e);
+                    return ExitCode::from(1);
+                }
+                println!("PASS: generated {}", out.display());
+            }
+            if let Some(ref out) = output_channels_path {
+                if let Err(e) = codegen::generate_channels_rs(&m, out) {
+                    eprintln!("FAIL: channels codegen error: {}", e);
                     return ExitCode::from(1);
                 }
                 println!("PASS: generated {}", out.display());

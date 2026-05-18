@@ -35,6 +35,15 @@ dal_level     = "D"
 trust_tier            = "safe"
 demo_feature_waivers  = ["cross-isolation-demo"]
 
+# SAFE-2 (U-31): per-task local capability grants. resource_id → action.
+# Codegen emits LOCAL_CAP_TABLE[2] = [Write, None, Write, None] for these.
+[[task.local_cap]]
+resource_id = 0    # uart_console
+action      = "Write"
+[[task.local_cap]]
+resource_id = 2    # channel_greeting (producer endpoint)
+action      = "Write"
+
 # U-26 FIX-A: NATIVE_TASK_BASE = 0x80600000 (kernel + 4MB wasm_arena sonrası).
 # Eski 0x80100000 wasm_arena ortasında — silent overwrite (RAM 8MB içinde
 # self-test build _end ~0x80430000). Yeni base: 6MB sonrası, 2MB headroom.
@@ -83,6 +92,15 @@ dal_level     = "D"
 # demo_feature_waivers YOK (cfg-gated unsafe block yok).
 trust_tier    = "safe"
 
+# SAFE-2 (U-31): per-task local capability grants.
+# LOCAL_CAP_TABLE[3] = [None, Write, Read, None] (uart deny, blackbox+channel R).
+[[task.local_cap]]
+resource_id = 1    # blackbox
+action      = "Write"
+[[task.local_cap]]
+resource_id = 2    # channel_greeting (consumer endpoint)
+action      = "Read"
+
 [[task.region]]
 name = "text"
 base = 0x80700000          # task_hello.stack top 0x80612000 + 1MB margin
@@ -107,11 +125,49 @@ base = 0x80710000
 size = 0x2000              # 8K NAPOT (0x80710000 % 0x2000 = 0)
 perm = "RW"
 
-# ─── Channels ───────────────────────────────────────────────────
-# Phase 5 (Sprint U-27) iki-task IPC demo'sunda eklenir.
-# [[channel]]
-# id        = 0
-# producer  = "task_hello"
-# consumer  = "task_world"
-# message   = "GreetingMessage"
-# size      = 16
+# ─── Resources (SAFE-2 / sprint-u31) ────────────────────────────
+# Static local capability table column space. LOCAL_CAP_TABLE codegen emits
+# one column per resource, MAX_RESOURCES (config.rs) matches manifest count.
+
+[[resource]]
+id   = 0
+name = "uart_console"
+kind = "device"
+
+[[resource]]
+id   = 1
+name = "blackbox"
+kind = "log"
+
+[[resource]]
+id   = 2
+name = "channel_greeting"
+kind = "channel_endpoint"
+
+[[resource]]
+id   = 3
+name = "reserved"
+kind = "reserved"
+
+# ─── Channels (SAFE-2 / sprint-u31) ─────────────────────────────
+# Typed IPC + BOOT_CHANNELS codegen. Manifest = single source of truth for
+# channel ownership (boot.rs assign_channel iterates BOOT_CHANNELS table).
+
+[[channel]]
+# Channel id=2 avoids legacy boot.rs hardcoded channels 0/1 (task_a ↔ task_b
+# WASM-era IPC test harness). Channels 0/1 stay legacy-managed; manifest
+# channels (id >= 2) drive native SNTM Phase 5+ wiring via BOOT_CHANNELS.
+id        = 2
+producer  = "task_hello"
+consumer  = "task_world"
+message   = "GreetingPing"
+size      = 16             # repr(C) struct byte count (<= IPC_MSG_SIZE=64)
+period_ms = 50             # optional flow metadata (CR FIX-D — manifest only)
+
+# ─── Per-task local capability grants (SAFE-2) ──────────────────
+# Granted later in this file under [[task.local_cap]]; manifest top-level
+# only lists [[resource]] / [[channel]]. task_hello/task_world specific
+# grants below would mean:
+#   task_hello: writes uart_console + sends on channel_greeting
+#   task_world: reads channel_greeting + writes blackbox
+# Inline grants live with each [[task]] block above when wired in G3.

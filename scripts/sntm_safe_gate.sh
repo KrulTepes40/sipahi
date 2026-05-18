@@ -18,9 +18,11 @@ cd "$(dirname "$0")/.."
 
 HOST=$(rustc -vV | sed -n 's/^host: //p')
 
-echo "=== SNTM-SAFE GATE (SAFE-1, scaffold) ==="
-echo "Active: [1/10] cargo check + [2/10] task-lint + [6/10] sntm-validate (partial)"
-echo "Deferred: [3-5, 7-10] SAFE-2..4'te"
+echo "=== SNTM-SAFE GATE (SAFE-2, sprint-u31) ==="
+echo "Active: [1] cargo check + [2] task-lint + [3] typed IPC build + [6] sntm-validate +"
+echo "        [7] cap_generated drift + [8] channels drift"
+echo "Deferred: [4] riscv-bin-verify (SAFE-3), [5] cargo-call-stack (SAFE-4),"
+echo "          [9] task cert sign (SAFE-3), [10] image assemble + sig (SAFE-3)"
 echo ""
 
 # [1/10] cargo check (her task)
@@ -65,8 +67,18 @@ echo "[2.5/10] sntm-validate integration tests (cargo test)..."
 echo "  PASS"
 echo ""
 
-# [3/10] DEFER SAFE-2 — cargo +nightly typed IPC codegen build
-echo "[3/10] cargo +nightly build (typed IPC) — DEFER SAFE-2"
+# [3/10] cargo +nightly build (typed IPC codegen build sanity)
+# SAFE-2 (sprint-u31): sipahi_api channels.rs + tasks must compile after
+# regen with both task features enabled (covers all cfg-gated wrappers).
+echo "[3/10] cargo +nightly build (typed IPC)..."
+(cd sipahi_api && cargo build --release --target riscv64imac-unknown-none-elf \
+    -Z build-std=core --features task_task_hello,task_task_world \
+    > /tmp/safe2-sipahi-api.log 2>&1) || {
+    echo "  FAIL: sipahi_api typed IPC build failed"
+    tail -20 /tmp/safe2-sipahi-api.log
+    exit 1
+}
+echo "  PASS"
 echo ""
 
 # [4/10] DEFER SAFE-3 — riscv-bin-verify (forbidden opcode + section + relocation)
@@ -91,12 +103,30 @@ fi
 echo "  PASS"
 echo ""
 
-# [7/10] DEFER SAFE-2 — static cap table codegen
-echo "[7/10] static cap table codegen — DEFER SAFE-2"
+# [7/10] static cap table codegen — manifest → cap_generated.rs drift guard
+# SAFE-2 (sprint-u31, CR-5): regenerate + git diff = empty.
+echo "[7/10] static cap table codegen drift guard..."
+bash scripts/regen_safe_codegen.sh > /tmp/safe2-regen.log 2>&1 || {
+    echo "  FAIL: regen_safe_codegen.sh"
+    tail -20 /tmp/safe2-regen.log
+    exit 1
+}
+if ! git diff --quiet src/kernel/capability/cap_generated.rs; then
+    echo "  FAIL: cap_generated.rs drift detected — manifest and codegen diverged"
+    git --no-pager diff src/kernel/capability/cap_generated.rs | head -40
+    exit 1
+fi
+echo "  PASS"
 echo ""
 
-# [8/10] DEFER SAFE-2 — typed IPC API codegen
-echo "[8/10] typed IPC API codegen — DEFER SAFE-2"
+# [8/10] typed IPC API codegen — channels.rs drift guard
+echo "[8/10] typed IPC API codegen drift guard..."
+if ! git diff --quiet sipahi_api/src/channels.rs; then
+    echo "  FAIL: channels.rs drift detected — manifest and codegen diverged"
+    git --no-pager diff sipahi_api/src/channels.rs | head -40
+    exit 1
+fi
+echo "  PASS"
 echo ""
 
 # [9/10] DEFER SAFE-3 — task certificate ed25519 sign
@@ -107,6 +137,7 @@ echo ""
 echo "[10/10] image assemble + final ed25519 — DEFER SAFE-3"
 echo ""
 
-echo "=== SAFE-1 SCAFFOLD PASS ==="
-echo "Active gates: [1] cargo check + [2] task-lint + [6] sntm-validate"
-echo "Deferred gates: [3, 4, 5, 7, 8, 9, 10] = 7 gate"
+echo "=== SAFE-2 GATE PASS (scaffold + SAFE-2 active) ==="
+echo "Active gates: [1] cargo check + [2] task-lint + [3] typed IPC build +"
+echo "              [6] sntm-validate + [7] cap_generated drift + [8] channels drift"
+echo "Deferred gates: [4, 5, 9, 10] = 4 gate (SAFE-3/4)"

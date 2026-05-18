@@ -17,6 +17,10 @@
 
 #![no_std]
 
+// SAFE-2 (sprint-u31): manifest-driven typed IPC wrappers.
+// Generated file — DO NOT edit; regenerate via `bash scripts/regen_safe_codegen.sh`.
+pub mod channels;
+
 /// Task-side hata tipleri — kernel return value (usize::MAX-N şema) parse.
 /// U-21 GÖREV 4 [MP2] sentinel kodlarına eşler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,12 +91,41 @@ pub mod syscall {
     const SYS_TASK_INFO:  usize = 4;
     const SYS_EXIT:       usize = 5;  // U-23 SNTM Phase 1
 
-    /// Capability invoke — token + resource + action kontrol.
+    /// Capability invoke — legacy MAC token + resource + action kontrol.
+    ///
+    /// `token` MUST have bit 7 clear (token id < 0x80). Bit 7 reserved as
+    /// SAFE-2 path discriminant; if `token >= 0x80`, kernel kernel-side
+    /// routes to `local_cap_invoke` semantics — likely DENY since lower
+    /// bits don't match a valid resource_id. Use `local_cap_invoke` for
+    /// static local capabilities.
     #[inline]
     pub fn cap_invoke(token: u8, resource: u16, action: u8) -> Result<(), Error> {
         // SAFETY: ecall trap to M-mode, kernel dispatch handles registers.
         let ret = unsafe {
             ecall3(SYS_CAP_INVOKE, token as usize, resource as usize, action as usize)
+        };
+        match Error::from_kernel(ret) {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    /// SAFE-2 (sprint-u31, CR-2): static local capability invoke (~5c).
+    ///
+    /// Resource grants are build-time decidable from manifest
+    /// `[[task.local_cap]]`. No MAC, no nonce, no cache — kernel-side
+    /// `LOCAL_CAP_TABLE` array lookup.
+    ///
+    /// ABI: `sys_cap_invoke` cap bit 7 = 1 selects this path; bit 7 = 0
+    /// routes to legacy `cap_invoke` (MAC token).
+    #[inline]
+    pub fn local_cap_invoke(resource: u8, action: u8) -> Result<(), Error> {
+        // cap bit 7 = 1 → local path discriminant. Lower 7 bits MUST be 0
+        // (reserved for future flags); kernel returns InvalidArg otherwise.
+        const LOCAL_PATH_FLAG: usize = 0x80;
+        // SAFETY: ecall trap; kernel-side bounds & action validation.
+        let ret = unsafe {
+            ecall3(SYS_CAP_INVOKE, LOCAL_PATH_FLAG, resource as usize, action as usize)
         };
         match Error::from_kernel(ret) {
             None => Ok(()),

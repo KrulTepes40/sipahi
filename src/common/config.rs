@@ -77,6 +77,11 @@ pub const IPC_CHANNEL_SLOTS: usize = 16;
 /// Maksimum IPC kanal sayısı
 pub const MAX_IPC_CHANNELS: usize = 8;
 
+/// SAFE-2 (sprint-u31): static local capability table column count.
+/// Manifest `[[resource]]` entries must have `id < MAX_RESOURCES`. Codegen
+/// emits `LOCAL_CAP_TABLE: [[CapAction; MAX_RESOURCES]; MAX_TASKS]`.
+pub const MAX_RESOURCES: usize = 4;
+
 // U-29 v2.0: WASM_HEAP_SIZE silindi (wasmi + sandbox/ kaldırıldı, no_alloc kernel).
 
 /// Host call limiti (period başına)

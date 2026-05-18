@@ -32,13 +32,18 @@ echo "[native] task_world build (RISC-V)"
 
 HOST=$(rustc -vV | sed -n 's/^host: //p')
 echo "[native] sntm-pack target host: $HOST"
-(cd tools/sntm-pack && cargo run --target "$HOST" --release -- \
+# CI fix: RUSTFLAGS env (set at job level to "-C link-arg=-Tsipahi.ld" for the
+# kernel build) leaks into sntm-pack's HOST compilation → cc rejects the
+# kernel linker script. Strip it for host-tool invocations; the .cargo/config
+# union-merge issue was the original reason RUSTFLAGS lives in env, but host
+# builds must stay clean. `env -u RUSTFLAGS` unsets it just for this subshell.
+(cd tools/sntm-pack && env -u RUSTFLAGS cargo run --target "$HOST" --release -- \
     --elf       ../../target/riscv64imac-unknown-none-elf/release/task_hello \
     --out-text   ../../$OUT_DIR/task_hello.text.bin \
     --out-rodata ../../$OUT_DIR/task_hello.rodata.bin \
     --out-data   ../../$OUT_DIR/task_hello.data.bin)
 
-(cd tools/sntm-pack && cargo run --target "$HOST" --release -- \
+(cd tools/sntm-pack && env -u RUSTFLAGS cargo run --target "$HOST" --release -- \
     --elf       ../../target/riscv64imac-unknown-none-elf/release/task_world \
     --out-text   ../../$OUT_DIR/task_world.text.bin \
     --out-rodata ../../$OUT_DIR/task_world.rodata.bin \

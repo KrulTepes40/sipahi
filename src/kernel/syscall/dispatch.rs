@@ -346,6 +346,19 @@ pub fn dispatch(
 // Syscall Handler'lar — Sprint 8: IPC gerçek
 // ═══════════════════════════════════════════════════════
 
+/// SAFE-2 (sprint-u31, CR-1): `cap` argument bit-7 discriminant.
+///
+/// Bit 7 selects between two capability paths:
+///   - `cap & 0x80 == 0` (legacy): MAC token path — `validate_cached`
+///     (cache hit ~10c, miss → caller's responsibility to pre-`validate_full`).
+///   - `cap & 0x80 != 0` (local): static local capability table —
+///     `local_cap_check` (~5c, no MAC, no nonce, no cache).
+///
+/// Lower 7 bits in the local path are REZERV (must-be-0); reserved for
+/// future flags (TTL, scope). Non-zero lower bits → `E_INVALID_ARG`.
+///
+/// The CAP_FAIL_COUNT escalation policy is SHARED between paths: 3 consecutive
+/// `E_NO_CAPABILITY` returns (regardless of source) → `CapViolation` policy.
 fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> usize {
     // Truncation koruması — usize -> u8/u16 dönüşümde veri kaybı
     if cap > u8::MAX as usize
@@ -357,26 +370,55 @@ fn sys_cap_invoke(cap: usize, resource: usize, action: usize, _arg: usize) -> us
         return E_INVALID_ARG;
     }
 
-    // Cache-only fast path (~10c) — validate_full ile önceden kayıt edilmeli
     #[cfg(not(kani))]
     {
+        let cap_u8 = cap as u8;
+        let action_u8 = action as u8;
         let caller = crate::kernel::scheduler::current_task_id();
-        let ok = crate::kernel::capability::broker::validate_cached(
-            caller,
-            cap as u8,
-            resource as u16,
-            action as u8,
-        );
-        #[cfg(feature = "trace")]
-        {
-            uart::puts("[SYS] cap_invoke(cap=");
-            print_u64(cap as u64);
-            uart::puts(") ");
-            uart::println(if ok { "OK" } else { "DENIED" });
-        }
 
-        // CapViolation detection — 3 ardışık fail -> policy tetikle
-        // SAFETY: MIE=0 in trap context, single-hart.
+        // ── SAFE-2 path: bit 7 = 1 → static local capability ──
+        let ok = if cap_u8 & 0x80 != 0 {
+            // Lower 7 bits reserved (must-be-0) — future flag space.
+            if cap_u8 & 0x7F != 0 {
+                #[cfg(feature = "trace")]
+                uart::println("[SYS] local_cap_invoke: reserved bits set");
+                return E_INVALID_ARG;
+            }
+            let ok = crate::kernel::capability::local_cap::local_cap_check(
+                caller,
+                resource as u8,
+                action_u8,
+            );
+            #[cfg(feature = "trace")]
+            {
+                uart::puts("[SYS] local_cap_invoke(res=");
+                print_u64(resource as u64);
+                uart::puts(") ");
+                uart::println(if ok { "OK" } else { "DENIED" });
+            }
+            ok
+        } else {
+            // ── Legacy MAC token path: bit 7 = 0 (aynen korunur) ──
+            let token_id = cap_u8 & 0x7F;
+            let ok = crate::kernel::capability::broker::validate_cached(
+                caller,
+                token_id,
+                resource as u16,
+                action_u8,
+            );
+            #[cfg(feature = "trace")]
+            {
+                uart::puts("[SYS] cap_invoke(cap=");
+                print_u64(cap as u64);
+                uart::puts(") ");
+                uart::println(if ok { "OK" } else { "DENIED" });
+            }
+            ok
+        };
+
+        // CapViolation detection — 3 ardışık fail -> policy tetikle.
+        // SAFETY: MIE=0 in trap context, single-hart. Counter shared between
+        // local-cap and token paths (any cap fail counts).
         unsafe {
             if ok {
                 // Başarılı cap_invoke -> fail counter sıfırla

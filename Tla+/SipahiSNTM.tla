@@ -213,6 +213,17 @@ SealedAtomicityInvariant ==
     sealed = TRUE =>
         \A c \in Channels : channels[c] = channelsAtSeal[c]
 
+(* SAFE-2 (sprint-u31): Channel ownership well-formedness (CR-7).
+   ChannelOwnershipInvariant captures the manifest [[channel]] constraints
+   that BOOT_CHANNELS codegen enforces — verified at the spec level too.
+
+   SCOPE: this invariant lives in SipahiSNTM for now (Section 8 CR-7).
+   If state count exceeds 200 (Section 9.3 S3 baseline 138-200), split
+   into SipahiTypedIPC.tla. Current target: < 200 distinct states. *)
+ChannelOwnershipInvariant ==
+    \A c \in Channels :
+        channels[c] = "NONE" \/ channels[c] \in Tasks
+
 THEOREM Spec => []TypeOK
 THEOREM Spec => []KernelPmpInvariant
 THEOREM Spec => []LoaderInvariant
@@ -221,5 +232,6 @@ THEOREM Spec => []NoIsolatedRunning
 THEOREM Spec => []AtMostOneRunning
 THEOREM Spec => []RunningIsCurrent
 THEOREM Spec => []SealedAtomicityInvariant   \* U-27 SNTM-R13
+THEOREM Spec => []ChannelOwnershipInvariant  \* SAFE-2 sprint-u31
 
 ====

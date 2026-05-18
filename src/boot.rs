@@ -243,9 +243,9 @@ pub fn init() {
     let _ = id_world;
 
     // ─── Sprint U-16: IPC Channel ownership assignment ───
-    // Channel 0: A -> B (producer=A, consumer=B)
-    // Channel 1: B -> A (producer=B, consumer=A)
-    // Diğer kanallar (2-7) atanmamış kalır -> default deny.
+    // Legacy channels 0/1: A <-> B (WASM-era IPC test harness).
+    // SAFE-2 (CR-5): manifest [[channel]] entries (id >= 2) come from
+    // cap_generated::BOOT_CHANNELS — drift guard ensures table == manifest.
     if let (Some(a), Some(b)) = (id_a, id_b) {
         let ok_0 = ipc::assign_channel(0, a, b);
         let ok_1 = ipc::assign_channel(1, b, a);
@@ -256,6 +256,26 @@ pub fn init() {
         arch::uart::println("[BOOT] IPC ch0: A->B, ch1: B->A");
     } else {
         crate::common::halt_system("[BOOT] FATAL: task creation failed — HALT");
+    }
+    // SAFE-2 (CR-5): manifest-driven native task channels.
+    for &(channel_id, producer, consumer) in
+        crate::kernel::capability::cap_generated::BOOT_CHANNELS
+    {
+        if !ipc::assign_channel(channel_id as usize, producer, consumer) {
+            crate::common::halt_system(
+                "[BOOT] FATAL: SAFE-2 native channel assignment failed — HALT"
+            );
+        }
+        #[cfg(feature = "debug-boot")]
+        {
+            arch::uart::puts("[BOOT] IPC ch");
+            print_u32(channel_id as u32);
+            arch::uart::puts(" (manifest): ");
+            print_u32(producer as u32);
+            arch::uart::puts(" -> ");
+            print_u32(consumer as u32);
+            arch::uart::println("");
+        }
     }
     ipc::seal_channels();
     #[cfg(feature = "debug-boot")]

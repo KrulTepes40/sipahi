@@ -50,8 +50,29 @@ fn main_loop() -> ! {
     // task_world ikinci native task ile beraber çalıştığında her ikisi de
     // Isolated state'e girdiği için MultiModuleCrash (isolated_count>=2) →
     // SHUTDOWN tetikledi. Forever yield: production'da heartbeat pattern.
+    //
+    // SAFE-2 (sprint-u31): typed IPC demo per CR-2/CR-4. Each pass:
+    //   1. local_cap_invoke(resource=channel_greeting, action=Write) — ~5c
+    //      static cap path; manifest task_hello[2]=Write grants this.
+    //   2. send_greeting_ping(&msg) — typed wrapper, manifest channel id=2,
+    //      producer=task_hello. Wrapper does compile-time size assert,
+    //      Message::empty() zero-init, copy_nonoverlapping size_of::<T>().
+    // Syscall failures are tolerated (heartbeat preserved) — kernel reports
+    // capability violations via blackbox + policy escalation, not panic.
+    use sipahi_api::channels;
+    const RESOURCE_CHANNEL_GREETING: u8 = 2;
+    const ACTION_WRITE: u8 = 0x02;
     let mut counter: u32 = 0;
+    let mut msg = channels::GreetingPing { bytes: [0u8; 16] };
     loop {
+        let _ = syscall::local_cap_invoke(RESOURCE_CHANNEL_GREETING, ACTION_WRITE);
+        // Pack counter (LE) into first 4 bytes — demo payload.
+        let bytes = counter.to_le_bytes();
+        msg.bytes[0] = bytes[0];
+        msg.bytes[1] = bytes[1];
+        msg.bytes[2] = bytes[2];
+        msg.bytes[3] = bytes[3];
+        let _ = channels::send_greeting_ping(&msg);
         syscall::yield_cpu();
         counter = counter.wrapping_add(1);
     }

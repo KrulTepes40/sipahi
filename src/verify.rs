@@ -1506,4 +1506,148 @@ mod verification {
         // Entry 5 = byte 5: TOR(0x08) | R(0x01) | W(0x02) | L(0x80) = 0x8B
         assert!(((packed >> 40) & 0xFF) as u8 == 0x8B);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // SAFE-2 (sprint-u31): Static local capability + typed IPC proofs.
+    // Section 9.1 K1-K8 doctrine compliance:
+    //   K1 no tautology  · K2 production const  · K3 unbounded any
+    //   K4 reachability  · K5 negative ≥ positive · K6 unwind = N+1
+    //   K7 no dead arms  · K8 cross-crate drift
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// SAFE-2 K3+K6: bounded local_cap_check, all valid inputs.
+    // VERIFIES: SNTM-SAFE-R2 — bounds check, no OOB, no panic for any input.
+    /// CALLS:    crate::kernel::capability::local_cap::local_cap_check
+    /// FAILS-IF: array access OOB on caller_task_id >= MAX_TASKS or
+    ///           resource_id >= MAX_RESOURCES; panic on invalid action bits.
+    #[kani::proof]
+    #[kani::unwind(9)] // MAX_TASKS+1 = 9 (K6: off-by-one guard)
+    fn local_cap_check_bounded() {
+        use crate::kernel::capability::local_cap::local_cap_check;
+        let caller: u8 = kani::any();
+        let resource: u8 = kani::any();
+        let action: u8 = kani::any();
+        // K3: full u8 domain — no concrete constraints. Result discarded;
+        // property is "no panic / no OOB", enforced by Kani's array checks.
+        let _ = local_cap_check(caller, resource, action);
+    }
+
+    /// SAFE-2 K5 negative: out-of-bounds caller MUST deny.
+    // VERIFIES: SNTM-SAFE-R2 — caller_task_id ≥ MAX_TASKS rejected.
+    /// FAILS-IF: local_cap_check returns true for caller ≥ MAX_TASKS.
+    #[kani::proof]
+    fn local_cap_check_rejects_oob_caller() {
+        use crate::kernel::capability::local_cap::local_cap_check;
+        use crate::common::config::MAX_TASKS;
+        let caller: u8 = kani::any();
+        kani::assume(caller as usize >= MAX_TASKS);
+        let resource: u8 = kani::any();
+        let action: u8 = kani::any();
+        // OOB caller must be DENY regardless of resource/action.
+        assert!(!local_cap_check(caller, resource, action));
+    }
+
+    /// SAFE-2 K5 negative: out-of-bounds resource MUST deny (when caller valid).
+    // VERIFIES: SNTM-SAFE-R2 — resource_id ≥ MAX_RESOURCES rejected.
+    /// FAILS-IF: local_cap_check returns true for resource ≥ MAX_RESOURCES.
+    #[kani::proof]
+    fn local_cap_check_rejects_oob_resource() {
+        use crate::kernel::capability::local_cap::local_cap_check;
+        use crate::common::config::{MAX_TASKS, MAX_RESOURCES};
+        let caller: u8 = kani::any();
+        let resource: u8 = kani::any();
+        kani::assume((caller as usize) < MAX_TASKS);
+        kani::assume(resource as usize >= MAX_RESOURCES);
+        let action: u8 = kani::any();
+        assert!(!local_cap_check(caller, resource, action));
+    }
+
+    /// SAFE-2 K5+CR-3 negative: invalid action bits MUST deny (never permissive).
+    // VERIFIES: SNTM-SAFE-R2 — CapAction::from_u8 None → false return.
+    /// FAILS-IF: any of 0x05, 0x06, 0x08..=0xFF returns true.
+    #[kani::proof]
+    fn local_cap_check_invalid_action_denied() {
+        use crate::kernel::capability::local_cap::local_cap_check;
+        let caller: u8 = kani::any();
+        let resource: u8 = kani::any();
+        let action: u8 = kani::any();
+        // Invalid action bit patterns: not in {0,1,2,3,4,7}.
+        kani::assume(
+            action == 0x05
+            || action == 0x06
+            || (action >= 0x08)
+        );
+        assert!(!local_cap_check(caller, resource, action));
+    }
+
+    /// SAFE-2 K7: CapAction::allows matrix — no dead arm.
+    // VERIFIES: SNTM-SAFE-R2 — bit-subset semantics for CapAction.allows.
+    /// Read.allows(Write)=false, ReadWrite.allows(Read)=true, None.allows(*)=false.
+    /// FAILS-IF: allows() returns wrong subset result for any pair.
+    #[kani::proof]
+    fn cap_action_allows_matrix() {
+        use crate::kernel::capability::cap_action::CapAction::*;
+        // Positive: granted ⊇ requested.
+        assert!(Read.allows(Read));
+        assert!(Write.allows(Write));
+        assert!(Execute.allows(Execute));
+        assert!(ReadWrite.allows(Read));
+        assert!(ReadWrite.allows(Write));
+        assert!(ReadWrite.allows(ReadWrite));
+        assert!(All.allows(Read));
+        assert!(All.allows(Write));
+        assert!(All.allows(Execute));
+        assert!(All.allows(ReadWrite));
+        assert!(All.allows(All));
+        // Negative: granted does not include requested.
+        assert!(!Read.allows(Write));
+        assert!(!Read.allows(Execute));
+        assert!(!Read.allows(ReadWrite));
+        assert!(!Write.allows(Read));
+        assert!(!Write.allows(Execute));
+        assert!(!Execute.allows(Read));
+        // K7 invariant: requested == None never grants (asking for nothing).
+        assert!(!None.allows(None));
+        assert!(!Read.allows(None));
+        assert!(!All.allows(None));
+        // None.allows(anything non-None) = false.
+        assert!(!None.allows(Read));
+        assert!(!None.allows(Write));
+        assert!(!None.allows(All));
+    }
+
+    /// SAFE-2 K8 cross-crate drift: kernel IpcMessage size == config IPC_MSG_SIZE.
+    // VERIFIES: SNTM-SAFE-R3 — typed IPC slot size consistency (CR-8 drift proof).
+    /// FAILS-IF: kernel IpcMessage shrinks/grows (e.g. accidental padding,
+    ///           IPC_MSG_SIZE bump without IpcMessage update).
+    #[kani::proof]
+    fn typed_ipc_size_invariant() {
+        // K8: pull two independent symbols and compare against the config const.
+        // If anyone changes IPC_MSG_SIZE alone, IpcMessage drifts → fail.
+        let kernel_msg = core::mem::size_of::<crate::ipc::IpcMessage>();
+        let cfg = crate::common::config::IPC_MSG_SIZE;
+        assert!(kernel_msg == cfg);
+        assert!(kernel_msg == 64);  // also pin numeric expectation
+    }
+
+    /// SAFE-2 CR-5: BOOT_CHANNELS table integrity — producer != consumer,
+    /// ids in range. Drift guard for the manifest→codegen pipeline.
+    // VERIFIES: SNTM-SAFE-R2 — boot channel ownership table well-formed.
+    /// FAILS-IF: producer == consumer (self-loop), id ≥ MAX_IPC_CHANNELS,
+    ///           or producer/consumer id ≥ MAX_TASKS.
+    #[kani::proof]
+    #[kani::unwind(9)] // K6: BOOT_CHANNELS len ≤ MAX_IPC_CHANNELS=8 → +1
+    fn boot_channels_well_formed() {
+        use crate::common::config::{MAX_IPC_CHANNELS, MAX_TASKS};
+        use crate::kernel::capability::cap_generated::BOOT_CHANNELS;
+        let mut i = 0usize;
+        while i < BOOT_CHANNELS.len() {
+            let (channel_id, producer, consumer) = BOOT_CHANNELS[i];
+            assert!((channel_id as usize) < MAX_IPC_CHANNELS);
+            assert!((producer as usize) < MAX_TASKS);
+            assert!((consumer as usize) < MAX_TASKS);
+            assert!(producer != consumer);  // self-loop forbidden
+            i += 1;
+        }
+    }
 }

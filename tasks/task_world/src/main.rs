@@ -27,8 +27,25 @@ fn main_loop() -> ! {
     // U-27: Production live boot — forever yield, NO auto-exit.
     // task_hello (tasks/task_hello/src/main.rs) ile uyumlu: iki native task
     // aynı anda Isolated → MultiModuleCrash → SHUTDOWN engelini önler.
+    //
+    // SAFE-2 (sprint-u31): typed IPC consumer demo. Each pass:
+    //   1. local_cap_invoke(channel_greeting, Read) — proves manifest grant
+    //      task_world[2]=Read (manifest [[task.local_cap]] in sipahi.toml).
+    //   2. recv_greeting_ping() — typed wrapper. Ok(None) on empty channel.
+    use sipahi_api::channels;
+    const RESOURCE_CHANNEL_GREETING: u8 = 2;
+    const ACTION_READ: u8 = 0x01;
     let mut counter: u32 = 0;
+    let mut last_seen: u32 = 0;
     loop {
+        let _ = syscall::local_cap_invoke(RESOURCE_CHANNEL_GREETING, ACTION_READ);
+        if let Ok(Some(msg)) = channels::recv_greeting_ping() {
+            let seen = u32::from_le_bytes([
+                msg.bytes[0], msg.bytes[1], msg.bytes[2], msg.bytes[3],
+            ]);
+            last_seen = seen;
+        }
+        let _ = last_seen; // observed value — placeholder demo sink
         syscall::yield_cpu();
         counter = counter.wrapping_add(1);
     }

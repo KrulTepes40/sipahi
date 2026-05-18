@@ -528,7 +528,243 @@ demo_feature_waivers = ["demo"]
     assert_ne!(code, 0, "missing [features] should fail, got code=0\n{}", out);
 }
 
-/// VERIFIES: SAFE-1 DAL-A + trusted_unsafe HARD-FAIL.
+// ─── SAFE-2 (sprint-u31): [[resource]] + [[channel]] invariants ────
+
+const TWO_TASK_HEADER: &str = r#"
+[kernel]
+name = "sipahi"
+version = "1.5.0"
+binary = "target/sipahi"
+stack_size = 16384
+
+[platform]
+target = "riscv64imac-unknown-none-elf"
+machine = "qemu-virt"
+pmp_entries = 16
+ram_base = 0x80000000
+ram_size = 0x20000000
+
+[[task]]
+name = "alpha"
+binary = ""
+task_id = 2
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+trust_tier = "safe"
+
+[[task]]
+name = "beta"
+binary = ""
+task_id = 3
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+trust_tier = "safe"
+"#;
+
+/// VERIFIES: SAFE-2 positive — minimal valid channel + resource accepted.
+#[test]
+fn safe2_positive_channel_resource_accepted() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[resource]]
+id = 0
+name = "uart_console"
+kind = "device"
+
+[[channel]]
+id = 0
+producer = "alpha"
+consumer = "beta"
+message = "Ping"
+size = 8
+"#);
+    let (code, out) = run(&toml);
+    assert_eq!(code, 0, "expected PASS, got code={}\n{}", code, out);
+}
+
+/// VERIFIES: SAFE-2 — channel producer not in [[task]] rejected (orphan).
+#[test]
+fn safe2_channel_orphan_producer_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[channel]]
+id = 0
+producer = "ghost_task"
+consumer = "beta"
+message = "Ping"
+size = 8
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "ghost producer should fail, got code=0\n{}", out);
+    assert!(out.contains("orphan") && out.contains("ghost_task"),
+        "missing 'orphan'/'ghost_task' in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — channel producer == consumer rejected (self-loop).
+#[test]
+fn safe2_channel_self_loop_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[channel]]
+id = 0
+producer = "alpha"
+consumer = "alpha"
+message = "Ping"
+size = 8
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "self-loop should fail, got code=0\n{}", out);
+    assert!(out.contains("self-loop") || out.contains("producer == consumer"),
+        "missing 'self-loop' marker in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — duplicate channel id rejected.
+#[test]
+fn safe2_channel_duplicate_id_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[channel]]
+id = 0
+producer = "alpha"
+consumer = "beta"
+message = "Ping"
+size = 8
+
+[[channel]]
+id = 0
+producer = "beta"
+consumer = "alpha"
+message = "Pong"
+size = 8
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "duplicate id should fail, got code=0\n{}", out);
+    assert!(out.contains("duplicate"),
+        "missing 'duplicate' in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — channel size > IPC_MSG_SIZE(64) rejected.
+#[test]
+fn safe2_channel_size_overflow_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[channel]]
+id = 0
+producer = "alpha"
+consumer = "beta"
+message = "Ping"
+size = 65
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "size > IPC_MSG_SIZE should fail, got code=0\n{}", out);
+    assert!(out.contains("IPC_MSG_SIZE") || out.contains("size=65"),
+        "missing 'IPC_MSG_SIZE'/'size=65' in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — channel message snake_case rejected (PascalCase required).
+#[test]
+fn safe2_channel_message_snake_case_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[channel]]
+id = 0
+producer = "alpha"
+consumer = "beta"
+message = "greeting_ping"
+size = 8
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "snake_case message should fail, got code=0\n{}", out);
+    assert!(out.contains("PascalCase") || out.contains("non-alphanumeric")
+            || out.contains("uppercase"),
+        "missing case-policy marker in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — channel id >= MAX_IPC_CHANNELS(8) rejected.
+#[test]
+fn safe2_channel_id_too_large_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[channel]]
+id = 8
+producer = "alpha"
+consumer = "beta"
+message = "Ping"
+size = 8
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "id=8 should fail (>= MAX_IPC_CHANNELS), got code=0\n{}", out);
+    assert!(out.contains("MAX_IPC_CHANNELS"),
+        "missing 'MAX_IPC_CHANNELS' in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — duplicate resource id rejected.
+#[test]
+fn safe2_resource_duplicate_id_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[resource]]
+id = 0
+name = "a"
+kind = "device"
+
+[[resource]]
+id = 0
+name = "b"
+kind = "device"
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "duplicate resource id should fail, got code=0\n{}", out);
+    assert!(out.contains("duplicate"),
+        "missing 'duplicate' in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — resource id >= MAX_RESOURCES(4) rejected.
+#[test]
+fn safe2_resource_id_too_large_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[resource]]
+id = 4
+name = "fifth"
+kind = "device"
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "id=4 should fail (>= MAX_RESOURCES), got code=0\n{}", out);
+    assert!(out.contains("MAX_RESOURCES"),
+        "missing 'MAX_RESOURCES' in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — local_cap referencing undeclared resource rejected (orphan).
+#[test]
+fn safe2_local_cap_orphan_resource_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[task.local_cap]]
+resource_id = 3
+action = "Read"
+"#);
+    // Inserts local_cap on first task (alpha); resource 3 not declared.
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "orphan local_cap should fail, got code=0\n{}", out);
+    assert!(out.contains("orphan") && out.contains("resource_id=3"),
+        "missing 'orphan'/'resource_id=3' in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 — local_cap invalid action rejected (must be enum value).
+#[test]
+fn safe2_local_cap_invalid_action_rejected() {
+    let toml = format!(r#"{TWO_TASK_HEADER}
+[[resource]]
+id = 0
+name = "uart"
+kind = "device"
+
+[[task.local_cap]]
+resource_id = 0
+action = "Admin"
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "invalid action should fail, got code=0\n{}", out);
+    assert!(out.contains("invalid local_cap action"),
+        "missing 'invalid local_cap action' in output:\n{}", out);
+}
+
+/// VERIFIES: SAFE-2 DAL-A + trusted_unsafe HARD-FAIL.
 #[test]
 fn dal_a_trusted_unsafe_rejected() {
     let toml = format!(r#"{HEADER}

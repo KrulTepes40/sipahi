@@ -60,8 +60,192 @@ pub fn validate_all(m: &Manifest, manifest_path: Option<&Path>) -> Result<(), Ve
             errors.extend(es);
         }
     }
+    // SAFE-2 (sprint-u31): [[resource]] + [[channel]] schema invariants.
+    if let Err(es) = check_resources(m) {
+        errors.extend(es);
+    }
+    if let Err(es) = check_channels(m) {
+        errors.extend(es);
+    }
+    if let Err(es) = check_local_caps(m) {
+        errors.extend(es);
+    }
 
     if errors.is_empty() { Ok(()) } else { Err(errors) }
+}
+
+// SAFE-2 platform constants — must mirror src/common/config.rs.
+// MAX_IPC_CHANNELS=8 (config.rs:78), IPC_MSG_SIZE=64 (config.rs:72), MAX_RESOURCES=4 (Section 8 FIX-E).
+const MAX_IPC_CHANNELS: u8 = 8;
+const IPC_MSG_SIZE: usize = 64;
+const MAX_RESOURCES: u8 = 4;
+
+/// SAFE-2 (CR Section 8): `[[resource]]` invariants.
+///   1. id < MAX_RESOURCES (manifest can't request more rows than codegen emits)
+///   2. id unique
+///   3. name unique + non-empty + snake_case-ish (basic — no whitespace/punct)
+///   4. kind non-empty
+fn check_resources(m: &Manifest) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+    let mut seen_ids = std::collections::HashMap::<u8, &str>::new();
+    let mut seen_names = std::collections::HashMap::<&str, u8>::new();
+    for r in &m.resources {
+        if r.id >= MAX_RESOURCES {
+            errs.push(format!(
+                "resource '{}': id={} >= MAX_RESOURCES({})",
+                r.name, r.id, MAX_RESOURCES
+            ));
+        }
+        if let Some(prev) = seen_ids.insert(r.id, r.name.as_str()) {
+            errs.push(format!(
+                "resource id={} duplicate: '{}' and '{}'", r.id, prev, r.name
+            ));
+        }
+        if r.name.trim().is_empty() {
+            errs.push(format!("resource id={}: empty name", r.id));
+        } else {
+            if let Some(prev_id) = seen_names.insert(r.name.as_str(), r.id) {
+                errs.push(format!(
+                    "resource name '{}' duplicate: id={} and id={}",
+                    r.name, prev_id, r.id
+                ));
+            }
+            if r.name.contains(|c: char| c.is_whitespace() || c == '.') {
+                errs.push(format!(
+                    "resource '{}': name must be snake_case (no whitespace/punct)",
+                    r.name
+                ));
+            }
+        }
+        if r.kind.trim().is_empty() {
+            errs.push(format!("resource '{}': empty kind", r.name));
+        }
+    }
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
+}
+
+/// SAFE-2 (CR Section 8): `[[channel]]` invariants.
+///   1. id < MAX_IPC_CHANNELS
+///   2. id unique
+///   3. producer + consumer reference existing [[task]] name (orphan check)
+///   4. producer != consumer (self-loop forbidden)
+///   5. size <= IPC_MSG_SIZE
+///   6. message PascalCase + unique (struct codegen safety)
+fn check_channels(m: &Manifest) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+    let task_names: std::collections::HashSet<&str> =
+        m.tasks.iter().map(|t| t.name.as_str()).collect();
+    let mut seen_ids = std::collections::HashMap::<u8, &str>::new();
+    let mut seen_messages = std::collections::HashMap::<&str, u8>::new();
+    for c in &m.channels {
+        let tag = format!("channel id={}", c.id);
+        if c.id >= MAX_IPC_CHANNELS {
+            errs.push(format!(
+                "{}: id >= MAX_IPC_CHANNELS({})", tag, MAX_IPC_CHANNELS
+            ));
+        }
+        if let Some(prev) = seen_ids.insert(c.id, c.message.as_str()) {
+            errs.push(format!(
+                "channel id={} duplicate: message '{}' and '{}'",
+                c.id, prev, c.message
+            ));
+        }
+        if !task_names.contains(c.producer.as_str()) {
+            errs.push(format!(
+                "{}: producer '{}' orphan (no matching [[task]] name)",
+                tag, c.producer
+            ));
+        }
+        if !task_names.contains(c.consumer.as_str()) {
+            errs.push(format!(
+                "{}: consumer '{}' orphan (no matching [[task]] name)",
+                tag, c.consumer
+            ));
+        }
+        if c.producer == c.consumer {
+            errs.push(format!(
+                "{}: producer == consumer ('{}') — self-loop forbidden",
+                tag, c.producer
+            ));
+        }
+        if c.size == 0 {
+            errs.push(format!("{}: size=0 — message struct must have at least 1 byte", tag));
+        }
+        if c.size > IPC_MSG_SIZE {
+            errs.push(format!(
+                "{}: size={} > IPC_MSG_SIZE({}) — message struct exceeds IPC slot",
+                tag, c.size, IPC_MSG_SIZE
+            ));
+        }
+        // Message name: PascalCase = first char upper alpha, rest alphanumeric.
+        if c.message.trim().is_empty() {
+            errs.push(format!("{}: empty message struct name", tag));
+        } else {
+            let first = c.message.chars().next().unwrap();
+            if !first.is_ascii_uppercase() {
+                errs.push(format!(
+                    "{}: message '{}' not PascalCase (must start uppercase alpha)",
+                    tag, c.message
+                ));
+            }
+            if c.message.chars().any(|ch| !ch.is_ascii_alphanumeric()) {
+                errs.push(format!(
+                    "{}: message '{}' has non-alphanumeric chars (snake_case forbidden)",
+                    tag, c.message
+                ));
+            }
+            if let Some(prev_id) = seen_messages.insert(c.message.as_str(), c.id) {
+                errs.push(format!(
+                    "message '{}' duplicate: channel id={} and id={}",
+                    c.message, prev_id, c.id
+                ));
+            }
+        }
+    }
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
+}
+
+/// SAFE-2 (CR-3): `[[task.local_cap]]` invariants.
+///   1. resource_id < MAX_RESOURCES + references existing [[resource]]
+///   2. action ∈ {None, Read, Write, ReadWrite, Execute, All}
+///   3. (task, resource_id) pair unique within task (no duplicate grants)
+fn check_local_caps(m: &Manifest) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+    let resource_ids: std::collections::HashSet<u8> =
+        m.resources.iter().map(|r| r.id).collect();
+    for t in &m.tasks {
+        let mut seen = std::collections::HashSet::<u8>::new();
+        for g in &t.local_caps {
+            if g.resource_id >= MAX_RESOURCES {
+                errs.push(format!(
+                    "task '{}': local_cap resource_id={} >= MAX_RESOURCES({})",
+                    t.name, g.resource_id, MAX_RESOURCES
+                ));
+                continue;
+            }
+            if !resource_ids.contains(&g.resource_id) {
+                errs.push(format!(
+                    "task '{}': local_cap resource_id={} orphan (no [[resource]] declared)",
+                    t.name, g.resource_id
+                ));
+            }
+            if !seen.insert(g.resource_id) {
+                errs.push(format!(
+                    "task '{}': duplicate local_cap grant for resource_id={}",
+                    t.name, g.resource_id
+                ));
+            }
+            match g.action.as_str() {
+                "None" | "Read" | "Write" | "ReadWrite" | "Execute" | "All" => {}
+                other => errs.push(format!(
+                    "task '{}': invalid local_cap action '{}' for resource_id={} \
+                     (must be None|Read|Write|ReadWrite|Execute|All)",
+                    t.name, other, g.resource_id
+                )),
+            }
+        }
+    }
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
 /// SAFE-1 (U-30): SNTM-SAFE Safe Native Profile manifest invariants.
