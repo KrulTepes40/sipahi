@@ -30,8 +30,21 @@ pub struct Manifest {
 pub struct KernelEntry {
     pub name:       String,
     pub version:    String,
+    /// SAFE-3 (sprint-u32, Section 8 CR-2): kernel image reserved address range
+    /// at `KERNEL_BASE`. Native task region MUST start at `KERNEL_BASE +
+    /// reserved_size`. Default 6MB matches sipahi.ld `_end ≤ 0x80600000` +
+    /// NATIVE_TASK_BASE = 0x80600000. Validator cross-checks; manifest +
+    /// linker drift FAIL.
+    #[serde(default = "default_reserved_size")]
+    pub reserved_size: usize,
     pub binary:     String,
     pub stack_size: usize,
+}
+
+/// SAFE-3 CR-2: default 6MB matches sipahi.ld `_end ≤ 0x80600000` +
+/// `NATIVE_TASK_BASE = 0x80600000` in src/common/config.rs:31.
+fn default_reserved_size() -> usize {
+    0x60_0000 // 6 MiB
 }
 
 #[derive(Deserialize, Debug)]

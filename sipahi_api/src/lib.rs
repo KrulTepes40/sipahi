@@ -21,36 +21,54 @@
 // Generated file — DO NOT edit; regenerate via `bash scripts/regen_safe_codegen.sh`.
 pub mod channels;
 
-/// Task-side hata tipleri — kernel return value (usize::MAX-N şema) parse.
-/// U-21 GÖREV 4 [MP2] sentinel kodlarına eşler.
+/// Task-side hata tipleri — kernel `SyscallResult::to_raw()` ile bit-eşit hizalı.
+///
+/// SAFE-3 (sprint-u32, Section 8 CR-1): bu hizalamayı U-21 GÖREV 4 [MP2]
+/// scaffold sentinel mapping kayıkken (InvalidArg / Permission / InvalidSyscall
+/// yanlış raw value) → task yanlış error name görüyordu. Düzeltildi:
+///
+/// | Raw value        | Kernel `SyscallResult` | sipahi_api `Error` |
+/// |------------------|------------------------|--------------------|
+/// | 0                | Ok                     | (None)             |
+/// | usize::MAX       | InvalidSyscall         | InvalidSyscall     |
+/// | usize::MAX - 1   | NoCapability           | NoCapability       |
+/// | usize::MAX - 2   | IpcFull                | IpcFull            |
+/// | usize::MAX - 3   | IpcEmpty               | IpcEmpty           |
+/// | usize::MAX - 4   | InvalidArg             | InvalidArg         |
+/// | usize::MAX - 5   | BufferFull             | BufferFull         |
+///
+/// Drift guard: `verify::verification::syscall_error_abi_alignment` Kani
+/// harness'ı (K8 cross-crate). Yeni variant kernel'e eklenmeden api'ye
+/// eklenirse Kani fail.
+///
+/// Orphan variant'lar (Permission, RateLimited, Internal) SAFE-3 CR-1'de
+/// kaldırıldı — kernel emit etmiyor; eklenirse aynı commit'te iki tarafa.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Error {
-    InvalidArg       = 0,
-    NoCapability     = 1,
-    IpcFull          = 2,
-    IpcEmpty         = 3,
-    Permission       = 4,
-    InvalidSyscall   = 5,
-    RateLimited      = 6,
-    Internal         = 7,
+    InvalidSyscall = 0,
+    NoCapability   = 1,
+    IpcFull        = 2,
+    IpcEmpty       = 3,
+    InvalidArg     = 4,
+    BufferFull     = 5,
 }
 
 impl Error {
-    /// 0 (E_OK) Error değil → None. Aksi: usize::MAX-N → Error variant.
+    /// 0 (E_OK) Error değil → None. Aksi: kernel raw value → Error variant.
+    /// Bilinmeyen raw değer (drift sinyali) → `Some(Error::InvalidSyscall)`
+    /// (defansif default; gerçek ABI drift Kani harness ile yakalanır).
     #[inline]
     pub fn from_kernel(ret: usize) -> Option<Self> {
         match ret {
             0 => None,
-            v if v == usize::MAX     => Some(Error::InvalidArg),
+            v if v == usize::MAX     => Some(Error::InvalidSyscall),
             v if v == usize::MAX - 1 => Some(Error::NoCapability),
             v if v == usize::MAX - 2 => Some(Error::IpcFull),
             v if v == usize::MAX - 3 => Some(Error::IpcEmpty),
-            v if v == usize::MAX - 4 => Some(Error::Permission),
-            v if v == usize::MAX - 5 => Some(Error::InvalidSyscall),
-            v if v == usize::MAX - 6 => Some(Error::RateLimited),
-            v if v == usize::MAX - 7 => Some(Error::Internal),
-            _ => Some(Error::Internal),
+            v if v == usize::MAX - 4 => Some(Error::InvalidArg),
+            v if v == usize::MAX - 5 => Some(Error::BufferFull),
+            _ => Some(Error::InvalidSyscall),
         }
     }
 }

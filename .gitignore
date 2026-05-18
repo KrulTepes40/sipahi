@@ -33,3 +33,17 @@ SIPAHI_AMCI_DESIGN*
 sipahi_context.md
 SIPAHI_SNTM_DESIGN.mdtools/sntm-validate/target/
 SIPAHI_SNTM_DESIGN.md
+
+# SAFE-3 (sprint-u32, Section 8 CR-6): cert artifacts asla committed
+# — TaskCertificate.source_commit içerir → cert commit edersek git HEAD
+# değişir → cert stale → CI drift fail → sonsuz döngü. `target/` zaten
+# kapsıyor, bunlar explicit doctrine işaretleri.
+target/native/*.cert.bin
+target/native/*.cert.sig
+target/sipahi-image.bin
+target/sipahi-image.sig
+
+# SAFE-3 CR-7: private signing key ASLA repo'da. Public key (.pub)
+# verify için committed; private key ephemeral (CI her run yeniler,
+# local dev için scripts/gen_dev_key.sh idempotent).
+keys/*.priv

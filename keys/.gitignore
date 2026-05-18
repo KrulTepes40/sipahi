@@ -1,0 +1,7 @@
+# SAFE-3 (sprint-u32, Section 8 CR-7): keys/ allowlist.
+# Private signing key (*.priv) ASLA repo'da; public (*.pub) committed.
+# `*` ile her şeyi ignore, sonra `!` ile istisnalar.
+
+*
+!.gitignore
+!*.pub

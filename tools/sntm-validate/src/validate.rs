@@ -20,11 +20,10 @@ use std::path::Path;
 const RESERVED_LOW_PMP_ENTRIES: u8 = 8;
 const MAX_REGIONS_PER_TASK: usize = 6;
 
-// Kernel address range (Sipahi v1.5 sabit layout — sipahi.ld'den).
-// Kernel image 0x80000000..0x80100000 (1MB), task'lar 0x80100000+.
-// U-25'te dinamik kernel.size manifest'ten okunacak.
+// Kernel address range — sipahi.ld'den + manifest [kernel] reserved_size.
+// SAFE-3 (sprint-u32, Section 8 CR-2): KERNEL_SIZE const 1MB idi; gerçek
+// _end ≤ 0x80600000 (sipahi.ld:129) → 6MB. Validator manifest field oku.
 const KERNEL_BASE: usize = 0x8000_0000;
-const KERNEL_SIZE: usize = 0x10_0000;  // 1MB kernel image (rough upper bound)
 
 pub fn validate_all(m: &Manifest, manifest_path: Option<&Path>) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
@@ -41,7 +40,7 @@ pub fn validate_all(m: &Manifest, manifest_path: Option<&Path>) -> Result<(), Ve
     if let Err(es) = check_cross_task_overlap(&m.tasks) {
         errors.extend(es);
     }
-    if let Err(es) = check_kernel_task_overlap(&m.tasks) {
+    if let Err(es) = check_kernel_task_overlap(m) {
         errors.extend(es);
     }
     if let Err(es) = check_pmp_budget(m) {
@@ -473,16 +472,23 @@ fn check_cross_task_overlap(tasks: &[TaskEntry]) -> Result<(), Vec<String>> {
 /// SNTM-R3 (kernel half): task region kernel address range ile çakışmamalı.
 /// Critical: PMP priority + kernel-task overlap = izolasyon ihlali
 /// (SNTM design v0.8 §4.5.2 shadow attack scenario).
-fn check_kernel_task_overlap(tasks: &[TaskEntry]) -> Result<(), Vec<String>> {
+///
+/// SAFE-3 (sprint-u32, Section 8 CR-2): kernel size manifest
+/// `[kernel] reserved_size` field'dan okunur (default 6MB). Eski 1MB
+/// hardcoded const → silent overlap riski (0x80100000..0x80600000 arası
+/// kernel `.task_stacks` + `.wasm_arena` + `.bss` ile çakışan region
+/// silent kabul ediliyordu).
+fn check_kernel_task_overlap(m: &Manifest) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
-    for t in tasks {
+    let kernel_size = m.kernel.reserved_size;
+    for t in &m.tasks {
         for r in &t.regions {
-            if regions_overlap(r.base, r.size, KERNEL_BASE, KERNEL_SIZE) {
+            if regions_overlap(r.base, r.size, KERNEL_BASE, kernel_size) {
                 errs.push(format!(
                     "task '{}' region '{}' (base=0x{:x} size=0x{:x}) \
                      overlaps kernel range [0x{:x}..0x{:x})",
                     t.name, r.name, r.base, r.size,
-                    KERNEL_BASE, KERNEL_BASE + KERNEL_SIZE
+                    KERNEL_BASE, KERNEL_BASE + kernel_size
                 ));
             }
         }

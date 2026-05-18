@@ -160,6 +160,71 @@ perm = "RX"
         "expected 'kernel' in output:\n{}", out);
 }
 
+/// SAFE-3 (sprint-u32, Section 8 CR-2): task region @ 0x80100000 silent
+/// geçiyordu eski 1MB hardcoded KERNEL_SIZE altında — kernel `.task_stacks`
+/// (NOLOAD MAX_TASKS×8KB) + `.wasm_arena` + `.bss` ile çakışıyor.
+/// Manifest reserved_size=6MB ile bu region artık REJECT olmalı.
+///
+/// VERIFIES: SAFE-3 CR-2 kernel reserved range invariant.
+/// FAILS-IF: validator 0x80100000..0x80104000 region'ı kabul ederse.
+#[test]
+fn safe3_kernel_overlap_at_1MB_rejected() {
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "below_native_base"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+
+[[task.region]]
+name = "shadow"
+base = 0x80100000
+size = 0x4000
+perm = "RX"
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "0x80100000 region should fail (CR-2 6MB kernel), got code=0\n{}", out);
+    assert!(out.to_lowercase().contains("kernel"),
+        "expected 'kernel' in output:\n{}", out);
+}
+
+/// SAFE-3 CR-2 (positive): explicit reserved_size override edilirse 1MB
+/// olur, eski davranışa geri döner — manifest field doğru parse ediliyor.
+///
+/// VERIFIES: SAFE-3 CR-2 reserved_size manifest field round-trip.
+/// FAILS-IF: validator manifest field'ı görmezse, default 6MB her zaman
+///           uygulanır → bu test silent fail eder (CR-2 fix yarım).
+#[test]
+fn safe3_kernel_reserved_size_manifest_override() {
+    let mut hdr = HEADER.to_string();
+    // Override default 6MB with 1MB — task at 0x80100000 then accepted.
+    hdr = hdr.replace(
+        "stack_size = 16384",
+        "stack_size = 16384\nreserved_size = 0x100000",
+    );
+    let toml = format!(r#"{hdr}
+[[task]]
+name = "above_1MB"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+
+[[task.region]]
+name = "text"
+base = 0x80100000
+size = 0x4000
+perm = "RX"
+"#);
+    let (code, out) = run(&toml);
+    assert_eq!(code, 0, "1MB override should accept 0x80100000, got code={}\n{}", code, out);
+}
+
 #[test]
 fn pmp_budget_exceeded_rejected() {
     // U-25 FIX-6: RESERVED_LOW_PMP_ENTRIES=8 (kernel 0..5 + UART 6..7).
@@ -231,7 +296,8 @@ fn output_rs_codegen_round_trip() {
     let manifest_path = dir.path().join("sipahi.toml");
     let out_path = dir.path().join("generated.rs");
 
-    // Manifest: 1 task, 2 NAPOT-aligned region.
+    // Manifest: 1 task, 2 NAPOT-aligned region. Addresses ≥ NATIVE_TASK_BASE
+    // (0x80600000) per SAFE-3 CR-2 6MB kernel reserved range default.
     let toml = format!(r#"{HEADER}
 [[task]]
 name = "demo"
@@ -244,13 +310,13 @@ dal_level = "D"
 
 [[task.region]]
 name = "text"
-base = 0x80100000
+base = 0x80600000
 size = 0x4000
 perm = "RX"
 
 [[task.region]]
 name = "stack"
-base = 0x80110000
+base = 0x80610000
 size = 0x2000
 perm = "RW"
 "#);
@@ -276,8 +342,8 @@ perm = "RW"
     // Task 0 content
     assert!(generated.contains("region_count: 2,"),
         "expected region_count: 2 for task 0\n{}", generated);
-    assert!(generated.contains("0x80100000"));
-    assert!(generated.contains("0x80110000"));
+    assert!(generated.contains("0x80600000"));
+    assert!(generated.contains("0x80610000"));
     assert!(generated.contains("Permission::RX"));
     assert!(generated.contains("Permission::RW"));
     assert!(generated.contains("PmpEncoding::Napot"));
