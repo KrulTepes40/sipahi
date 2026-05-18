@@ -7,6 +7,10 @@
 
 #![no_std]
 #![no_main]
+// SAFE-1 (U-30): Pure safe tier — task-lint enforce (manifest trust_tier="safe").
+// Source-level forbid(unsafe_code) EKLENMEDİ çünkü rustc 1.82+ unsafe_code
+// lint'i no_mangle attribute'unu işaretler (false positive). task-lint
+// manifest trust_tier="safe" + AST unsafe count == 0 gate'i ile enforce eder.
 
 use sipahi_api::syscall;
 

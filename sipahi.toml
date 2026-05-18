@@ -28,6 +28,12 @@ priority      = 6          # legacy task_a(4)/task_b(8) arası
 period_ticks  = 10         # 100ms @ 10ms/tick
 budget_cycles = 100_000    # DAL-D minimal
 dal_level     = "D"
+# SAFE-1 (U-30): SNTM-SAFE Safe Native Profile.
+# trust_tier="safe" production tier korunur. cross-isolation-demo cfg-gated
+# unsafe block için demo_feature_waivers waiver (cfg_attr forbid + production
+# compile-out). DAL-D + safe tier → DO-178C uyumlu.
+trust_tier            = "safe"
+demo_feature_waivers  = ["cross-isolation-demo"]
 
 # U-26 FIX-A: NATIVE_TASK_BASE = 0x80600000 (kernel + 4MB wasm_arena sonrası).
 # Eski 0x80100000 wasm_arena ortasında — silent overwrite (RAM 8MB içinde
@@ -73,6 +79,9 @@ priority      = 7          # task_hello(6) + 1
 period_ticks  = 50         # 500ms — FIX-C
 budget_cycles = 500_000    # FIX-C
 dal_level     = "D"
+# SAFE-1 (U-30): pure safe tier — unconditional forbid(unsafe_code).
+# demo_feature_waivers YOK (cfg-gated unsafe block yok).
+trust_tier    = "safe"
 
 [[task.region]]
 name = "text"

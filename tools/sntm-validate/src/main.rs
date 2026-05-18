@@ -81,7 +81,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match validate::validate_all(&m) {
+    match validate::validate_all(&m, Some(&path)) {
         Ok(()) => {
             let total_regions: usize =
                 m.tasks.iter().map(|t| t.regions.len()).sum();

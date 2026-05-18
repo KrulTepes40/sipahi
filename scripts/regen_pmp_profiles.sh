@@ -10,7 +10,9 @@ cd "$(dirname "$0")/.."
 HOST=$(rustc -vV | sed -n 's/^host: //p')
 echo "[regen] target host: $HOST"
 echo "[regen] sntm-validate --manifest sipahi.toml --output-rs src/kernel/pmp/generated.rs"
-(cd tools/sntm-validate && cargo run --target "$HOST" --release -- \
+# SAFE-1 (U-30): cargo +stable kanal (nightly serde_core ICE bypass).
+# 1.89.0 stable serde 1.0.228 + toml 1.1.2 ile uyumlu çalışır.
+(cd tools/sntm-validate && cargo +stable run --target "$HOST" --release -- \
     --manifest ../../sipahi.toml \
     --output-rs ../../src/kernel/pmp/generated.rs)
 echo "[regen] done."

@@ -162,10 +162,13 @@ required_kani_proofs = [
 # (Sprint U-26) hedef — o noktada is_sntm_native=true task'lar boot eder.
 
 [feature.sntm-safe]
-description     = "SNTM-SAFE — task-lint, binary verifier, certificate (v1.6+)"
-deferred        = "test+proof"
-deferred_reason = "Umbrella feature, body SAFE-1..4 sprint'lerinde doldurulacak"
-deferred_target = "v1.6 SAFE-1 (Safe Native Profile)"
+description             = "SNTM-SAFE umbrella feature — phased rollout SAFE-1 v1.6 (Safe Native Profile + task-lint), SAFE-2 v1.7 (Static Cap Table + Typed IPC), SAFE-3 v1.8 (Binary Verifier + Cert), SAFE-4 v1.9 (Stack Analyzer)."
+required_negative_tests = []
+required_kani_proofs    = []
+non_safety              = false   # safety mekanizması — build-time enforcement
+# U-30 / SAFE-1 (Codex (1) fix): `deferred` field SİLİNDİ — SAFE-1 implement edildi.
+# `required_scripts` SADECE [requirement.*] scope'unda; feature-level değil.
+# Aktif gate: [requirement.SNTM-SAFE-R1] (bkz aşağı).
 
 # ═══════════════════════════════════════════════════════════════════════
 # FUTURE entries (placeholder — actual entries added when feature lands)
@@ -331,3 +334,12 @@ description     = "Multi-task SNTM scheduler integrity: iki is_sntm_native=true 
 required_tests  = ["test_two_native_tasks_runnable", "test_native_create_task_idempotent"]
 required_proofs = []
 fault_model     = "native_create_task ikinci çağrı task_hello state'i bozdu, scheduler is_sntm_native bit drift (task_id swap'inde flag kaymaz), PMP_PROFILES[2] task_world load sırasında overwrite, scheduler context switch sırasında pmpaddr[8..15] yanlış task profile'ı yüklendi, ya da context.S trap frame mepc slot update eksik (switch_context csrw mepc ezilir — U-26'da masked, U-27'de instruction access fault)"
+
+# ─── SAFE-1 (U-30) SNTM-SAFE Safe Native Profile ───
+
+[requirement.SNTM-SAFE-R1]
+description      = "Safe Native Profile build-time enforcement: task-lint host tool 11 Rust yasağı uygular (unsafe/alloc/asm/ffi-foreign-block/recursion-direct/dyn-fnptr/panic-unwind/init_array/float/atomic/MMIO-cast). Manifest trust_tier ('safe' | 'trusted_unsafe') + demo_feature_waivers cfg-gated waiver (production tier 'safe' korunur, source-level cfg_attr ihtiyacı yok — rustc 1.82+ no_mangle unsafe_code lint çakışmasından kaçınma). DAL-A/B trusted_unsafe HARD-FAIL (DO-178C cert doctrine), DAL-C/D waiver_reason ile izinli."
+required_tests   = []   # build-time tool, kernel self-test'inde test yok
+required_scripts = ["sntm_safe_gate.sh"]
+required_proofs  = []
+fault_model      = "task-lint bir yasağı kaçırır (false negative — fixture/manuel test'le yakalanır), cfg-gated demo unsafe yanlış sınıflandırma (false positive — production scope dışı bloğu fail say), manifest demo_feature_waivers orphan feature kabul, default-ON feature waiver kabul (drift guard), DAL-A trusted_unsafe geçerken (sntm-validate enforce eder), extern \"C\" fn ABI annotation foreign block diye fail (FIX-6 ayrım), trusted_unsafe + demo_feature_waivers combine (audit karmaşası), ya da production binary'de unsafe leak (rust-objdump grep guard yakalar)"
