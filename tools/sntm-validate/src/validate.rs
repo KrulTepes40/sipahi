@@ -7,6 +7,7 @@
 //! integration test'i tool tarafını kanıtlar (tests/integration.rs).
 
 use crate::manifest::{Manifest, TaskEntry};
+use std::path::Path;
 
 /// U-25 FIX-6: PMP reserved low entries (kernel + UART, lock'lu).
 /// SNTM design v0.8 §4.5.1 + Sipahi PMP layout:
@@ -25,7 +26,7 @@ const MAX_REGIONS_PER_TASK: usize = 6;
 const KERNEL_BASE: usize = 0x8000_0000;
 const KERNEL_SIZE: usize = 0x10_0000;  // 1MB kernel image (rough upper bound)
 
-pub fn validate_all(m: &Manifest) -> Result<(), Vec<String>> {
+pub fn validate_all(m: &Manifest, manifest_path: Option<&Path>) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
 
     if let Err(es) = check_task_id_uniqueness(&m.tasks) {
@@ -46,8 +47,163 @@ pub fn validate_all(m: &Manifest) -> Result<(), Vec<String>> {
     if let Err(es) = check_pmp_budget(m) {
         errors.extend(es);
     }
+    // SAFE-1 (U-30): SNTM-SAFE schema checks (trust_tier + waiver_reason +
+    // demo_feature_waivers + DAL enum + DAL × trust_tier policy matrix).
+    if let Err(es) = check_safe_native_profile(m) {
+        errors.extend(es);
+    }
+    // U-30.1: demo_feature_waivers her item task Cargo.toml [features]'de tanımlı +
+    // [features.default] dışında olmalı (default-ON drift guard). task-lint ile
+    // defense-in-depth. manifest_path verilmediyse skip (legacy test scenarios).
+    if let Some(mp) = manifest_path {
+        if let Err(es) = check_demo_waiver_cargo(m, mp) {
+            errors.extend(es);
+        }
+    }
 
     if errors.is_empty() { Ok(()) } else { Err(errors) }
+}
+
+/// SAFE-1 (U-30): SNTM-SAFE Safe Native Profile manifest invariants.
+///
+/// Kontroller:
+///   1. dal_level enum parse (A/B/C/D dışı FAIL)
+///   2. trust_tier value "safe" | "trusted_unsafe" dışı FAIL
+///   3. trust_tier="trusted_unsafe" + waiver_reason boş → FAIL
+///   4. DAL-A/B + trust_tier="trusted_unsafe" → HARD-FAIL (DO-178C cert doctrine)
+///   5. demo_feature_waivers + trust_tier="trusted_unsafe" combine YASAK
+///      (tek tier ya cfg waiver — audit karmaşası önlenir)
+///   6. demo_feature_waivers orphan feature ismi FAIL (Cargo.toml [features]'de yok)
+///      → NOT: bu check sntm-validate'in Cargo.toml okuma kapasitesi gerektirir;
+///        SAFE-1 scope'unda basit "non-empty string" validate, tam Cargo.toml
+///        cross-check task-lint tool tarafında yapılır (G3'te).
+fn check_safe_native_profile(m: &Manifest) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+    for t in &m.tasks {
+        // (1) DAL enum parse
+        let dal = match crate::manifest::DalLevel::parse(&t.dal_level) {
+            Ok(d) => d,
+            Err(e) => {
+                errs.push(format!("task '{}': {}", t.name, e));
+                continue;
+            }
+        };
+        // (2) trust_tier value
+        let tier = t.trust_tier.as_str();
+        if tier != "safe" && tier != "trusted_unsafe" {
+            errs.push(format!(
+                "task '{}': invalid trust_tier '{}' (must be 'safe' or 'trusted_unsafe')",
+                t.name, tier
+            ));
+            continue;
+        }
+        // (3) trusted_unsafe + boş waiver_reason FAIL
+        if tier == "trusted_unsafe" && t.waiver_reason.trim().is_empty() {
+            errs.push(format!(
+                "task '{}': trust_tier='trusted_unsafe' requires waiver_reason (non-empty)",
+                t.name
+            ));
+        }
+        // (4) DAL-A/B + trusted_unsafe HARD-FAIL
+        if tier == "trusted_unsafe" && (dal == crate::manifest::DalLevel::A
+                                    || dal == crate::manifest::DalLevel::B) {
+            errs.push(format!(
+                "task '{}': DAL-{:?} forbids trust_tier='trusted_unsafe' (DO-178C cert doctrine)",
+                t.name, dal
+            ));
+        }
+        // (5) demo_feature_waivers + trusted_unsafe combine YASAK
+        if tier == "trusted_unsafe" && !t.demo_feature_waivers.is_empty() {
+            errs.push(format!(
+                "task '{}': demo_feature_waivers + trust_tier='trusted_unsafe' \
+                 combine YASAK (audit karmaşası — tek tier ya cfg waiver)",
+                t.name
+            ));
+        }
+        // (6) demo_feature_waivers non-empty string ve non-default features.
+        // Tam Cargo.toml cross-check task-lint tarafında (G3).
+        for waiver in &t.demo_feature_waivers {
+            if waiver.trim().is_empty() {
+                errs.push(format!(
+                    "task '{}': demo_feature_waivers boş string içeriyor",
+                    t.name
+                ));
+            }
+        }
+    }
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
+}
+
+/// U-30.1: demo_feature_waivers Cargo.toml [features] cross-check.
+///
+/// Her task'in tasks/<name>/Cargo.toml içinde her waiver item:
+///   - [features] tablosunda tanımlı (orphan FAIL)
+///   - [features.default] dizisinde DEĞİL (default-ON drift FAIL)
+fn check_demo_waiver_cargo(m: &Manifest, manifest_path: &Path) -> Result<(), Vec<String>> {
+    let workspace_root = manifest_path.parent().unwrap_or(Path::new("."));
+    let mut errs = Vec::new();
+    for t in &m.tasks {
+        if t.demo_feature_waivers.is_empty() {
+            continue;
+        }
+        let task_cargo = workspace_root.join("tasks").join(&t.name).join("Cargo.toml");
+        if !task_cargo.exists() {
+            errs.push(format!(
+                "task '{}': demo_feature_waivers={:?} but tasks/{}/Cargo.toml missing",
+                t.name, t.demo_feature_waivers, t.name
+            ));
+            continue;
+        }
+        let content = match std::fs::read_to_string(&task_cargo) {
+            Ok(s) => s,
+            Err(e) => {
+                errs.push(format!("task '{}': cannot read Cargo.toml: {}", t.name, e));
+                continue;
+            }
+        };
+        let parsed: toml::Value = match toml::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                errs.push(format!("task '{}': Cargo.toml parse error: {}", t.name, e));
+                continue;
+            }
+        };
+        let features = match parsed.get("features") {
+            Some(toml::Value::Table(t)) => t.clone(),
+            Some(_) => {
+                errs.push(format!("task '{}': [features] must be a table", t.name));
+                continue;
+            }
+            None => {
+                errs.push(format!(
+                    "task '{}': demo_feature_waivers={:?} but [features] table missing",
+                    t.name, t.demo_feature_waivers
+                ));
+                continue;
+            }
+        };
+        let default_list: Vec<String> = features.get("default")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect())
+            .unwrap_or_default();
+        for w in &t.demo_feature_waivers {
+            if !features.contains_key(w) {
+                errs.push(format!(
+                    "task '{}': waiver '{}' orphan (not in [features])", t.name, w
+                ));
+                continue;
+            }
+            if default_list.iter().any(|d| d == w) {
+                errs.push(format!(
+                    "task '{}': waiver '{}' in [features.default] (must be default-OFF; drift)",
+                    t.name, w
+                ));
+            }
+        }
+    }
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
 fn check_task_id_uniqueness(tasks: &[TaskEntry]) -> Result<(), Vec<String>> {

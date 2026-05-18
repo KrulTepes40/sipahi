@@ -46,8 +46,39 @@ pub struct TaskEntry {
     pub period_ticks:  u32,
     pub budget_cycles: u32,
     pub dal_level:     String,
+    /// SAFE-1: SNTM-SAFE trust tier — "safe" (default) | "trusted_unsafe".
+    /// DAL-A/B trusted_unsafe HARD-FAIL (cert doctrine); DAL-C/D waiver_reason ile izinli.
+    #[serde(default = "default_trust_tier")]
+    pub trust_tier:    String,
+    /// SAFE-1: trusted_unsafe için zorunlu, safe için boş.
+    #[serde(default)]
+    pub waiver_reason: String,
+    /// SAFE-1: cfg-gated demo feature listesi (task-lint scope dışı tutulur).
+    /// Her item Cargo.toml [features]'de tanımlı + default-OFF olmalı (drift guard).
+    #[serde(default)]
+    pub demo_feature_waivers: Vec<String>,
     #[serde(default, rename = "region")]
     pub regions:       Vec<RegionEntry>,
+}
+
+fn default_trust_tier() -> String {
+    "safe".to_string()
+}
+
+/// SAFE-1: DAL level enum — string compare yerine type-safe parse.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum DalLevel { A, B, C, D }
+
+impl DalLevel {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "A" => Ok(DalLevel::A),
+            "B" => Ok(DalLevel::B),
+            "C" => Ok(DalLevel::C),
+            "D" => Ok(DalLevel::D),
+            _   => Err(format!("invalid dal_level: {} (must be A/B/C/D)", s)),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]

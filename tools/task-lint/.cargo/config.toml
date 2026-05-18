@@ -1,0 +1,7 @@
+# SAFE-1 (U-30): task-lint HOST tool — kendi workspace, kendi target.
+# Root .cargo/config.toml `[build] target = "riscv64imac-unknown-none-elf"`
+# zorlar; sub-workspace local config override eder. CI ve sprint gate her
+# zaman explicit `--target $HOST` geçer; local dev `cd tools/task-lint &&
+# cargo build` çalıştırırsa default host kullanır.
+
+# Empty section — root [build] target shadow için placeholder.

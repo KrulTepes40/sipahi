@@ -390,3 +390,161 @@ perm = "RW"
     assert_eq!(code, 0, "disjoint two-task should pass, got code={}\n{}", code, out);
 }
 
+// ─── U-30.1: demo_feature_waivers Cargo.toml cross-check ──────────
+
+/// Helper: full workspace fixture (manifest + tasks/<name>/Cargo.toml).
+/// Returns (exit_code, combined_output).
+fn run_with_tasks(toml: &str, task_cargos: &[(&str, &str)]) -> (i32, String) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sipahi.toml"), toml).unwrap();
+    for (name, cargo) in task_cargos {
+        let td = dir.path().join("tasks").join(name);
+        std::fs::create_dir_all(&td).unwrap();
+        std::fs::write(td.join("Cargo.toml"), cargo).unwrap();
+    }
+    let out = std::process::Command::new(BIN)
+        .arg("--manifest")
+        .arg(dir.path().join("sipahi.toml"))
+        .output().unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    (out.status.code().unwrap_or(-1), combined)
+}
+
+const FRESH_TASK_CARGO_NO_FEATURES: &str = r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+"#;
+
+const FRESH_TASK_CARGO_WITH_DEMO: &str = r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+[features]
+demo = []
+"#;
+
+const FRESH_TASK_CARGO_DEFAULT_ON: &str = r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+[features]
+default = ["demo"]
+demo = []
+"#;
+
+const FRESH_TASK_CARGO_ORPHAN: &str = r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+[features]
+other = []
+"#;
+
+/// VERIFIES: demo_feature_waivers Cargo.toml cross-check positive case.
+/// FAILS-IF: Validator waiver=["demo"] + [features.demo=[]] kabul etmezse.
+#[test]
+fn demo_waiver_present_accepted() {
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "demo"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+trust_tier = "safe"
+demo_feature_waivers = ["demo"]
+"#);
+    let (code, out) = run_with_tasks(&toml, &[("demo", FRESH_TASK_CARGO_WITH_DEMO)]);
+    assert_eq!(code, 0, "expected PASS, got code={}\n{}", code, out);
+}
+
+/// VERIFIES: demo_feature_waivers default-ON drift FAIL.
+/// FAILS-IF: Validator [features.default=["demo"]] + waiver=["demo"] kabul ederse.
+#[test]
+fn demo_waiver_default_on_rejected() {
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "demo"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+trust_tier = "safe"
+demo_feature_waivers = ["demo"]
+"#);
+    let (code, out) = run_with_tasks(&toml, &[("demo", FRESH_TASK_CARGO_DEFAULT_ON)]);
+    assert_ne!(code, 0, "default-ON drift should fail, got code=0\n{}", out);
+    assert!(out.contains("default-OFF") || out.contains("drift") || out.contains("default"),
+        "missing 'drift/default' in output:\n{}", out);
+}
+
+/// VERIFIES: orphan waiver (not in [features]) FAIL.
+/// FAILS-IF: Validator waiver=["demo"] + [features.other=[]] (no demo) kabul ederse.
+#[test]
+fn demo_waiver_orphan_rejected() {
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "demo"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+trust_tier = "safe"
+demo_feature_waivers = ["demo"]
+"#);
+    let (code, out) = run_with_tasks(&toml, &[("demo", FRESH_TASK_CARGO_ORPHAN)]);
+    assert_ne!(code, 0, "orphan waiver should fail, got code=0\n{}", out);
+    assert!(out.contains("orphan") || out.contains("not in"),
+        "missing 'orphan/not in' in output:\n{}", out);
+}
+
+/// VERIFIES: demo_feature_waivers + [features] table missing → FAIL.
+#[test]
+fn demo_waiver_missing_features_table_rejected() {
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "demo"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+trust_tier = "safe"
+demo_feature_waivers = ["demo"]
+"#);
+    let (code, out) = run_with_tasks(&toml, &[("demo", FRESH_TASK_CARGO_NO_FEATURES)]);
+    assert_ne!(code, 0, "missing [features] should fail, got code=0\n{}", out);
+}
+
+/// VERIFIES: SAFE-1 DAL-A + trusted_unsafe HARD-FAIL.
+#[test]
+fn dal_a_trusted_unsafe_rejected() {
+    let toml = format!(r#"{HEADER}
+[[task]]
+name = "dal_a"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "A"
+trust_tier = "trusted_unsafe"
+waiver_reason = "test"
+"#);
+    let (code, out) = run(&toml);
+    assert_ne!(code, 0, "DAL-A trusted_unsafe should fail, got code=0\n{}", out);
+    assert!(out.contains("DAL-A") && out.contains("trusted_unsafe"),
+        "missing DAL-A/trusted_unsafe in output:\n{}", out);
+}

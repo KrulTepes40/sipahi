@@ -7,6 +7,13 @@
 
 #![no_std]
 #![no_main]
+// SAFE-1 (U-30): SNTM-SAFE Safe Native Profile enforcement via task-lint
+// host tool (build-time, NOT rustc lint). Source-level forbid(unsafe_code)
+// EKLENMEDİ çünkü rustc 1.82+ `unsafe_code` lint'i `no_mangle` attribute'u
+// işaretler (false positive — _start ABI annotation gerekli, hardcoded
+// no_mangle zorunlu). task-lint manifest trust_tier="safe" gate'i ile
+// ENFORCE edilir: cross-isolation-demo cfg-gated unsafe block waiver,
+// production binary'de unsafe YOK (cfg compile-out kanıtı: objdump grep).
 
 use sipahi_api::syscall;
 

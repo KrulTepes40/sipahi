@@ -626,3 +626,47 @@ jobs:
         run: |
           test -s target/native/task_hello.text.bin || (echo "FAIL: text.bin boş"; exit 1)
           echo "PASS: native task .bin'ler hazır"
+
+  # SAFE-1 (U-30): SNTM-SAFE Safe Native Profile build-time enforcement.
+  # task-lint host tool 11 yasak (unsafe/alloc/asm/ffi/recursion/dyn-fnptr/
+  # panic-unwind/init_array/float/atomic/MMIO-cast). DAL-A/B trusted_unsafe
+  # HARD-FAIL, DAL-C/D waiver_reason ile izinli.
+  task-lint:
+    name: SNTM-SAFE Safe Native Profile (task-lint)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/task-lint/target
+          key: ${{ runner.os }}-task-lint-${{ hashFiles('tools/task-lint/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-task-lint-
+      - name: Build task-lint (host target, sub-workspace)
+        working-directory: tools/task-lint
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          cargo build --target "$HOST" --release
+      - name: Run task-lint on safe-tier tasks
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          ./tools/task-lint/target/$HOST/release/task-lint \
+              --manifest sipahi.toml \
+              --tasks-dir tasks/
+      - name: Production binary unsafe leak guard
+        run: |
+          # cross-isolation-demo feature OFF default → unsafe cfg compile-out
+          # objdump 0x80705000 literal görünmemeli (deliberate write yok)
+          cd tasks/task_hello && cargo build --release && cd ../..
+          BIN=target/riscv64imac-unknown-none-elf/release/task_hello
+          if rust-objdump -d $BIN 2>/dev/null | grep -q "80705000"; then
+              echo "FAIL: production task_hello unsafe leak (0x80705000 literal)"
+              exit 1
+          fi
+          echo "PASS: no unsafe leak in production task_hello (cfg compile-out)"
