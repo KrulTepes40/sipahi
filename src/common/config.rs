@@ -52,6 +52,24 @@ pub const KERNEL_STACK_SIZE: usize = 16384; // 16KB
 /// Task stack boyutu (byte)
 pub const TASK_STACK_SIZE: usize = 8192; // 8KB
 
+/// SAFE-4 (sprint-u33) Section 8 CR-5: static stack analysis safety margin.
+/// `-Z emit-stack-sizes` + sntm-stack toplam frame size (per-function) sum'ı
+/// verir; sum-of-frames over-approximation olduğu hâlde:
+///   - inline `asm!` LLVM stack analizini bozar
+///   - compiler nightly bump frame size shift
+///   - LTO/optimization passes farklı stack profili
+/// Bu drift için 256 byte default margin. Production DAL-A için 512+ önerilir
+/// (manifest `[[task]] stack_margin_override` ile per-task override).
+/// Exact equality PASS YASAK (`stack_size == observed` reject) — sntm-validate
+/// `check_stack_bounds` enforce eder.
+pub const STACK_ANALYSIS_MARGIN_BYTES: u32 = 256;
+
+/// SAFE-4 (sprint-u33) Section 8 CR-4: cert + sntm-validate + sntm-cert-gen
+/// ortak sentinel. max_stack_bytes == 0xFFFF_FFFF ⇒ analiz çözülemedi ⇒
+/// DAL audit reject (SAFE gate FAIL, fallback YOK).
+pub const STACK_ANALYSIS_UNKNOWN_SENTINEL: u32 = 0xFFFF_FFFF;
+
+
 /// Trap frame boyutu (byte) — trap.S addi sp,sp,-272 ile uyumlu
 /// 16 register × 8 byte + mcause + mepc + user_sp + padding = 272, 16-byte aligned
 pub const TRAP_FRAME_SIZE: usize = 272;

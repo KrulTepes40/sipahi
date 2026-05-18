@@ -1,0 +1,28 @@
+[package]
+name = "sntm-stack"
+version = "0.1.0"
+edition = "2021"
+description = "Sipahi SNTM-SAFE static stack analyzer — RV64 .stack_sizes + call graph + cycle/indirect-call detect"
+license = "Apache-2.0"
+
+# SAFE-4 (sprint-u33) CR-2 Plan B: cargo-call-stack 0.1.16 current nightly
+# ile uyumsuz (rustc wrapper intercept 2023-11 hard-coded). LLVM
+# `-Z emit-stack-sizes` ELF section direkt parse — sub-workspace pattern
+# (kernel build-std contamination yok; host tool x86_64-unknown-linux-gnu).
+[workspace]
+
+[lib]
+name = "sntm_stack"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sntm-stack"
+path = "src/main.rs"
+
+# Sub-workspace doctrine: riscv-bin-verify ile aynı object pin
+# (ELF parse semantik drift yok).
+[dependencies]
+object = { version = "=0.36.5", default-features = false, features = ["read", "elf", "std"] }
+
+[dev-dependencies]
+tempfile = "=3.10.1"

@@ -1,0 +1,17 @@
+SNTM-STACK v1.0
+binary: target/riscv64imac-unknown-none-elf/release/task_recursion
+arch: rv64
+mode: sum-of-frames (over-approximation)
+caveat: call-graph-aware transitive analysis post-SAFE
+
+frames:
+  0x80900000  recursive_a                        64 byte
+  0x80900080  recursive_b                        48 byte
+
+direct_call_edges: 2
+indirect_calls: 0
+recursion: recursive_a -> recursive_b -> recursive_a
+
+status: FAIL
+reason: recursion (call graph cycle) detected
+max_stack_bytes: 0xFFFFFFFF

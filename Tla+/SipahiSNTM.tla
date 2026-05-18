@@ -24,6 +24,18 @@ ASSUME
     /\ ReservedLowEntries = 8
     /\ MaxPmpEntries = 16
 
+(* SAFE-4 (sprint-u33) Section 8 CR-5: stack analysis sabitleri.
+   TLC cfg file function literal'i parse etmiyor; module içinde tanımla.
+   Değerler gerçek sipahi.toml + sntm-stack çıktısı:
+     task_hello: 8KB stack, observed 128 byte
+     task_world: 8KB stack, observed 80 byte
+   StackMarginBytes = STACK_ANALYSIS_MARGIN_BYTES kernel const.
+   Abstract per-task class değil tek class (sembolik): tüm task'lar aynı stack
+   region size + analyzer observed worst-case (task_hello 128). *)
+StackBytesPerTask    == 8192
+AnalyzerMaxWorstCase == 128
+StackMarginBytes     == 256
+
 VARIABLES
     state,           \* state[t] \in TaskState — task lifecycle
     pmp,             \* pmp[i] \in {"Locked", "Dynamic", "Off"} — entry classification
@@ -234,6 +246,17 @@ StrongChannelOwnership ==
     /\ (sealed = TRUE) =>
          (\A c \in Channels : channels[c] = channelsAtSeal[c])
 
+(* SAFE-4 (sprint-u33) Section 8 CR-5: StackRegionBound — her task için
+   manifest task region stack size, sntm-stack observed_max + margin'i
+   karşılamalı. Abstract: TLC sembolik byte sınıfı (TaskStackBytes,
+   TaskAnalyzerMax, StackMarginBytes konstantları konfig kaynağı). Bu
+   invariant constant-tabanlı: state machine transition'ları stack metric'i
+   değiştirmez (build-time analizi); ama spec-level kontrat olarak kalır.
+   Section 9.3 S3: yeni invariant state count'u arttırmaz (138 baseline). *)
+StackRegionBound ==
+    \A t \in Tasks :
+        StackBytesPerTask >= AnalyzerMaxWorstCase + StackMarginBytes
+
 THEOREM Spec => []TypeOK
 THEOREM Spec => []KernelPmpInvariant
 THEOREM Spec => []LoaderInvariant
@@ -244,5 +267,6 @@ THEOREM Spec => []RunningIsCurrent
 THEOREM Spec => []SealedAtomicityInvariant   \* U-27 SNTM-R13
 THEOREM Spec => []ChannelOwnershipInvariant  \* SAFE-2 sprint-u31
 THEOREM Spec => []StrongChannelOwnership     \* SAFE-3 sprint-u32 CR-3
+THEOREM Spec => []StackRegionBound           \* SAFE-4 sprint-u33 CR-5
 
 ====

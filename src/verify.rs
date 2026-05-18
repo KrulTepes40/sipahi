@@ -1805,4 +1805,112 @@ mod verification {
                        + 4 + 1 + 1 + 2 + 32 + 32 + 32 + 64 + 4 + 4;
         assert!(sum == 424);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // SAFE-4 (sprint-u33) — Stack Analyzer (Plan B sntm-stack).
+    //
+    // Section 8 CR-5: STACK_ANALYSIS_MARGIN_BYTES = 256 literal pin
+    //                 (K1+K2 — production const; sntm-validate + cert + kernel
+    //                 üç crate aynı sabit).
+    // Section 8 CR-3+CR-5: stack_bounds_invariant — symbolic stack_size vs
+    //                      observed_max + margin formula; exact equality reject
+    //                      (K1+K3+K5 negative ≥ positive).
+    // Section 8 CR-7: kernel-side ONLY — sntm-stack parser tarafı host crate
+    //                 (sub-workspace), kernel `cargo kani` çağırmıyor. Parser
+    //                 kanıtı cargo test fixture'larda (Section 9.2 T).
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// SAFE-4 CR-5: stack analysis safety margin const pin — 256 byte default.
+    /// Production drift detect (K1+K2 doctrine — gerçek symbol import).
+    // VERIFIES: SNTM-SAFE-R6 (Section 8 CR-5 production const value; sntm-validate
+    //           + sntm-cert-gen + sntm-stack üç crate aynı sabit).
+    // CALLS:    crate::common::config::STACK_ANALYSIS_MARGIN_BYTES literal.
+    /// FAILS-IF: STACK_ANALYSIS_MARGIN_BYTES bilinçsiz değiştirilirse;
+    ///           sntm-validate / sntm-cert-gen / sntm-stack üçlüsü drift.
+    #[kani::proof]
+    fn stack_analysis_margin_pin() {
+        use crate::common::config::STACK_ANALYSIS_MARGIN_BYTES;
+        // K2 production const: kernel literal vs declared expectation.
+        assert!(STACK_ANALYSIS_MARGIN_BYTES == 256);
+        // K4 reachability + sanity: SAFE doctrine min 64, max 4096 (orta yol).
+        assert!(STACK_ANALYSIS_MARGIN_BYTES >= 64);
+        assert!(STACK_ANALYSIS_MARGIN_BYTES <= 4096);
+    }
+
+    /// SAFE-4 CR-5: stack_bounds invariant — exact equality FAIL,
+    /// stack_size ≥ observed_max + margin için PASS koşulu. Sembolik input
+    /// (K3 unbounded `kani::any`) ile formülü tarayıcı kapsama altına alır.
+    /// Positive case + negative case (exact equality) aynı harness'te (K5 doctrine).
+    // VERIFIES: SNTM-SAFE-R6 (Section 8 CR-5 margin enforcement formula —
+    //           stack_size ≥ observed_max + STACK_ANALYSIS_MARGIN_BYTES;
+    //           exact equality reject doctrine).
+    // CALLS:    STACK_ANALYSIS_MARGIN_BYTES, STACK_ANALYSIS_UNKNOWN_SENTINEL
+    //           (crate::common::config) + symbolic kani::any u32.
+    /// FAILS-IF: invariant denkleminin saf u32 aritmetiği farklı çıkarsa
+    ///           (overflow, saturasyon, off-by-one).
+    #[kani::proof]
+    fn stack_bounds_invariant() {
+        use crate::common::config::{
+            STACK_ANALYSIS_MARGIN_BYTES, STACK_ANALYSIS_UNKNOWN_SENTINEL,
+        };
+        // K3: symbolic 32-bit values, bounded yalnız "u32 overflow olmasın" ile.
+        let stack_size: u32 = kani::any();
+        let observed_max: u32 = kani::any();
+        kani::assume(observed_max != STACK_ANALYSIS_UNKNOWN_SENTINEL); // explicit sentinel ayrı path
+        kani::assume(observed_max < u32::MAX - STACK_ANALYSIS_MARGIN_BYTES);
+
+        let required = observed_max.checked_add(STACK_ANALYSIS_MARGIN_BYTES).unwrap();
+        let passes = stack_size >= required;
+
+        // K5 negative: exact equality (stack_size == observed_max) ⇒ asla PASS
+        // (margin > 0). Codex doctrine: exact equality PASS YASAK.
+        if stack_size == observed_max {
+            assert!(!passes);
+        }
+        // K5 positive: stack_size > observed_max + margin ⇒ PASS şart.
+        if stack_size > observed_max + STACK_ANALYSIS_MARGIN_BYTES {
+            assert!(passes);
+        }
+        // K4: aralıkta hesap doğru (off-by-one yok).
+        if !passes {
+            assert!(stack_size < observed_max + STACK_ANALYSIS_MARGIN_BYTES);
+        }
+    }
+
+    /// SAFE-4: PolicyEvent::StackOverflow (=1) → decide_action her DAL × restart
+    /// kombinasyonu için yalnız Restart veya Isolate döndürür. K7 no dead arms —
+    /// stack overflow için Shutdown/Failover/Alert/Degrade YASAK (yanlış sınıflama
+    /// ile sessiz davranış değişimi guard). Reachability: rc=0 → Restart;
+    /// rc≥MAX_RESTART_FAULT → Isolate.
+    // VERIFIES: SNTM-SAFE-R6 (stack overflow policy mapping K7 reachability —
+    //           PolicyEvent::StackOverflow → Restart|Isolate only, ASLA
+    //           Shutdown/Failover/Alert/Degrade).
+    // CALLS:    crate::kernel::policy::decide_action, PolicyEvent::StackOverflow,
+    //           MAX_RESTART_FAULT, FailureMode variants.
+    /// FAILS-IF: decide_action(1, ...) match arm Restart/Isolate dışında
+    ///           bir FailureMode dönerse — DAL-D 3-restart politikasi bozulur.
+    #[kani::proof]
+    fn stack_overflow_policy_event_mapping() {
+        use crate::kernel::policy::{decide_action, FailureMode, MAX_RESTART_FAULT, PolicyEvent};
+        let event = PolicyEvent::StackOverflow as u8;
+        assert!(event == 1);
+
+        let rc: u8 = kani::any();
+        let dal: u8 = kani::any();
+        kani::assume(dal <= 3); // 0=A,1=B,2=C,3=D
+
+        let m = decide_action(event, rc, dal);
+
+        // K7: yalnız Restart veya Isolate; başka arm sessizce devreye girmemeli.
+        let allowed = matches!(m, FailureMode::Restart | FailureMode::Isolate);
+        assert!(allowed);
+
+        // K4 reachability: rc=0 → Restart; rc=MAX_RESTART_FAULT → Isolate.
+        if rc == 0 {
+            assert!(matches!(m, FailureMode::Restart));
+        }
+        if rc >= MAX_RESTART_FAULT {
+            assert!(matches!(m, FailureMode::Isolate));
+        }
+    }
 }

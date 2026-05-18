@@ -517,6 +517,133 @@ fn check_pmp_budget(m: &Manifest) -> Result<(), Vec<String>> {
     Ok(())
 }
 
+// ─── SAFE-4 stack bound (sprint-u33, Section 8 CR-5) ─────────────────
+
+/// SAFE-4 CR-5: static stack analysis imprecise + inline asm + compiler drift
+/// için safety margin. 256 byte default — task_hello observed max ~128 byte
+/// ile bile rahat sığar; production DAL-A için 512+ önerilir (per-task
+/// manifest override `stack_margin_override`). Exact equality PASS yasak.
+pub const STACK_ANALYSIS_MARGIN_BYTES: u32 = 256;
+
+/// SAFE-4 CR-4: cert + sntm-stack ortak UNKNOWN sentinel.
+pub const STACK_UNKNOWN_SENTINEL: u32 = 0xFFFF_FFFF;
+
+/// Stack region bound invariant: manifest task `name="stack"` region size
+/// ≥ observed_max + margin. Exact equality FAIL (CR-5 doctrine).
+/// observed_max == UNKNOWN_SENTINEL → ASLA PASS (CR-4 doctrine — sentinel
+/// "analiz yapılmadı" anlamına gelir, gate erteleyemez).
+pub fn check_stack_bounds(
+    task: &TaskEntry,
+    observed_max: u32,
+) -> Result<(), Vec<String>> {
+    if observed_max == STACK_UNKNOWN_SENTINEL {
+        return Err(vec![format!(
+            "task '{}': stack analysis missing — max_stack_bytes UNKNOWN sentinel \
+             (0xFFFF_FFFF). SAFE gate report ZORUNLU (Section 8 CR-4 doctrine).",
+            task.name
+        )]);
+    }
+    let stack_region = task.regions.iter().find(|r| r.name == "stack");
+    let stack_region = match stack_region {
+        Some(r) => r,
+        None => return Err(vec![format!(
+            "task '{}': no region named 'stack' — manifest schema error",
+            task.name
+        )]),
+    };
+    let stack_size: u32 = match u32::try_from(stack_region.size) {
+        Ok(v) => v,
+        Err(_) => return Err(vec![format!(
+            "task '{}': stack region size {} overflow u32",
+            task.name, stack_region.size
+        )]),
+    };
+    let margin = task.stack_margin_override.unwrap_or(STACK_ANALYSIS_MARGIN_BYTES);
+    let required = match observed_max.checked_add(margin) {
+        Some(v) => v,
+        None => return Err(vec![format!(
+            "task '{}': observed_max {} + margin {} overflow u32",
+            task.name, observed_max, margin
+        )]),
+    };
+    if stack_size < required {
+        return Err(vec![format!(
+            "task '{}': stack_size {} < observed_max {} + margin {} (= {}) \
+             (Section 8 CR-5 doctrine — exact equality PASS yasak)",
+            task.name, stack_size, observed_max, margin, required
+        )]);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod stack_bounds_tests {
+    use super::*;
+    use crate::manifest::{RegionEntry, TaskEntry};
+
+    fn make_task(stack_size: usize, margin_override: Option<u32>) -> TaskEntry {
+        TaskEntry {
+            name: "task_x".into(),
+            binary: "x.bin".into(),
+            task_id: 1,
+            priority: 1,
+            period_ticks: 100,
+            budget_cycles: 1000,
+            dal_level: "D".into(),
+            trust_tier: "safe".into(),
+            waiver_reason: "".into(),
+            demo_feature_waivers: Vec::new(),
+            regions: vec![RegionEntry {
+                name: "stack".into(),
+                base: 0x80700000,
+                size: stack_size,
+                perm: "RW".into(),
+            }],
+            local_caps: Vec::new(),
+            stack_margin_override: margin_override,
+        }
+    }
+
+    #[test]
+    fn stack_bounds_pass_with_default_margin() {
+        let t = make_task(8192, None);
+        assert!(check_stack_bounds(&t, 128).is_ok());
+    }
+
+    #[test]
+    fn stack_bounds_exact_equality_fails() {
+        // 4096 stack + 4096 observed + 256 margin = 4352 > 4096 → FAIL (CR-5 doctrine).
+        let t = make_task(4096, None);
+        let err = check_stack_bounds(&t, 4096).unwrap_err();
+        assert!(err[0].contains("CR-5"));
+        assert!(err[0].contains("task_x"));
+    }
+
+    #[test]
+    fn stack_bounds_unknown_sentinel_always_fails() {
+        let t = make_task(65536, None); // huge stack — even so, sentinel rejected
+        let err = check_stack_bounds(&t, STACK_UNKNOWN_SENTINEL).unwrap_err();
+        assert!(err[0].contains("UNKNOWN sentinel"));
+        assert!(err[0].contains("CR-4"));
+    }
+
+    #[test]
+    fn stack_bounds_margin_override_honored() {
+        // 4096 stack, observed 3000, override 1500 → 3000+1500=4500 > 4096 FAIL
+        let t = make_task(4096, Some(1500));
+        let err = check_stack_bounds(&t, 3000).unwrap_err();
+        assert!(err[0].contains("margin 1500"));
+    }
+
+    #[test]
+    fn stack_bounds_no_stack_region_fails() {
+        let mut t = make_task(4096, None);
+        t.regions.clear();
+        let err = check_stack_bounds(&t, 128).unwrap_err();
+        assert!(err[0].contains("no region named 'stack'"));
+    }
+}
+
 // ─── Pure helpers (kernel/pmp/overlap.rs ile duplicate, host-side) ──
 
 #[inline]

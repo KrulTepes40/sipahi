@@ -1,29 +1,34 @@
 #!/usr/bin/env bash
-# SAFE-1 (U-30): SNTM-SAFE gate (scaffold).
+# SAFE-4 (sprint-u33): SNTM-SAFE gate — 10/10 active, SAFE faz kapanışı.
 #
-# §17.10 10-gate yapısı — SAFE-1'de [1/10] + [2/10] aktif, [3-10] SAFE-2..4'te:
+# §17.10 10-gate yapısı:
 #   [1/10] cargo check (her task)
 #   [2/10] task-lint (Safe Native Profile uygulama)
 #   [3/10] cargo +nightly build --release      ← SAFE-2 (typed IPC)
 #   [4/10] riscv-bin-verify                    ← SAFE-3 (binary verifier)
-#   [5/10] cargo-call-stack                    ← SAFE-4 (stack analyzer)
+#   [5/10] sntm-stack (.stack_sizes + recursion + indirect call) ← SAFE-4 Plan B
 #   [6/10] sntm-validate (manifest invariants) ← PARTIAL (SAFE-1 trust_tier check eklendi)
 #   [7/10] Static cap table codegen check      ← SAFE-2
 #   [8/10] Typed IPC API codegen check         ← SAFE-2
 #   [9/10] Task certificate ed25519 sign       ← SAFE-3
 #   [10/10] Image assemble + final ed25519     ← SAFE-3
+#
+# SAFE-4 Plan B note: cargo-call-stack 0.1.16 current nightly (2026-03-01)
+# ile uyumsuz (rustc wrapper intercept 2023-11 hard-coded). LLVM
+# `-Z emit-stack-sizes` ELF section + `tools/sntm-stack/` direkt parse.
+# Section 8 CR-2 doctrine.
 
 set -eo pipefail
 cd "$(dirname "$0")/.."
 
 HOST=$(rustc -vV | sed -n 's/^host: //p')
 
-echo "=== SNTM-SAFE GATE (SAFE-3, sprint-u32) ==="
+echo "=== SNTM-SAFE GATE (SAFE-4, sprint-u33) ==="
 echo "Active: [1] cargo check + [2] task-lint + [3] typed IPC build +"
-echo "        [4] riscv-bin-verify + [6] sntm-validate +"
-echo "        [7] cap_generated drift + [8] channels drift +"
+echo "        [4] riscv-bin-verify + [5] sntm-stack +"
+echo "        [6] sntm-validate + [7] cap_generated drift + [8] channels drift +"
 echo "        [9] task certificate ed25519 sign + [10] image assemble + sig"
-echo "Deferred: [5] cargo-call-stack (SAFE-4)"
+echo "Deferred: yok — 10/10 aktif, SAFE faz kapanışı."
 echo ""
 
 # [1/10] cargo check (her task)
@@ -110,8 +115,39 @@ done
 echo "  PASS"
 echo ""
 
-# [5/10] DEFER SAFE-4 — cargo-call-stack (stack bound + recursion)
-echo "[5/10] cargo-call-stack — DEFER SAFE-4"
+# [5/10] SAFE-4 (sprint-u33) — Plan B: sntm-stack (.stack_sizes ELF parse +
+# indirect call detect + recursion cycle detect; cargo-call-stack 0.1.16
+# current nightly ile uyumsuz — Section 8 CR-2 doctrine).
+echo "[5/10] sntm-stack (.stack_sizes + recursion + indirect call)..."
+bash scripts/stack_analysis.sh > /tmp/safe4-stack.log 2>&1 || {
+    echo "  FAIL: sntm-stack analysis (see /tmp/safe4-stack.log)"
+    tail -20 /tmp/safe4-stack.log
+    exit 1
+}
+SNTM_VALIDATE_BIN="tools/sntm-validate/target/$HOST/release/sntm-validate"
+if [ ! -x "$SNTM_VALIDATE_BIN" ]; then
+    echo "  Building sntm-validate..."
+    (cd tools/sntm-validate && cargo +stable build --release --target "$HOST" > /dev/null 2>&1) || {
+        echo "  FAIL: sntm-validate build failed"
+        exit 1
+    }
+fi
+for task in task_hello task_world; do
+    REPORT="target/native/${task}.stack.txt"
+    if [ ! -f "$REPORT" ]; then
+        echo "  FAIL: missing $REPORT (stack_analysis.sh did not emit)"
+        exit 1
+    fi
+    "$SNTM_VALIDATE_BIN" \
+        --manifest sipahi.toml \
+        --call-stack-report "$REPORT" \
+        --task-name "$task" > /tmp/safe4-stack-$task.log 2>&1 || {
+        echo "  FAIL: stack bound exceeded for $task (Section 8 CR-5 margin)"
+        cat /tmp/safe4-stack-$task.log
+        exit 1
+    }
+done
+echo "  PASS"
 echo ""
 
 # [6/10] sntm-validate (manifest invariants — partial: SAFE-1 trust_tier check eklendi)
@@ -179,12 +215,22 @@ bash scripts/gen_dev_key.sh > /tmp/devkey.log 2>&1 || {
     exit 1
 }
 echo "  [9.3] task_hello + task_world cert generate..."
+# SAFE-4 (sprint-u33) Section 8 CR-4 doctrine: cert max_stack_bytes refinement
+# zorunlu — --call-stack-report VERILMEZSE cert UNKNOWN_SENTINEL ile çıkar
+# (DAL audit reject). Bu gate'te stack report dosyası mevcut olmalı + hata
+# durumunda exit. [5/10] gate'te stack_analysis.sh çoktan çalışmış; yine de
+# defansif olarak existence check.
 for task in task_hello task_world; do
-    # task_id mapping — sipahi.toml [[task]] (hardcoded for now; CR-6 ephemeral).
     case "$task" in
         task_hello) tid=2 ;;
         task_world) tid=3 ;;
     esac
+    STACK_REPORT="target/native/${task}.stack.txt"
+    if [ ! -s "$STACK_REPORT" ]; then
+        echo "  FAIL: stack report missing for ${task} ($STACK_REPORT) — "
+        echo "        scripts/stack_analysis.sh önce çalışmalı (Section 8 CR-4)"
+        exit 1
+    fi
     "$CERTGEN" \
         --manifest sipahi.toml --task-name "$task" --task-id "$tid" \
         --text-bin   "target/native/${task}.text.bin" \
@@ -193,11 +239,20 @@ for task in task_hello task_world; do
         --signing-key keys/dev-image.priv \
         --out-cert   "target/native/${task}.cert.bin" \
         --out-sig    "target/native/${task}.cert.sig" \
+        --call-stack-report "$STACK_REPORT" \
         > /tmp/certgen-${task}.log 2>&1 || {
         echo "  FAIL: cert generate ${task}"
         tail -10 /tmp/certgen-${task}.log
         exit 1
     }
+    # CR-4: UNKNOWN sentinel cert'e sızmasın. Cert binary'sini parse edip
+    # max_stack_bytes alanını oku (offset 248, u32 LE). 0xFFFF_FFFF ⇒ FAIL.
+    MS_HEX=$(xxd -s 248 -l 4 -p "target/native/${task}.cert.bin")
+    if [ "$MS_HEX" = "ffffffff" ]; then
+        echo "  FAIL: cert max_stack_bytes UNKNOWN sentinel (CR-4 doctrine — "
+        echo "        stack report parse veya cert-gen pipeline kırık)"
+        exit 1
+    fi
 done
 echo "  PASS"
 echo ""
@@ -240,9 +295,8 @@ echo "  [10.3] verify image roundtrip..."
 echo "  PASS"
 echo ""
 
-echo "=== SAFE-3 GATE PASS (9/10 active) ==="
+echo "=== SAFE-4 GATE PASS (10/10 active, DEFER YOK — SAFE faz kapandı) ==="
 echo "Active gates: [1] cargo check + [2] task-lint + [3] typed IPC build +"
-echo "              [4] riscv-bin-verify + [6] sntm-validate +"
-echo "              [7] cap_generated drift + [8] channels drift +"
+echo "              [4] riscv-bin-verify + [5] sntm-stack (Plan B) +"
+echo "              [6] sntm-validate + [7] cap_generated drift + [8] channels drift +"
 echo "              [9] task cert ed25519 sign + [10] image assemble + sig"
-echo "Deferred gates: [5] cargo-call-stack (SAFE-4)"

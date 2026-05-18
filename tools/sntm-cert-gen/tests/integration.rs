@@ -150,3 +150,168 @@ fn cert_task_name_hash_is_blake3() {
     );
     assert_eq!(cert.task_name_hash, blake3_bytes(b"task_hello"));
 }
+
+// ─── SAFE-4 (sprint-u33) Section 8 CR-4 stack report cert flow ──────
+
+/// SAFE-4 CR-4 positive: cert with --call-stack-report → parsed PASS value
+/// goes into max_stack_bytes. Manifest stack_size NEVER written.
+// VERIFIES: SNTM-SAFE-R6 (Section 8 CR-4 cert max_stack_bytes refinement —
+//           parsed sntm-stack report value → cert field; manifest stack_size
+//           fallback YASAK).
+// CALLS:    sntm-cert-gen --call-stack-report; stackreport::parse_max_stack_or_unknown.
+/// FAILS-IF: cert max_stack_bytes hardcoded 8192 (pre-SAFE-4) or fallback bug.
+#[test]
+fn cli_cert_with_stack_report_uses_parsed_value() {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_sntm-cert-gen");
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = tmp.path().join("sipahi.toml");
+    std::fs::write(&manifest, b"[kernel]\nname=\"x\"\nversion=\"1\"\nbinary=\"\"\nstack_size=4096\n[platform]\ntarget=\"riscv64\"\nmachine=\"qemu\"\npmp_entries=16\nram_base=0x80000000\nram_size=0x20000000\n").unwrap();
+
+    let report = tmp.path().join("task.stack.txt");
+    std::fs::write(&report, b"SNTM-STACK v1.0\nstatus: PASS\nmax_stack_bytes: 144\n").unwrap();
+
+    let priv_key = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| format!("{}/../../keys/dev-image.priv", d))
+        .unwrap_or_else(|_| "../../keys/dev-image.priv".into());
+    let repo_root = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| format!("{}/../..", d))
+        .unwrap_or_else(|_| "../..".into());
+
+    let cert_path = tmp.path().join("task.cert.bin");
+    let sig_path  = tmp.path().join("task.cert.sig");
+    let out = Command::new(bin)
+        .arg("--repo-root").arg(&repo_root)
+        .arg("--manifest").arg(&manifest)
+        .arg("--task-name").arg("task_hello")
+        .arg("--task-id").arg("2")
+        .arg("--signing-key").arg(&priv_key)
+        .arg("--out-cert").arg(&cert_path)
+        .arg("--out-sig").arg(&sig_path)
+        .arg("--call-stack-report").arg(&report)
+        .output().unwrap();
+    assert!(out.status.success(), "cert-gen should PASS, stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr));
+
+    let cert_bytes = std::fs::read(&cert_path).unwrap();
+    assert_eq!(cert_bytes.len(), CERT_SIZE);
+    let cert = TaskCertificate::from_bytes(&cert_bytes).unwrap();
+    assert_eq!(cert.max_stack_bytes, 144, "cert should pick up parsed report value");
+}
+
+/// SAFE-4 CR-4 negative: cert WITHOUT --call-stack-report → UNKNOWN sentinel.
+/// Manifest stack_size 8192 is **NOT** used as fallback.
+// VERIFIES: SNTM-SAFE-R6 (Section 8 CR-4 — report absent → UNKNOWN_SENTINEL
+//           0xFFFF_FFFF; manifest stack_size cert'e ASLA yazılmaz).
+// CALLS:    sntm-cert-gen (no --call-stack-report); STACK_UNKNOWN_SENTINEL.
+/// FAILS-IF: cert silently uses manifest stack_size or any non-sentinel value.
+#[test]
+fn cli_cert_without_stack_report_emits_unknown_sentinel() {
+    use std::process::Command;
+    use sntm_cert_gen::stackreport::UNKNOWN_SENTINEL;
+    let bin = env!("CARGO_BIN_EXE_sntm-cert-gen");
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = tmp.path().join("sipahi.toml");
+    std::fs::write(&manifest, b"[kernel]\nname=\"x\"\nversion=\"1\"\nbinary=\"\"\nstack_size=8192\n[platform]\ntarget=\"riscv64\"\nmachine=\"qemu\"\npmp_entries=16\nram_base=0x80000000\nram_size=0x20000000\n").unwrap();
+
+    let priv_key = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| format!("{}/../../keys/dev-image.priv", d))
+        .unwrap_or_else(|_| "../../keys/dev-image.priv".into());
+    let repo_root = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| format!("{}/../..", d))
+        .unwrap_or_else(|_| "../..".into());
+
+    let cert_path = tmp.path().join("task.cert.bin");
+    let sig_path  = tmp.path().join("task.cert.sig");
+    let out = Command::new(bin)
+        .arg("--repo-root").arg(&repo_root)
+        .arg("--manifest").arg(&manifest)
+        .arg("--task-name").arg("task_hello")
+        .arg("--task-id").arg("2")
+        .arg("--signing-key").arg(&priv_key)
+        .arg("--out-cert").arg(&cert_path)
+        .arg("--out-sig").arg(&sig_path)
+        .output().unwrap();
+    assert!(out.status.success());
+
+    let cert = TaskCertificate::from_bytes(&std::fs::read(&cert_path).unwrap()).unwrap();
+    assert_eq!(cert.max_stack_bytes, UNKNOWN_SENTINEL,
+        "no report → UNKNOWN sentinel (CR-4 doctrine; manifest stack_size fallback YASAK)");
+}
+
+/// SAFE-4 CR-4: --call-stack-report with FAIL status → UNKNOWN sentinel.
+// VERIFIES: SNTM-SAFE-R6 (Section 8 CR-4 — FAIL-status report dosyası bile
+//           olsa cert max_stack_bytes UNKNOWN sentinel; status değeri kabul YOK).
+// CALLS:    sntm-cert-gen --call-stack-report (FAIL); parse_max_stack_or_unknown.
+/// FAILS-IF: cert reads FAIL-status max_stack_bytes value as truth.
+#[test]
+fn cli_cert_with_failed_stack_report_emits_unknown_sentinel() {
+    use std::process::Command;
+    use sntm_cert_gen::stackreport::UNKNOWN_SENTINEL;
+    let bin = env!("CARGO_BIN_EXE_sntm-cert-gen");
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = tmp.path().join("sipahi.toml");
+    std::fs::write(&manifest, b"[kernel]\nname=\"x\"\nversion=\"1\"\nbinary=\"\"\nstack_size=8192\n[platform]\ntarget=\"riscv64\"\nmachine=\"qemu\"\npmp_entries=16\nram_base=0x80000000\nram_size=0x20000000\n").unwrap();
+
+    let report = tmp.path().join("bad.stack.txt");
+    std::fs::write(&report, b"SNTM-STACK v1.0\nstatus: FAIL\nreason: indirect\nmax_stack_bytes: 0xFFFFFFFF\n").unwrap();
+
+    let priv_key = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| format!("{}/../../keys/dev-image.priv", d))
+        .unwrap_or_else(|_| "../../keys/dev-image.priv".into());
+    let repo_root = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| format!("{}/../..", d))
+        .unwrap_or_else(|_| "../..".into());
+
+    let cert_path = tmp.path().join("task.cert.bin");
+    let sig_path  = tmp.path().join("task.cert.sig");
+    let out = Command::new(bin)
+        .arg("--repo-root").arg(&repo_root)
+        .arg("--manifest").arg(&manifest)
+        .arg("--task-name").arg("task_hello")
+        .arg("--task-id").arg("2")
+        .arg("--signing-key").arg(&priv_key)
+        .arg("--out-cert").arg(&cert_path)
+        .arg("--out-sig").arg(&sig_path)
+        .arg("--call-stack-report").arg(&report)
+        .output().unwrap();
+    assert!(out.status.success());
+
+    let cert = TaskCertificate::from_bytes(&std::fs::read(&cert_path).unwrap()).unwrap();
+    assert_eq!(cert.max_stack_bytes, UNKNOWN_SENTINEL);
+}
+
+/// SAFE-4 CR-4: cert tamper max_stack_bytes byte → verify FAIL (forensics chain).
+// VERIFIES: SNTM-SAFE-R6 (cert max_stack_bytes signature kapsamı altında —
+//           tamper detect zorunlu, drift sign vs verify YASAK).
+// CALLS:    sign_cert, verify_cert, build_cert, TaskCertificate::from_bytes.
+/// FAILS-IF: signature doesn't cover the stack field (drift between sign + verify).
+#[test]
+fn cert_tamper_max_stack_bytes_fails_verify() {
+    let (priv_pem, pub_pem) = dev_keypair();
+    let cert = build_cert(
+        2, "task_hello", [0; 32], [0; 32], [0; 32], [0; 32],
+        0x3F, [0xFF; 8], [Range64 { base: 0, size: 0 }; 4],
+        128, 1, 0,
+        [0; 32], [0; 32], [0; 32], [0u32; 16],
+    );
+    let bytes = cert.as_bytes();
+    let sig = sign_cert(&bytes, &priv_pem).expect("sign");
+
+    // Flip a byte in the max_stack_bytes region. Cert layout: max_stack_bytes
+    // sits after allowed_mmio array; locate via re-parse + struct field write.
+    let mut tampered = bytes;
+    // Re-parse to find the offset deterministically.
+    let parsed = TaskCertificate::from_bytes(&tampered).unwrap();
+    assert_eq!(parsed.max_stack_bytes, 128);
+    // Tamper: change to UNKNOWN_SENTINEL bit pattern in-place. Scan bytes for
+    // little-endian 128 (0x80 0x00 0x00 0x00) and flip one — coarse but works
+    // because we constructed cert with all other fields non-zero or non-128.
+    let needle = 128u32.to_le_bytes();
+    let pos = tampered.windows(4).position(|w| w == needle)
+        .expect("max_stack_bytes location should appear once");
+    tampered[pos] ^= 0xFF;
+
+    let result = verify_cert(&tampered, &sig, &pub_pem);
+    assert!(result.is_err(), "tampered max_stack_bytes should fail verify");
+}

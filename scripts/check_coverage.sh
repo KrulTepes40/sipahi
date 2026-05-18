@@ -135,6 +135,13 @@ def check_three_comments(name: str, source_files: list[Path]) -> list[str]:
     return missing
 
 source_paths = list(Path("src").rglob("*.rs"))
+
+# SAFE-4 (sprint-u33) doctrine: tool tests yaşadığı tools/ ağacı kernel src/
+# tests'inden ayrı. Coverage gate `required_tool_tests` listesini bu ağaçta
+# arar; VERIFIES traceability hem src/ hem tools/ üzerinden taranır.
+tool_paths = list(Path("tools").rglob("*.rs"))
+tool_text = "\n".join(p.read_text(errors="ignore") for p in tool_paths)
+
 grandfather_proofs = set(cov.get("grandfather", {}).get("proofs", []))
 grandfather_tests = set(cov.get("grandfather", {}).get("tests", []))
 
@@ -203,10 +210,13 @@ for feat_name, feat in cov.get("feature", {}).items():
         pass
 
 # ─── Requirement traceability check (§18.7 requirement → test/proof) ──
-# Her [requirement.X] bloğu için: required_tests/required_proofs varsa
-# isimler source'da bulunmalı, ayrıca // VERIFIES: X yorumu yer almalı.
+# Her [requirement.X] bloğu için: required_tests/required_tool_tests/required_proofs
+# varsa isimler source'da bulunmalı, ayrıca // VERIFIES: X yorumu yer almalı.
 requirements = cov.get("requirement", {})
 all_text_lines = "\n".join(p.read_text(errors="ignore") for p in source_paths)
+# SAFE-4 doctrine: VERIFIES traceability kernel src/ VEYA host tool tools/ ağacında
+# bulunabilir (her iki taraf da requirement'ı kanıtlayabilir).
+verifies_haystack = all_text_lines + "\n" + tool_text
 for req_id, req in requirements.items():
     desc = req.get("description")
     fault = req.get("fault_model")
@@ -220,9 +230,24 @@ for req_id, req in requirements.items():
                 f"[requirement.{req_id}] required_tests: "
                 f"'{t}' src/tests/mod.rs'te bulunamadı"
             )
-        elif not re.search(rf"//\s*VERIFIES:\s*{re.escape(req_id)}\b", all_text_lines):
+        elif not re.search(rf"//\s*VERIFIES:\s*{re.escape(req_id)}\b", verifies_haystack):
             errors.append(
                 f"[requirement.{req_id}] test '{t}' var ama "
+                f"hiçbir source'da '// VERIFIES: {req_id}' yorumu yok"
+            )
+    # SAFE-4 (sprint-u33) Section 8 CR-3 + CR-7 doctrine: host tool tests
+    # (tools/<crate>/tests/*.rs ve tools/<crate>/src/**/*.rs içindeki
+    # `#[test]` fn'leri) kernel src/tests/mod.rs'in dışında. Kernel
+    # `cargo kani` sub-workspace'i taramaz; bu tests cargo test ile çalışır.
+    for t in req.get("required_tool_tests", []):
+        if not fn_exists(t, tool_text):
+            errors.append(
+                f"[requirement.{req_id}] required_tool_tests: "
+                f"'{t}' tools/ ağacında bulunamadı"
+            )
+        elif not re.search(rf"//\s*VERIFIES:\s*{re.escape(req_id)}\b", verifies_haystack):
+            errors.append(
+                f"[requirement.{req_id}] tool test '{t}' var ama "
                 f"hiçbir source'da '// VERIFIES: {req_id}' yorumu yok"
             )
     for p in req.get("required_proofs", []):
@@ -231,7 +256,7 @@ for req_id, req in requirements.items():
                 f"[requirement.{req_id}] required_proofs: "
                 f"'{p}' src/ ağacında bulunamadı"
             )
-        elif not re.search(rf"//\s*VERIFIES:\s*{re.escape(req_id)}\b", all_text_lines):
+        elif not re.search(rf"//\s*VERIFIES:\s*{re.escape(req_id)}\b", verifies_haystack):
             errors.append(
                 f"[requirement.{req_id}] proof '{p}' var ama "
                 f"hiçbir source'da '// VERIFIES: {req_id}' yorumu yok"

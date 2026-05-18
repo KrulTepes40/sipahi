@@ -82,6 +82,11 @@ pub struct TaskEntry {
     /// → deny-all row emitted. Codegen writes CapAction per (task, resource).
     #[serde(default, rename = "local_cap")]
     pub local_caps:    Vec<LocalCapGrant>,
+    /// SAFE-4 (sprint-u33, Section 8 CR-5): per-task stack analysis safety
+    /// margin override. Absent → `STACK_ANALYSIS_MARGIN_BYTES` const default
+    /// (256). DAL-A için 512+ önerilir; advisory ama validator enforce eder.
+    #[serde(default)]
+    pub stack_margin_override: Option<u32>,
 }
 
 fn default_trust_tier() -> String {

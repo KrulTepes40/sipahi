@@ -12,5 +12,7 @@
 
 pub mod cert;
 pub mod chain;
+pub mod stackreport;
 
 pub use cert::{Range64, TaskCertificate, ABI_VERSION, CERT_SIZE};
+pub use stackreport::UNKNOWN_SENTINEL as STACK_UNKNOWN_SENTINEL;

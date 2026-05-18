@@ -18,6 +18,7 @@
 mod codegen;
 mod manifest;
 mod napot;
+mod stackreport;
 mod validate;
 
 use std::path::PathBuf;
@@ -29,6 +30,8 @@ fn main() -> ExitCode {
     let mut output_rs_path: Option<PathBuf> = None;
     let mut output_cap_path: Option<PathBuf> = None;
     let mut output_channels_path: Option<PathBuf> = None;
+    let mut call_stack_report: Option<PathBuf> = None;
+    let mut task_name: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -66,11 +69,32 @@ fn main() -> ExitCode {
                 output_channels_path = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
+            "--call-stack-report" => {
+                // SAFE-4 (sprint-u33, Section 8 CR-3+CR-5): sntm-stack rapor parse +
+                // check_stack_bounds invariant. SAFE gate'te ZORUNLU.
+                if i + 1 >= args.len() {
+                    eprintln!("FAIL: --call-stack-report requires a path argument");
+                    return ExitCode::from(2);
+                }
+                call_stack_report = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--task-name" => {
+                // SAFE-4 CR-4: --call-stack-report ile birlikte zorunlu — hangi
+                // task'a uygulanacağı net olsun.
+                if i + 1 >= args.len() {
+                    eprintln!("FAIL: --task-name requires a value");
+                    return ExitCode::from(2);
+                }
+                task_name = Some(args[i + 1].clone());
+                i += 2;
+            }
             "-h" | "--help" => {
                 println!("Usage: sntm-validate --manifest sipahi.toml \\");
                 println!("         [--output-rs <pmp_generated.rs>] \\");
                 println!("         [--output-cap-table <cap_generated.rs>] \\");
-                println!("         [--output-channels <sipahi_api/channels.rs>]");
+                println!("         [--output-channels <sipahi_api/channels.rs>] \\");
+                println!("         [--call-stack-report <task.stack.txt> --task-name <name>]");
                 return ExitCode::from(0);
             }
             other => {
@@ -133,6 +157,50 @@ fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
                 println!("PASS: generated {}", out.display());
+            }
+            // SAFE-4 (sprint-u33) Section 8 CR-3/CR-4/CR-5: stack bound check.
+            // Iki flag birlikte verilmeli — yarısı yetmez.
+            match (call_stack_report.as_ref(), task_name.as_ref()) {
+                (Some(rep_path), Some(tn)) => {
+                    let report = match std::fs::read_to_string(rep_path) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("FAIL: cannot read stack report {}: {}",
+                                rep_path.display(), e);
+                            return ExitCode::from(1);
+                        }
+                    };
+                    let observed_max = match stackreport::parse_max_stack_bytes(&report) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("FAIL: stack report parse: {}", e);
+                            return ExitCode::from(1);
+                        }
+                    };
+                    let task = m.tasks.iter().find(|t| t.name == *tn);
+                    let task = match task {
+                        Some(t) => t,
+                        None => {
+                            eprintln!("FAIL: task '{}' not found in manifest", tn);
+                            return ExitCode::from(1);
+                        }
+                    };
+                    if let Err(errs) = validate::check_stack_bounds(task, observed_max) {
+                        for e in errs { eprintln!("FAIL: {}", e); }
+                        return ExitCode::from(1);
+                    }
+                    println!(
+                        "PASS: stack bound — task '{}' observed_max {} byte + margin {} byte ≤ stack region",
+                        tn, observed_max,
+                        task.stack_margin_override
+                            .unwrap_or(validate::STACK_ANALYSIS_MARGIN_BYTES),
+                    );
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    eprintln!("FAIL: --call-stack-report and --task-name must be given together");
+                    return ExitCode::from(2);
+                }
+                (None, None) => {}
             }
             ExitCode::from(0)
         }

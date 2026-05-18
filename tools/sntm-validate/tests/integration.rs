@@ -850,3 +850,138 @@ waiver_reason = "test"
     assert!(out.contains("DAL-A") && out.contains("trusted_unsafe"),
         "missing DAL-A/trusted_unsafe in output:\n{}", out);
 }
+
+// ─── SAFE-4 (sprint-u33) Section 8 CR-3/CR-4/CR-5 stack bound tests ─
+
+/// SAFE-4 manifest sample with one valid task + 8KB stack region.
+fn manifest_with_one_task(stack_size: usize) -> String {
+    format!(r#"{HEADER}
+[[task]]
+name = "task_x"
+binary = ""
+task_id = 0
+priority = 1
+period_ticks = 1
+budget_cycles = 1
+dal_level = "D"
+
+[[task.region]]
+name = "stack"
+base = 0x80700000
+size = {stack_size}
+perm = "RW"
+"#)
+}
+
+fn run_with_stack_report(toml: &str, report: &str, task_name: &str) -> (i32, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("sipahi.toml");
+    let report_path = dir.path().join("task.stack.txt");
+    std::fs::write(&manifest_path, toml).unwrap();
+    std::fs::write(&report_path, report).unwrap();
+    let out = Command::new(BIN)
+        .arg("--manifest").arg(&manifest_path)
+        .arg("--call-stack-report").arg(&report_path)
+        .arg("--task-name").arg(task_name)
+        .output().unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    (out.status.code().unwrap_or(-1), combined)
+}
+
+const REAL_GOLDEN_FIXTURE: &str = include_str!(
+    "../../sntm-stack/tests/fixtures/task_hello.stack.golden.txt"
+);
+
+/// SAFE-4 CR-3: parser sntm-stack golden fixture'a karşı PASS. Format
+/// kontrat — banner + status + max_stack_bytes mandatory.
+// VERIFIES: SNTM-SAFE-R6 (stackreport.rs parser sntm-stack golden fixture
+//           kontratıyla uyumlu — Section 8 CR-3 hardcoded varsayım yok).
+// CALLS:    sntm-validate --call-stack-report --task-name; stackreport::parse_max_stack_bytes.
+/// FAILS-IF: parser hardcoded varsayım golden fixture'la uyuşmuyor.
+#[test]
+fn stack_report_parse_real_golden_fixture_accepted() {
+    let toml = manifest_with_one_task(8192);
+    let (code, out) = run_with_stack_report(&toml, REAL_GOLDEN_FIXTURE, "task_x");
+    assert_eq!(code, 0, "real golden fixture should PASS\n{}", out);
+    assert!(out.contains("stack bound"), "missing stack bound PASS marker:\n{}", out);
+    assert!(out.contains("128"), "expected observed 128 byte in output:\n{}", out);
+}
+
+/// SAFE-4 CR-5 negative: exact equality (stack_size == observed) FAIL —
+/// margin enforce edilmeli. 4KB stack + 4KB observed + 256 margin = 4352 > 4096.
+// VERIFIES: SNTM-SAFE-R6 (Section 8 CR-5 exact equality PASS doctrine
+//           ihlali yakalanır — STACK_ANALYSIS_MARGIN_BYTES enforce).
+// CALLS:    validate::check_stack_bounds, STACK_ANALYSIS_MARGIN_BYTES.
+/// FAILS-IF: margin enforce edilmiyor (CR-5 ihlali).
+#[test]
+fn stack_bound_exact_equality_rejected_margin_enforced() {
+    let toml = manifest_with_one_task(4096);
+    let report = "\
+SNTM-STACK v1.0
+status: PASS
+max_stack_bytes: 4096
+";
+    let (code, out) = run_with_stack_report(&toml, report, "task_x");
+    assert_ne!(code, 0, "exact equality should FAIL (CR-5 margin), got code=0\n{}", out);
+    assert!(out.contains("CR-5"), "missing CR-5 reference in error:\n{}", out);
+    assert!(out.contains("margin"), "missing margin reference:\n{}", out);
+}
+
+/// SAFE-4 CR-4: --call-stack-report ile UNKNOWN sentinel asla PASS değil.
+/// Manifest stack_size ne kadar büyük olursa olsun, observed sentinel ise reject.
+// VERIFIES: SNTM-SAFE-R6 (Section 8 CR-4 cert fallback yasak — validator
+//           simetrisi: UNKNOWN sentinel 0xFFFF_FFFF her zaman reject).
+// CALLS:    validate::check_stack_bounds, STACK_UNKNOWN_SENTINEL.
+/// FAILS-IF: validator UNKNOWN sentinel'i sessizce kabul eder.
+#[test]
+fn stack_bound_unknown_sentinel_rejected_always() {
+    let toml = manifest_with_one_task(65536); // huge stack
+    let report = "\
+SNTM-STACK v1.0
+status: FAIL
+reason: indirect call detected
+max_stack_bytes: 0xFFFFFFFF
+";
+    let (code, out) = run_with_stack_report(&toml, report, "task_x");
+    assert_ne!(code, 0, "UNKNOWN sentinel should FAIL, got code=0\n{}", out);
+    assert!(out.contains("indirect call") || out.contains("FAIL"),
+        "expected FAIL/reason in output:\n{}", out);
+}
+
+/// SAFE-4 CR-3 negative: malformed report (missing banner) → parser Err.
+// VERIFIES: SNTM-SAFE-R6 (Section 8 CR-3 format drift erken yakalanır;
+//           sessiz default kabul YOK; banner kontrat zorunlu).
+// CALLS:    stackreport::parse_max_stack_bytes banner kontrol.
+/// FAILS-IF: parser hardcoded varsayım, malformed input "ok" kabul ederse.
+#[test]
+fn stack_bound_malformed_report_rejected() {
+    let toml = manifest_with_one_task(8192);
+    let report = "garbage content\nstatus: PASS\nmax_stack_bytes: 32\n";
+    let (code, out) = run_with_stack_report(&toml, report, "task_x");
+    assert_ne!(code, 0, "malformed report should FAIL, got code=0\n{}", out);
+    assert!(out.contains("banner") || out.contains("parse"),
+        "expected parse/banner error:\n{}", out);
+}
+
+/// SAFE-4: --call-stack-report verildi ama --task-name eksik → ExitCode 2.
+/// Host tool doctrine (SAFE-3 CR-15 lesson) — argv yarısı yasak.
+/// VERIFIES: argv kontrolü zorunlu, sessiz default yok.
+/// FAILS-IF: yalnız report verilince validator pass eder.
+#[test]
+fn stack_report_without_task_name_fails_exitcode_2() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("sipahi.toml");
+    let report_path = dir.path().join("task.stack.txt");
+    std::fs::write(&manifest_path, manifest_with_one_task(8192)).unwrap();
+    std::fs::write(&report_path, REAL_GOLDEN_FIXTURE).unwrap();
+    let out = Command::new(BIN)
+        .arg("--manifest").arg(&manifest_path)
+        .arg("--call-stack-report").arg(&report_path)
+        .output().unwrap();
+    assert_eq!(out.status.code(), Some(2),
+        "expected ExitCode 2, got {:?}", out.status.code());
+}

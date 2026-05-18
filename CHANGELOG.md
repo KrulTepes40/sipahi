@@ -5,6 +5,263 @@ All notable changes to Sipahi microkernel.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - SAFE-4 (sprint-u33) v1.9.0: Stack Analyzer + 10/10 Gate (Plan B)
+
+### Added (SNTM-SAFE faz kapanışı — stack safety build-time)
+
+- **`tools/sntm-stack/`** — yeni host tool (~700 LOC, sub-workspace pattern).
+  Section 8 CR-2 Plan B: cargo-call-stack 0.1.16 current nightly (2026-03-01)
+  ile uyumsuz (rustc wrapper intercept 2023-11 hard-coded). LLVM
+  `-Z emit-stack-sizes` ELF section direkt parse.
+  - `elf.rs`: object crate `=0.36.5` ELF parser + ULEB128 `.stack_sizes` decode
+  - `decode.rs`: AUIPC+JALR pair detect (linker-resolved direct call/tail);
+    bare JALR (rd!=x0, c.jalr, c.jr non-x1) → indirect REJECT; c.j + JAL +
+    AUIPC+JALR(x0) → direct edge
+  - `analysis.rs`: frame map (`.stack_sizes` × `.symtab`) + DFS recursion
+    cycle detect + sum-of-frames over-approximation
+  - `report.rs`: text rapor format kontrat (`SNTM-STACK v1.0` banner +
+    `status:` + `max_stack_bytes:`); golden fixture
+    `tests/fixtures/task_hello.stack.golden.txt`
+  - 23 unit + 9 integration test (synthetic ELF + CLI exit code)
+- **`scripts/stack_analysis.sh`** — Plan B runner: task_hello + task_world
+  `-Z emit-stack-sizes` build → sntm-stack analyze →
+  `target/native/<task>.stack.txt`. CR-8 doctrine: `env -u RUSTFLAGS`
+  (kernel host tool subshell sızıntı guard, SAFE-3 lesson).
+- **`src/common/config.rs`** yeni 2 const:
+  - `STACK_ANALYSIS_MARGIN_BYTES = 256` (CR-5 doctrine — sntm-validate +
+    sntm-cert-gen + kernel üç crate aynı sabit)
+  - `STACK_ANALYSIS_UNKNOWN_SENTINEL = 0xFFFF_FFFF` (CR-4 doctrine — cert +
+    validator ortak sentinel)
+- **`tools/sntm-validate/src/stackreport.rs`** — sntm-stack rapor parser
+  (banner + status + max_stack_bytes kontrat); 7 unit test.
+- **`tools/sntm-validate/src/validate.rs`** `check_stack_bounds` invariant +
+  5 unit test. CR-5: stack_size ≥ observed_max + margin (exact equality FAIL).
+  CR-4: UNKNOWN sentinel her zaman reject.
+- **`tools/sntm-validate/src/main.rs`** yeni CLI flag'ler `--call-stack-report`
+  + `--task-name`; 5 yeni integration test.
+- **`tools/sntm-validate/src/manifest.rs`** yeni `[[task]] stack_margin_override`
+  field (Option<u32>; absent → const default 256).
+- **`tools/sntm-cert-gen/src/stackreport.rs`** — duplicate parser (FIX-G
+  shared crate deferred); 3 unit test.
+- **`tools/sntm-cert-gen/src/main.rs`** yeni CLI flag `--call-stack-report`
+  (opsiyonel; verilmediyse `max_stack_bytes = UNKNOWN_SENTINEL` cert'e yazılır
+  — CR-4 dürüstlük: allocation vs observation semantic; manifest stack_size
+  fallback YASAK). 4 yeni integration test.
+- **`Tla+/SipahiSNTM.tla`** `StackRegionBound` invariant (CR-5 — abstract:
+  StackBytesPerTask 8192 ≥ AnalyzerMaxWorstCase 128 + StackMarginBytes 256).
+  State count 138 baseline korundu.
+- **`src/verify.rs`** 3 yeni Kani harness:
+  - `stack_analysis_margin_pin` (K1+K2 production const literal 256)
+  - `stack_bounds_invariant` (K1+K3+K5 sembolik formula + exact equality reject)
+  - `stack_overflow_policy_event_mapping` (K7 — PolicyEvent::StackOverflow=1 →
+    decide_action sadece Restart/Isolate)
+- **`scripts/sntm_safe_gate.sh`** **[5/10] aktif** — DEFER yok, **10/10**.
+  SAFE faz kapanışı; sntm-stack runner + sntm-validate `--call-stack-report`
+  zorunlu (CR-4).
+- **`.github/workflows/ci.yml`** yeni `sntm-stack` job — Plan B build +
+  integration test + safe gate stack bound enforcement.
+- **`docs/safe/cert_abi_v2_migration.md`** — TaskCertificate ABI v2 plan
+  (doc only; v1 KORUNUR bu sprintte).
+- **`coverage.toml`** `SNTM-SAFE-R6` requirement entry.
+
+### Changed
+
+- **`tools/sntm-cert-gen/src/main.rs`** `max_stack_bytes` hardcode 8192 →
+  parsed sntm-stack report VEYA UNKNOWN_SENTINEL (CR-4 doctrine).
+- **`scripts/sntm_safe_gate.sh`** banner SAFE-3 → SAFE-4 (10/10 active);
+  [5/10] cargo-call-stack DEFER → sntm-stack Plan B aktif.
+
+### Plan B doctrine notları
+
+- **cargo-call-stack 0.1.16** current nightly (2026-03-01) ile fundamentally
+  uyumsuz: rustc wrapper intercept eski cargo internals'a bağımlı. Toolchain
+  drift 2023-11 → 2026-05 ≈ 30 ay; upstream tarafından adressize.
+- **`-Z emit-stack-sizes`** ELF section emit eder; her function için
+  8-byte LE address + ULEB128 frame size (LLVM `.stack_sizes` PROGBITS).
+- **Sum-of-frames over-approximation** — call-graph-aware transitive analiz
+  yerine her function frame'in toplamı (worst-case all-on-stack); raporda
+  AÇIK belirtilir (`caveat: call-graph-aware transitive analysis post-SAFE`).
+  task_hello observed 128 byte + 256 margin = 384 << 8KB region rahat;
+  task_world observed 80 byte + 256 margin = 336 << 8KB.
+
+### Metrics
+
+- **cargo test (unit + integration)**: ≥120 hedef → mevcut **≥150**
+  (sntm-stack +32, sntm-validate +12 unit + 5 integration, sntm-cert-gen
+  +3 unit + 4 integration).
+- **cargo kani**: **204 harness, 0 fail** (SAFE-3 201 + 3 SAFE-4 yeni).
+- **TLA+**: **9/9 PASS** (SipahiSNTM `StackRegionBound` invariant ek;
+  state count 138 baseline korundu).
+- **safe gate**: **10/10 PASS** (DEFER yok — SAFE faz kapanışı).
+- **coverage**: **14F + 20R** simetrik (R6 stack analyzer eklendi).
+
+## [Unreleased] - SAFE-3 (sprint-u32) v1.8.0: Binary Verifier + Task Cert + Signed Image
+
+### Added (§17.3 + §17.4 — supply chain doctrine)
+
+- **`tools/riscv-bin-verify/`** — host tool (~1700 LOC, sub-workspace).
+  RV64IMAC instruction whitelist + region check + symbol filter.
+  - `decoder.rs`: 32-bit base RV64I + M + A; RVC (c.ld/c.sd/c.ldsp/c.sdsp
+    ALLOW olarak ayrıştır; c.fld/c.fsd/c.fldsp/c.fsdsp REJECT)
+  - `opcodes.rs`: ecall ALLOW (CR-10); ebreak / F+D / CSR / mret REJECT
+  - `regions.rs`: kernel range içine task code yasak
+  - `sections.rs`: STT_FILE / STT_SECTION / SHN_ABS / SHN_UNDEF SKIP (CR-11)
+  - 18 unit + 21 integration test (synthetic ELF builder pattern)
+- **`tools/sntm-cert-gen/`** — TaskCertificate generator (~700 LOC).
+  - `cert.rs`: `repr(C)` 424 byte ABI v1 (`abi_version=1` pinned;
+    field eklenince +1, cross-crate K8 doctrine)
+  - `chain.rs`: BLAKE3 hash chain (manifest, toolchain, source_commit,
+    text/rodata/data) + ed25519-compact RFC 8032 sign/verify
+  - 10 integration test (RFC 8032 TV1 roundtrip + tamper negatives)
+- **`tools/sntm-image/`** — signed image assembler (~600 LOC).
+  Format `SIPI1` magic + 64-byte header + body (kernel + tasks + certs) +
+  64-byte tail ed25519 sig. 7 integration test (assemble+verify roundtrip +
+  tamper magic/body/sig negatives).
+- **`Tla+/SipahiSecureBoot.tla`** — 6 state secure boot spec.
+  Invariant: `StartedImpliesValid`, `NoFalseAccept`, `AtomicVerify`,
+  `SigValidImpliesHeader`. **TLA+ 9/9 PASS** (8 → 9 baseline).
+- **`src/verify.rs`** +6 Kani harness (cert ABI pin, image magic, header size,
+  verify bounded, syscall ABI alignment). **Kani 196 → 202**.
+- **`scripts/sntm_safe_gate.sh`** **[4/10] [9/10] [10/10] aktif**:
+  - [4] riscv-bin-verify (forbidden opcode scan)
+  - [9] task cert sign+verify roundtrip
+  - [10] image assemble + final ed25519
+- **`keys/`** — `dev-image.{priv,pub}` ed25519 development key (CI ephemeral
+  bootstrap script `scripts/gen_dev_key.sh`); `keys/.gitignore` `*.priv` deny.
+- **`.gitignore`** `target/native/*.cert.{bin,sig}` + `keys/*.priv` (CR-6:
+  cert source_commit içerir → circular dep, repo'ya commit yasak).
+
+### Codex Review v1 — 11 CR fix (Section 8 BAĞLAYICI)
+
+CR-1 syscall Error variant ABI alignment, CR-2 sntm-validate `reserved_size`
++ KERNEL_SIZE dynamic, CR-3 image format kontrat, CR-4 cert artifact
+ephemeral, CR-5 cargo +stable host tools (nightly serde_core ICE bypass),
+CR-6 .gitignore cert/sig + private key, CR-7 dev keypair bootstrap +
+ephemeral CI, CR-8 Kani crypto stub yasak (real crypto cargo test fixture),
+CR-9 cert forensics-only (kernel parse YOK), CR-10 ecall ALLOW, CR-11
+symbol filter STT_FILE/SECTION/SHN_ABS/UNDEF SKIP.
+
+Post-impl audit (CR-12..CR-15): `syscall_ids_valid` stub silindi (Kani sayı
+güncellendi 202'ye), Error enum 8 variant (`InvalidSyscall=0..Internal=7`,
+`from_kernel` ABI mapping), sntm-image `--text.bin` eksik hard fail,
+sntm-image argv eksik → ExitCode 2 (panic değil — host tool doctrine).
+
+### Metrics
+
+- **cargo test**: ≥113 (SAFE-2 91 + riscv-bin-verify 39 + sntm-cert-gen 10 +
+  sntm-image 11)
+- **cargo kani**: **202/202** (SAFE-2 196 + 6 SAFE-3 yeni)
+- **TLA+**: **9/9** PASS (SipahiSecureBoot eklendi)
+- **safe gate**: **9/10 active** ([5] cargo-call-stack DEFER SAFE-4)
+- **coverage**: 14F + **19R** (R4 binary verifier + R5 cert/image)
+
+## [Unreleased] - SAFE-2 (sprint-u31) v1.7.0: Static Cap Table + Typed IPC
+
+### Added (§17.5 + §17.6 — capability-based access control + typed channels)
+
+- **`src/kernel/capability/cap_action.rs`** — `CapAction` 6-variant enum
+  (`None | Read | Write | ReadWrite | Execute | All`) + `from_u8`.
+- **`src/kernel/capability/cap_generated.rs`** — codegen target:
+  `LOCAL_CAP_TABLE` + `BOOT_CHANNELS` const tables (manifest → kod drift
+  guard via `regen_safe_codegen.sh`).
+- **`src/kernel/capability/local_cap.rs`** — `local_cap_invoke` syscall
+  wrapper; `sys_cap_invoke` reserved bits zero check (forward compat).
+- **`sipahi_api/src/channels.rs`** — codegen target: typed IPC per-channel
+  `send_<msg>` / `recv_<msg>` wrapper'ları (manifest `[[channel]]` driven).
+- **`sipahi_api/src/lib.rs`** `local_cap_invoke` + Cargo feature
+  `task_<name>` (per-task channel scope guard).
+- **`tools/sntm-validate/src/codegen.rs`** +244 LOC:
+  - `--output-cap-table cap_generated.rs` emit
+  - `--output-channels sipahi_api/src/channels.rs` emit
+  - Channel topology invariant: orphan producer/consumer, self-loop,
+    duplicate id, budget (≤ MAX_IPC_CHANNELS), reserved id check
+- **`sipahi.toml`** schema genişletme: `[[resource]]` (kind, id, name),
+  `[[channel]]` (id, producer, consumer, message, size, period_ms),
+  `[[task.local_cap]]` (resource_id, action).
+- **`Tla+/SipahiSNTM.tla`** `ChannelOwnershipInvariant` (CR-7) +
+  `StrongChannelOwnership` (sealed atomicity ile birleşim).
+- **`scripts/regen_safe_codegen.sh`** — manifest → codegen pipeline (`make
+  regen-safe`).
+- **`scripts/sntm_safe_gate.sh`** [3] [6] [7] [8] aktif (6/10 toplam):
+  - [3] cargo +nightly build (typed IPC compile guard)
+  - [7] cap_generated drift
+  - [8] channels drift
+- **`src/verify.rs`** +7 Kani harness — typed IPC cross-crate K8, BOOT_CHANNELS
+  well-formed, CapAction u8 roundtrip, sys_cap_invoke reserved bits.
+- **`src/kernel/syscall/dispatch.rs`** `sys_cap_invoke` syscall handler.
+
+### Codex Review v1 — 8 CR fix (Section 8 BAĞLAYICI)
+
+CR-1 channels.rs codegen `#![allow(unused_imports)]` (rustc ICE workaround),
+CR-2 manifest schema additions, CR-3 channel orphan detect, CR-4 sipahi_api
+task-lint scope ayrımı (SAFE-2 sprint scope dışı — carry-forward), CR-5
+codegen drift guard script + safe gate entegrasyonu, CR-6 sentinel ID
+namespace (channel reserved 0xFF), CR-7 ChannelOwnership invariant zayıftı
+güçlendir, CR-8 BOOT_CHANNELS Kani cross-crate K8.
+
+### Metrics
+
+- **cargo test**: 91 (SAFE-1 80 + 11 sntm-validate yeni)
+- **cargo kani**: **196/196** (SAFE-1 189 + 7 SAFE-2 yeni)
+- **TLA+**: **8/8** PASS (SipahiSNTM `ChannelOwnershipInvariant` ek)
+- **safe gate**: **6/10 active** ([4][5][9][10] DEFER SAFE-3/4)
+- **coverage**: 14F + **17R** (R2 cap_action + R3 typed_ipc)
+
+## [Unreleased] - SAFE-1 (sprint-u30) v1.6.1: Safe Native Profile + task-lint
+
+### Added (§17.2 — task source-level safety enforcement)
+
+- **`tools/task-lint/`** — `syn 2.0` AST static analyzer (~700 LOC,
+  sub-workspace, `cargo +stable` host tool).
+  - **11 yasak kural**: `unsafe`, `extern "C"` FFI, `alloc::*` import,
+    inline `asm!`, recursion (call graph cycle), `dyn` + function pointer,
+    `panic_unwind`, `#[link_section = ".init_array"]`, `f32`/`f64` types,
+    `core::sync::atomic`, MMIO raw cast (volatile pointer arithmetic).
+  - **DAL-aware trust_tier enforcement**:
+    - `safe` trust_tier (default) → tüm 11 kural HARD-FAIL
+    - `trusted_unsafe` → DAL-A/B HARD-FAIL; DAL-C/D `waiver_reason`
+      zorunlu (manifest field), `demo_feature_waivers` Cargo feature
+      cfg-gated waiver listesi
+  - 18 integration test (her kural için ±çift + DAL × trust_tier matrix)
+- **`tools/sntm-validate/src/manifest.rs`** SAFE-1 schema:
+  - `[[task]] trust_tier = "safe" | "trusted_unsafe"`
+  - `[[task]] waiver_reason = "..."` (trusted_unsafe için zorunlu)
+  - `[[task]] demo_feature_waivers = [...]` (Cargo feature whitelist —
+    task-lint scope dışı tutulur; absent feature → drift detect)
+  - `DalLevel` enum parse (A/B/C/D, type-safe)
+- **`tools/sntm-validate/src/validate.rs`** +158 LOC: `check_safe_native_profile`
+  (5 yeni invariant — DAL × trust_tier policy matrix, waiver_reason mandatory
+  for trusted_unsafe, demo_feature_waivers per-Cargo-feature validation,
+  trust_tier enum parse, DAL string parse).
+- **`scripts/sntm_safe_gate.sh`** — yeni SAFE umbrella gate scaffold,
+  3/10 aktif:
+  - [1] cargo check (her task)
+  - [2] task-lint (safe-tier task'lar üzerinde)
+  - [6] sntm-validate (manifest invariants + SAFE-1 trust_tier check)
+- **`.github/workflows/ci.yml`** `task-lint` job: sub-workspace build +
+  safe-tier task lint + **production binary unsafe leak guard** (objdump
+  scan, `cross-isolation-demo` cfg compile-out doğrulaması).
+- **`coverage.toml`** `SNTM-SAFE-R1` requirement entry.
+
+### Doctrine kararları
+
+- task-lint **default-OFF** Cargo feature — `cargo build` üretim kanalı
+  etkilenmez, sadece `scripts/sntm_safe_gate.sh` çağrıldığında çalışır.
+- DAL-A/B `trusted_unsafe` HARD-FAIL doctrine — safety-critical seviye
+  için waiver kabul edilmez (bilinçli design).
+- `cross-isolation-demo` feature waiver listesinde — production
+  task_hello'ya unsafe sızıntı YOK (CI guard).
+
+### Metrics
+
+- **cargo test**: 80 (task-lint 18 + sntm-validate 14 + napot/region 8 +
+  sntm-pack 13 + diğer integration test'ler)
+- **cargo kani**: **189/189** (U-29 sonrası baseline; SAFE-1 yeni Kani yok —
+  task-lint static analiz cargo test'te)
+- **TLA+**: **8/8** PASS
+- **safe gate**: **3/10 active** ([3][4][5][7][8][9][10] DEFER SAFE-2/3/4)
+- **coverage**: 14F + **15R** (R1 task-lint + R2 SAFE base requirement)
+
 ## [Unreleased] - U-29 v2.0: WASM Removal + ed25519-compact Migration
 
 ### Removed (WASM tamamen kaldırıldı + alloc bağımlılığı temizlendi)

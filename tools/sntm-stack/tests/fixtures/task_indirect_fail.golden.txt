@@ -1,0 +1,18 @@
+SNTM-STACK v1.0
+binary: target/riscv64imac-unknown-none-elf/release/task_indirect
+arch: rv64
+mode: sum-of-frames (over-approximation)
+caveat: call-graph-aware transitive analysis post-SAFE
+
+frames:
+  0x80800000  task_indirect::main                32 byte
+  0x80800040  dispatch_table_entry                0 byte
+
+direct_call_edges: 1
+indirect_calls: 1
+  - 0x80800024 Jalr32 { rd: 1, rs1: 5 }
+recursion: none
+
+status: FAIL
+reason: indirect call (jalr rd != x0 or c.jalr) detected
+max_stack_bytes: 0xFFFFFFFF

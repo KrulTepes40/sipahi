@@ -18,6 +18,7 @@ use std::process::ExitCode;
 
 use sntm_cert_gen::cert::{Range64, CERT_SIZE};
 use sntm_cert_gen::chain::{blake3_bytes, blake3_file, build_cert, git_head_bytes, sign_cert};
+use sntm_cert_gen::stackreport::{parse_max_stack_or_unknown, UNKNOWN_SENTINEL as STACK_UNKNOWN};
 
 #[derive(Default)]
 struct Args {
@@ -31,6 +32,10 @@ struct Args {
     out_cert: Option<PathBuf>,
     out_sig: Option<PathBuf>,
     repo_root: Option<PathBuf>,
+    /// SAFE-4 (sprint-u33) Section 8 CR-4: optional sntm-stack report path.
+    /// Verilmezse `max_stack_bytes = 0xFFFF_FFFF` (UNKNOWN sentinel).
+    /// **Manifest `stack_size` ASLA fallback DEĞİL** — allocation vs observation.
+    call_stack_report: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -84,7 +89,28 @@ fn main() -> ExitCode {
     let allowed_syscalls = 0x3F;        // 6-bit bitmap (SYS_*=0..5 all by default)
     let allowed_channels = [0xFFu8; 8]; // empty slots
     let allowed_mmio     = [Range64 { base: 0, size: 0 }; 4];
-    let max_stack_bytes  = 8192;        // sipahi.toml stack_size default
+    // SAFE-4 (sprint-u33) Section 8 CR-4: max_stack_bytes refinement.
+    // --call-stack-report verildi ve PASS → parsed observed_max (sum-of-frames).
+    // Verilmedi VEYA parse FAIL/UNKNOWN → UNKNOWN sentinel (NOT manifest fallback).
+    let max_stack_bytes: u32 = match args.call_stack_report.as_ref() {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(s) => {
+                let v = parse_max_stack_or_unknown(&s);
+                if v == STACK_UNKNOWN {
+                    eprintln!(
+                        "WARN: stack report {} parsed as UNKNOWN (FAIL/sentinel) — cert max_stack_bytes = 0xFFFF_FFFF",
+                        p.display()
+                    );
+                }
+                v
+            }
+            Err(e) => {
+                eprintln!("WARN: cannot read stack report {}: {} — UNKNOWN sentinel emitted", p.display(), e);
+                STACK_UNKNOWN
+            }
+        },
+        None => STACK_UNKNOWN, // no report given — explicit sentinel, no fallback
+    };
     let forbidden_opcode_scan = 1;       // riscv-bin-verify PASS (assumed; CI gate enforces)
     let unsafe_count = 0;
     let kani_proof_ids = [0u32; 16];
@@ -144,6 +170,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--out-cert"     => { a.out_cert     = Some(req(argv, i + 1)?.into()); i += 2; }
             "--out-sig"      => { a.out_sig      = Some(req(argv, i + 1)?.into()); i += 2; }
             "--repo-root"    => { a.repo_root    = Some(req(argv, i + 1)?.into()); i += 2; }
+            "--call-stack-report" => {
+                a.call_stack_report = Some(req(argv, i + 1)?.into()); i += 2;
+            }
             "-h" | "--help" => {
                 println!("Usage: sntm-cert-gen --manifest <toml> --task-name <name> --task-id <u8>");
                 println!("                     [--text-bin --rodata-bin --data-bin] (hash inputs)");

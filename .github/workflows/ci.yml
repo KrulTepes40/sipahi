@@ -670,3 +670,62 @@ jobs:
               exit 1
           fi
           echo "PASS: no unsafe leak in production task_hello (cfg compile-out)"
+
+  # SAFE-4 (sprint-u33) Section 8 CR-2 Plan B: sntm-stack host tool +
+  # stack_analysis.sh runner. cargo-call-stack 0.1.16 current nightly ile
+  # uyumsuz (rustc wrapper intercept 2023-11 hard-coded). LLVM
+  # `-Z emit-stack-sizes` ELF section + sntm-stack direkt parse.
+  #
+  # Section 8 CR-7 doctrine: kernel cargo kani sub-workspace host tools'u
+  # koşmaz; parser kanıtı bu job'ın `cargo test`'i tarafından sağlanır.
+  sntm-stack:
+    name: SAFE-4 Stack Analyzer (sntm-stack Plan B)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust + RISC-V target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          targets: riscv64imac-unknown-none-elf
+          components: rust-src
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/sntm-stack/target
+          key: ${{ runner.os }}-sntm-stack-${{ hashFiles('tools/sntm-stack/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-sntm-stack-
+      - name: Build sntm-stack (host target, sub-workspace)
+        working-directory: tools/sntm-stack
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          cargo build --target "$HOST" --release
+      - name: Run sntm-stack integration tests (host target)
+        working-directory: tools/sntm-stack
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          cargo test --target "$HOST" --release
+      - name: Build tasks + run stack_analysis.sh runner
+        run: bash scripts/stack_analysis.sh
+      - name: Verify .stack.txt outputs present + status PASS
+        run: |
+          for task in task_hello task_world; do
+            REPORT="target/native/${task}.stack.txt"
+            test -s "$REPORT" || { echo "FAIL: $REPORT missing"; exit 1; }
+            grep -q "^status: PASS" "$REPORT" || { echo "FAIL: $task status != PASS"; cat "$REPORT"; exit 1; }
+          done
+          echo "PASS: stack analysis OK for task_hello + task_world"
+      - name: Validate stack bounds via sntm-validate
+        run: |
+          HOST=$(rustc -vV | sed -n 's/^host: //p')
+          (cd tools/sntm-validate && cargo build --target "$HOST" --release)
+          BIN="tools/sntm-validate/target/$HOST/release/sntm-validate"
+          for task in task_hello task_world; do
+            "$BIN" --manifest sipahi.toml \
+                   --call-stack-report "target/native/${task}.stack.txt" \
+                   --task-name "$task"
+          done

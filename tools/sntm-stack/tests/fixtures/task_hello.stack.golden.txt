@@ -1,0 +1,18 @@
+SNTM-STACK v1.0
+binary: target/riscv64imac-unknown-none-elf/release/task_hello
+arch: rv64
+mode: sum-of-frames (over-approximation)
+caveat: call-graph-aware transitive analysis post-SAFE
+
+frames:
+  0x80600000  _start                              0 byte
+  0x80600008  task_hello::main_loop             128 byte
+  0x8060007e  compiler_builtins::memset           0 byte
+  0x806000ec  memset                              0 byte
+
+direct_call_edges: 6
+indirect_calls: 0
+recursion: none
+
+status: PASS
+max_stack_bytes: 128
