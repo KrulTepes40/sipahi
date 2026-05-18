@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 rm -f *_TTrace_*.tla *_TTrace_*.bin
 TLA_JAR="$HOME/.tlaplus/tla2tools.jar"
 RC=0
-for spec in SipahiScheduler SipahiCapability SipahiPolicy SipahiWatchdog SipahiDegradeRecover SipahiBudgetFairness SipahiIPC SipahiSNTM; do
+for spec in SipahiScheduler SipahiCapability SipahiPolicy SipahiWatchdog SipahiDegradeRecover SipahiBudgetFairness SipahiIPC SipahiSNTM SipahiSecureBoot; do
     echo "=== $spec ==="
     sleep 1   # avoid timestamp collision in states/ dir
     out=$(timeout 240s java -XX:+UseParallelGC -cp "$TLA_JAR" tlc2.TLC -workers auto -config "$spec.cfg" "$spec.tla" 2>&1)

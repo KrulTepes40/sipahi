@@ -21,28 +21,29 @@
 // Generated file — DO NOT edit; regenerate via `bash scripts/regen_safe_codegen.sh`.
 pub mod channels;
 
-/// Task-side hata tipleri — kernel `SyscallResult::to_raw()` ile bit-eşit hizalı.
+/// Task-side hata tipleri — kernel `SyscallResult::to_raw()` + ek E_RATE_LIMITED
+/// + E_INTERNAL sentinel'leriyle bit-eşit hizalı.
 ///
-/// SAFE-3 (sprint-u32, Section 8 CR-1): bu hizalamayı U-21 GÖREV 4 [MP2]
-/// scaffold sentinel mapping kayıkken (InvalidArg / Permission / InvalidSyscall
-/// yanlış raw value) → task yanlış error name görüyordu. Düzeltildi:
+/// SAFE-3 (sprint-u32, Section 8 CR-1 + CR-13): bu hizalamayı U-21 GÖREV 4
+/// [MP2] scaffold sentinel mapping kayıkken (InvalidArg / Permission /
+/// InvalidSyscall yanlış raw value) → task yanlış error name görüyordu.
+/// CR-13: RateLimited + Internal orphan değil — kernel DİSPATCH HÂLÂ EMİT
+/// EDİYOR (dispatch.rs:60-61 E_RATE_LIMITED / E_INTERNAL). Geri eklendi.
 ///
-/// | Raw value        | Kernel `SyscallResult` | sipahi_api `Error` |
-/// |------------------|------------------------|--------------------|
-/// | 0                | Ok                     | (None)             |
-/// | usize::MAX       | InvalidSyscall         | InvalidSyscall     |
-/// | usize::MAX - 1   | NoCapability           | NoCapability       |
-/// | usize::MAX - 2   | IpcFull                | IpcFull            |
-/// | usize::MAX - 3   | IpcEmpty               | IpcEmpty           |
-/// | usize::MAX - 4   | InvalidArg             | InvalidArg         |
-/// | usize::MAX - 5   | BufferFull             | BufferFull         |
+/// | Raw value        | Kernel emit                       | sipahi_api `Error` |
+/// |------------------|-----------------------------------|--------------------|
+/// | 0                | SyscallResult::Ok                 | (None)             |
+/// | usize::MAX       | SyscallResult::InvalidSyscall     | InvalidSyscall     |
+/// | usize::MAX - 1   | SyscallResult::NoCapability       | NoCapability       |
+/// | usize::MAX - 2   | SyscallResult::IpcFull            | IpcFull            |
+/// | usize::MAX - 3   | SyscallResult::IpcEmpty           | IpcEmpty           |
+/// | usize::MAX - 4   | SyscallResult::InvalidArg         | InvalidArg         |
+/// | usize::MAX - 5   | SyscallResult::BufferFull         | BufferFull         |
+/// | usize::MAX - 6   | const E_RATE_LIMITED (dispatch.rs)| RateLimited        |
+/// | usize::MAX - 7   | const E_INTERNAL (dispatch.rs)    | Internal           |
 ///
 /// Drift guard: `verify::verification::syscall_error_abi_alignment` Kani
-/// harness'ı (K8 cross-crate). Yeni variant kernel'e eklenmeden api'ye
-/// eklenirse Kani fail.
-///
-/// Orphan variant'lar (Permission, RateLimited, Internal) SAFE-3 CR-1'de
-/// kaldırıldı — kernel emit etmiyor; eklenirse aynı commit'te iki tarafa.
+/// harness K8 cross-crate — 8 raw değer kapsar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Error {
@@ -52,11 +53,13 @@ pub enum Error {
     IpcEmpty       = 3,
     InvalidArg     = 4,
     BufferFull     = 5,
+    RateLimited    = 6,
+    Internal       = 7,
 }
 
 impl Error {
     /// 0 (E_OK) Error değil → None. Aksi: kernel raw value → Error variant.
-    /// Bilinmeyen raw değer (drift sinyali) → `Some(Error::InvalidSyscall)`
+    /// Bilinmeyen raw değer (drift sinyali) → `Some(Error::Internal)`
     /// (defansif default; gerçek ABI drift Kani harness ile yakalanır).
     #[inline]
     pub fn from_kernel(ret: usize) -> Option<Self> {
@@ -68,7 +71,9 @@ impl Error {
             v if v == usize::MAX - 3 => Some(Error::IpcEmpty),
             v if v == usize::MAX - 4 => Some(Error::InvalidArg),
             v if v == usize::MAX - 5 => Some(Error::BufferFull),
-            _ => Some(Error::InvalidSyscall),
+            v if v == usize::MAX - 6 => Some(Error::RateLimited),
+            v if v == usize::MAX - 7 => Some(Error::Internal),
+            _ => Some(Error::Internal),
         }
     }
 }
@@ -112,12 +117,18 @@ pub mod syscall {
     /// Capability invoke — legacy MAC token + resource + action kontrol.
     ///
     /// `token` MUST have bit 7 clear (token id < 0x80). Bit 7 reserved as
-    /// SAFE-2 path discriminant; if `token >= 0x80`, kernel kernel-side
-    /// routes to `local_cap_invoke` semantics — likely DENY since lower
-    /// bits don't match a valid resource_id. Use `local_cap_invoke` for
-    /// static local capabilities.
+    /// SAFE-2 path discriminant. SAFE-3 (Section 8 CR-5): wrapper bit-7'yi
+    /// **enforce eder** — `token >= 0x80` çağrılırsa `Err(InvalidArg)`
+    /// döner, kernel-side local-cap path'e silent fallback YOK. Static
+    /// local capability için `local_cap_invoke` kullan.
     #[inline]
     pub fn cap_invoke(token: u8, resource: u16, action: u8) -> Result<(), Error> {
+        // SAFE-3 CR-5 guard: bit 7 set = local-cap path discriminant; bu
+        // wrapper'da çağrı caller intent drift'idir (MAC token path
+        // beklenirken local-cap path'e düşürür). Audit clarity için fail-fast.
+        if token & 0x80 != 0 {
+            return Err(Error::InvalidArg);
+        }
         // SAFETY: ecall trap to M-mode, kernel dispatch handles registers.
         let ret = unsafe {
             ecall3(SYS_CAP_INVOKE, token as usize, resource as usize, action as usize)

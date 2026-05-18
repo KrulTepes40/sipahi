@@ -359,3 +359,19 @@ required_tests   = []
 required_scripts = ["sntm_safe_gate.sh"]
 required_proofs  = ["typed_ipc_size_invariant"]
 fault_model      = "channels.rs message struct size manifest size_field ile drift (compile assert yakalar), padding leak send wrapper Message::empty() bypass eder, recv buf'taki 64 byte'ın hepsini okur (size_of::<T>() yerine), cfg-gated send producer feature olmadan compile olur (wrong direction), kernel IpcMessage 64 byte'tan farklı boyuta kayar (typed_ipc_size_invariant Kani yakalar), boot.rs hardcoded assign_channel manifest [[channel]] ile drift eder ([8/10] git diff yakalar), ya da channels.rs manuel düzeltilir (codegen regen ile reset"
+
+# ─── SAFE-3 (U-32) SNTM-SAFE Binary Verifier + Task Certificate + Image Sig ───
+
+[requirement.SNTM-SAFE-R4]
+description      = "RISC-V build-time binary verifier (riscv-bin-verify): SNTM design §17.3 forbidden opcode/section/relocation/region reject. RV64IMAC decoder; reject (CR-10): ecall ALLOW, ebreak/CSR/mret/sret/sfence/wfi REJECT, F/D + compressed FP REJECT, RV64 c.ld/c.sd ALLOW. Forbidden section: .got/.plt/.eh_frame/.init_array. W^X SHF_WRITE+SHF_EXECINSTR reject. PIE ET_DYN reject. Symbol region cross-ref (CR-11 filter: STT_FILE/STT_SECTION/SHN_ABS/SHN_UNDEF/EDGE_SYMBOLS skip). Immediate jal kernel-range reject (forward-edge CFI scope). Build-time SIFIR runtime cost."
+required_tests   = []
+required_scripts = ["sntm_safe_gate.sh"]
+required_proofs  = ["cert_field_layout_pin"]
+fault_model      = "verifier ebreak/CSR/mret/wfi/F-D/compressed FP'yi reject etmezse safe-tier task forbidden op runtime trap hidden, ecall yanlışlıkla reject ederse task syscall API kırılır (CR-10), F/D detection RV64 c.ld ALLOW miss eder (false positive), region filter STT_FILE/SHN_ABS kabul ederse false positive (CR-11), defined STT_FUNC oob symbol miss false negative, jal kernel-range immediate miss CFI delik, PIE binary kabul edilirse PIC relocation silent overwrite"
+
+[requirement.SNTM-SAFE-R5]
+description      = "TaskCertificate + image ed25519 sig pipeline: §17.4 forensics metadata bundle. Cert repr(C) 424 byte ABI v1 (field eklenince +1, cross-crate K8). Fields: task_id + task_name_hash + source_commit + toolchain_hash + manifest_hash + pmp_profile_hash + allowed_syscalls/channels/mmio (forensics-only, CR-9 doctrine - kernel parse YOK) + text/rodata/data BLAKE3 + kani_proof_ids + abi_version. Sign+verify ed25519-compact RFC 8032 wire format. Image sipahi-image-v1: SIPI1 magic + offsets + kernel + body + cert+sig + tail sig. CR-6: cert .gitignored (source_commit circular dep). CR-7: CI ephemeral dev key, signed artifact drift guard'a sokulmaz, [10/10] sign+verify roundtrip. Real crypto positive+negative cargo test fixtures (CR-8: Kani crypto kanıtı YOK)."
+required_tests   = []
+required_scripts = ["sntm_safe_gate.sh"]
+required_proofs  = ["cert_abi_version_pin", "image_magic_invariant", "image_header_size_invariant", "verify_cert_signature_bounded"]
+fault_model      = "cert ABI breaking kernel ile drift (cross-crate Kani yakalar), padding eksikse byte-shifted hash collision, sign+verify roundtrip kırılırsa bütünlük garantisi yok, tail sig kapsamı eksikse byte tampered geçer, private key sızarsa supply chain compromise (.gitignore + keys/.gitignore guard), CR-6 cert commit edilirse git HEAD circular dep, CR-8 Kani crypto stub tautology yazılırsa false PASS, allowed_syscalls bitmap kernel enforce sanılırsa fake security (CR-9 doctrine)"

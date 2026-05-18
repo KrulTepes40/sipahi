@@ -1,0 +1,29 @@
+[package]
+name = "riscv-bin-verify"
+version = "0.1.0"
+edition = "2021"
+description = "Sipahi SNTM-SAFE RISC-V ELF binary verifier — forbidden opcode + section + region check"
+license = "Apache-2.0"
+
+# SAFE-3 (sprint-u32): sub-workspace pattern (sntm-pack/sntm-validate/task-lint
+# doctrine — kernel build-std contamination yok, host tool x86_64-unknown-linux-gnu).
+[workspace]
+
+[lib]
+name = "riscv_bin_verify"
+path = "src/lib.rs"
+
+[[bin]]
+name = "riscv-bin-verify"
+path = "src/main.rs"
+
+# U-22 G11 doctrine: exact pin (=X.Y.Z). object crate sntm-pack ile aynı versiyon
+# (ELF parse semantik drift önler).
+[dependencies]
+object = { version = "=0.36.5", default-features = false, features = ["read", "elf", "std"] }
+serde  = { version = "=1.0.228", features = ["derive"] }
+toml   = "=1.1.2"
+
+# Section 9.2 T4 doctrine: tempfile per-test izolasyon.
+[dev-dependencies]
+tempfile = "=3.10.1"

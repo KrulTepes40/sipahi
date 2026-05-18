@@ -1,0 +1,30 @@
+[package]
+name = "sntm-cert-gen"
+version = "0.1.0"
+edition = "2021"
+description = "Sipahi SNTM-SAFE TaskCertificate generator — build-time forensics metadata + ed25519 sign"
+license = "Apache-2.0"
+
+# SAFE-3 (sprint-u32): sub-workspace pattern (sntm-pack/sntm-validate/task-lint
+# doctrine — host tool x86_64-unknown-linux-gnu, kernel build-std contamination yok).
+[workspace]
+
+[lib]
+name = "sntm_cert_gen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sntm-cert-gen"
+path = "src/main.rs"
+
+# U-22 G11 doctrine: exact pin (=X.Y.Z).
+# ed25519-compact: kernel ile aynı versiyon (RFC8032 wire bit-eşit).
+# blake3: hash chain (sntm-pack output).
+[dependencies]
+blake3         = { version = "=1.5.4", default-features = false, features = ["std"] }
+ed25519-compact = { version = "=2.2.0", default-features = false, features = ["std"] }
+serde          = { version = "=1.0.228", features = ["derive"] }
+toml           = "=1.1.2"
+
+[dev-dependencies]
+tempfile = "=3.10.1"

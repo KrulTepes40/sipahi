@@ -224,6 +224,16 @@ ChannelOwnershipInvariant ==
     \A c \in Channels :
         channels[c] = "NONE" \/ channels[c] \in Tasks
 
+(* SAFE-3 (sprint-u32, Section 8 CR-3): ChannelOwnershipInvariant zayıftı
+   (type-level). Güçlendir: real ownership semantic — sealed sonrası
+   channels[c] = channelsAtSeal[c] explicit ownership claim. Audit raporda
+   "channel ownership kanıtlandı" iddiası bu invariant ile somut. *)
+StrongChannelOwnership ==
+    /\ \A c \in Channels :
+         channels[c] = "NONE" \/ channels[c] \in Tasks
+    /\ (sealed = TRUE) =>
+         (\A c \in Channels : channels[c] = channelsAtSeal[c])
+
 THEOREM Spec => []TypeOK
 THEOREM Spec => []KernelPmpInvariant
 THEOREM Spec => []LoaderInvariant
@@ -233,5 +243,6 @@ THEOREM Spec => []AtMostOneRunning
 THEOREM Spec => []RunningIsCurrent
 THEOREM Spec => []SealedAtomicityInvariant   \* U-27 SNTM-R13
 THEOREM Spec => []ChannelOwnershipInvariant  \* SAFE-2 sprint-u31
+THEOREM Spec => []StrongChannelOwnership     \* SAFE-3 sprint-u32 CR-3
 
 ====

@@ -18,11 +18,12 @@ cd "$(dirname "$0")/.."
 
 HOST=$(rustc -vV | sed -n 's/^host: //p')
 
-echo "=== SNTM-SAFE GATE (SAFE-2, sprint-u31) ==="
-echo "Active: [1] cargo check + [2] task-lint + [3] typed IPC build + [6] sntm-validate +"
-echo "        [7] cap_generated drift + [8] channels drift"
-echo "Deferred: [4] riscv-bin-verify (SAFE-3), [5] cargo-call-stack (SAFE-4),"
-echo "          [9] task cert sign (SAFE-3), [10] image assemble + sig (SAFE-3)"
+echo "=== SNTM-SAFE GATE (SAFE-3, sprint-u32) ==="
+echo "Active: [1] cargo check + [2] task-lint + [3] typed IPC build +"
+echo "        [4] riscv-bin-verify + [6] sntm-validate +"
+echo "        [7] cap_generated drift + [8] channels drift +"
+echo "        [9] task certificate ed25519 sign + [10] image assemble + sig"
+echo "Deferred: [5] cargo-call-stack (SAFE-4)"
 echo ""
 
 # [1/10] cargo check (her task)
@@ -81,8 +82,32 @@ echo "[3/10] cargo +nightly build (typed IPC)..."
 echo "  PASS"
 echo ""
 
-# [4/10] DEFER SAFE-3 — riscv-bin-verify (forbidden opcode + section + relocation)
-echo "[4/10] riscv-bin-verify — DEFER SAFE-3"
+# [4/10] riscv-bin-verify (forbidden opcode + section + region + jal CFI)
+# SAFE-3 (sprint-u32): build verifier + check production task ELFs.
+echo "[4/10] riscv-bin-verify..."
+RBVERIFY="tools/riscv-bin-verify/target/$HOST/release/riscv-bin-verify"
+if [ ! -x "$RBVERIFY" ]; then
+    echo "  Building riscv-bin-verify..."
+    (cd tools/riscv-bin-verify && cargo +stable build --release --target "$HOST" > /dev/null 2>&1) || {
+        echo "  FAIL: riscv-bin-verify build"
+        exit 1
+    }
+fi
+echo "  [4.1] riscv-bin-verify integration tests..."
+(cd tools/riscv-bin-verify && cargo +stable test --target "$HOST" --release > /tmp/rbverify-test.log 2>&1) || {
+    echo "  FAIL: riscv-bin-verify integration tests"
+    tail -40 /tmp/rbverify-test.log
+    exit 1
+}
+echo "  [4.2] riscv-bin-verify real run..."
+for task in task_hello task_world; do
+    "$RBVERIFY" --elf "target/riscv64imac-unknown-none-elf/release/$task" \
+                --manifest sipahi.toml --task-name "$task" || {
+        echo "  FAIL: riscv-bin-verify($task)"
+        exit 1
+    }
+done
+echo "  PASS"
 echo ""
 
 # [5/10] DEFER SAFE-4 — cargo-call-stack (stack bound + recursion)
@@ -129,15 +154,95 @@ fi
 echo "  PASS"
 echo ""
 
-# [9/10] DEFER SAFE-3 — task certificate ed25519 sign
-echo "[9/10] task certificate ed25519 sign — DEFER SAFE-3"
+# [9/10] task certificate ed25519 sign + sign+verify roundtrip drift guard
+# SAFE-3 (sprint-u32, Section 8 CR-6 + CR-7): cert artifact ephemeral (NOT
+# git diff drift); roundtrip verify yeterli.
+echo "[9/10] task certificate ed25519 sign..."
+CERTGEN="tools/sntm-cert-gen/target/$HOST/release/sntm-cert-gen"
+if [ ! -x "$CERTGEN" ]; then
+    echo "  Building sntm-cert-gen..."
+    (cd tools/sntm-cert-gen && cargo +stable build --release --target "$HOST" > /dev/null 2>&1) || {
+        echo "  FAIL: sntm-cert-gen build"
+        exit 1
+    }
+fi
+echo "  [9.1] sntm-cert-gen integration tests (RFC 8032 + tamper)..."
+(cd tools/sntm-cert-gen && cargo +stable test --target "$HOST" --release > /tmp/certgen-test.log 2>&1) || {
+    echo "  FAIL: sntm-cert-gen integration tests"
+    tail -40 /tmp/certgen-test.log
+    exit 1
+}
+echo "  [9.2] ephemeral keypair bootstrap..."
+bash scripts/gen_dev_key.sh > /tmp/devkey.log 2>&1 || {
+    echo "  FAIL: gen_dev_key"
+    tail -10 /tmp/devkey.log
+    exit 1
+}
+echo "  [9.3] task_hello + task_world cert generate..."
+for task in task_hello task_world; do
+    # task_id mapping — sipahi.toml [[task]] (hardcoded for now; CR-6 ephemeral).
+    case "$task" in
+        task_hello) tid=2 ;;
+        task_world) tid=3 ;;
+    esac
+    "$CERTGEN" \
+        --manifest sipahi.toml --task-name "$task" --task-id "$tid" \
+        --text-bin   "target/native/${task}.text.bin" \
+        --rodata-bin "target/native/${task}.rodata.bin" \
+        --data-bin   "target/native/${task}.data.bin" \
+        --signing-key keys/dev-image.priv \
+        --out-cert   "target/native/${task}.cert.bin" \
+        --out-sig    "target/native/${task}.cert.sig" \
+        > /tmp/certgen-${task}.log 2>&1 || {
+        echo "  FAIL: cert generate ${task}"
+        tail -10 /tmp/certgen-${task}.log
+        exit 1
+    }
+done
+echo "  PASS"
 echo ""
 
-# [10/10] DEFER SAFE-3 — image assemble + final ed25519
-echo "[10/10] image assemble + final ed25519 — DEFER SAFE-3"
+# [10/10] image assemble + final ed25519 + roundtrip verify
+echo "[10/10] image assemble + final ed25519..."
+SNTM_IMG="tools/sntm-image/target/$HOST/release/sntm-image"
+if [ ! -x "$SNTM_IMG" ]; then
+    echo "  Building sntm-image..."
+    (cd tools/sntm-image && cargo +stable build --release --target "$HOST" > /dev/null 2>&1) || {
+        echo "  FAIL: sntm-image build"
+        exit 1
+    }
+fi
+echo "  [10.1] sntm-image integration tests (roundtrip + tamper)..."
+(cd tools/sntm-image && cargo +stable test --target "$HOST" --release > /tmp/sntmimg-test.log 2>&1) || {
+    echo "  FAIL: sntm-image integration tests"
+    tail -40 /tmp/sntmimg-test.log
+    exit 1
+}
+echo "  [10.2] assemble + sign image..."
+"$SNTM_IMG" \
+    --manifest sipahi.toml \
+    --kernel target/riscv64imac-unknown-none-elf/release/sipahi \
+    --task task_hello target/native/task_hello \
+    --task task_world target/native/task_world \
+    --signing-key keys/dev-image.priv \
+    --output target/sipahi-image.bin \
+    > /tmp/image-assemble.log 2>&1 || {
+    echo "  FAIL: image assemble"
+    tail -10 /tmp/image-assemble.log
+    exit 1
+}
+echo "  [10.3] verify image roundtrip..."
+"$SNTM_IMG" --verify target/sipahi-image.bin --pubkey keys/dev-image.pub > /tmp/image-verify.log 2>&1 || {
+    echo "  FAIL: image verify"
+    tail -10 /tmp/image-verify.log
+    exit 1
+}
+echo "  PASS"
 echo ""
 
-echo "=== SAFE-2 GATE PASS (scaffold + SAFE-2 active) ==="
+echo "=== SAFE-3 GATE PASS (9/10 active) ==="
 echo "Active gates: [1] cargo check + [2] task-lint + [3] typed IPC build +"
-echo "              [6] sntm-validate + [7] cap_generated drift + [8] channels drift"
-echo "Deferred gates: [4, 5, 9, 10] = 4 gate (SAFE-3/4)"
+echo "              [4] riscv-bin-verify + [6] sntm-validate +"
+echo "              [7] cap_generated drift + [8] channels drift +"
+echo "              [9] task cert ed25519 sign + [10] image assemble + sig"
+echo "Deferred gates: [5] cargo-call-stack (SAFE-4)"
